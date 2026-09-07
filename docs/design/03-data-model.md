@@ -162,6 +162,12 @@ stateDiagram-v2
 
 > 与 §3 DDL 一一对应，是 `app/models.py` 的底稿（M1 骨架阶段落成完整版）。
 > 教学注：`mapped_column` 是 2.x 的声明写法，`server_default` 让默认值由数据库生成而非应用。
+> **工程实现注记（2026-09-07，防照抄踩坑）**：
+> ① `Base` 实际由 `app/db.py` 提供（engine/session/Base 同文件），models.py 应 `from app.db import Base`——
+>    重复定义 Base 会产生两个 metadata，Alembic 迁移发现不了表；
+> ② 本骨架含 Chunk 仅为完整参照——**M1 迁移只建 knowledge_bases + documents 两表**，
+>    Chunk 模型与 embedding 列随 M2 里程碑引入（模块 PR 粒度原则）；
+> ③ 勿漏 `updated_at`（两表均有）、documents 的 `last_error_message`/`processed_at`/`chunk_count`（对照 §3 DDL 逐字段检查）。
 
 ```python
 from datetime import datetime
