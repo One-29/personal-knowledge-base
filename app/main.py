@@ -5,6 +5,7 @@
 """
 
 from fastapi import FastAPI
+from app.routers import kbs
 
 from app.core.config import settings
 
@@ -13,7 +14,7 @@ app = FastAPI(
     description="个人知识库问答系统：文档管理 / RAG 问答（溯源 + 拒答）/ Agent 工作流",
     version="0.1.0",
 )
-
+app.include_router(kbs.router, prefix="/api/v1")
 
 @app.get("/health")
 def health() -> dict:
