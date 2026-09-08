@@ -5,16 +5,23 @@
 """
 
 from fastapi import FastAPI
-from app.routers import kbs
 
-from app.core.config import settings
+from app.core.config import settings  # noqa: F401  （供后续装配读取配置）
+from app.routers import documents, kbs
+
+API_PREFIX = "/api/v1"
 
 app = FastAPI(
     title="KnowBase API",
     description="个人知识库问答系统：文档管理 / RAG 问答（溯源 + 拒答）/ Agent 工作流",
     version="0.1.0",
 )
-app.include_router(kbs.router, prefix="/api/v1")
+
+# 版本前缀在装配层统一管理（单点修改）；各 router 只声明业务前缀
+app.include_router(kbs.router, prefix=API_PREFIX)
+app.include_router(documents.kb_documents_router, prefix=API_PREFIX)
+app.include_router(documents.documents_router, prefix=API_PREFIX)
+
 
 @app.get("/health")
 def health() -> dict:
