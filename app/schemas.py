@@ -32,13 +32,6 @@ class KnowledgeBaseOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class DocumentContentOut(BaseModel):
-    """原文响应：查看与溯源高亮用（US-M1-03、US-M3-03）。"""
-
-    title: str
-    content: str
-
-
 class DocumentOut(BaseModel):
     """文档视图：列表/详情展示 + 状态机可见（不暴露 file_path/content_hash）。"""
 
@@ -55,3 +48,21 @@ class DocumentOut(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DocumentContentOut(BaseModel):
+    """原文响应：查看与溯源高亮用（US-M1-03、US-M3-03）。"""
+
+    title: str
+    content: str
+
+
+class UploadResult(BaseModel):
+    """上传/重传响应（US-M1-02、US-M1-04）。
+
+    content_changed 表达「这次请求是否真正改变了库内容」：
+    新建 = True；重传且内容变化 = True；重传但 sha256 未变 = False（幂等跳过）。
+    """
+
+    document: DocumentOut
+    content_changed: bool
