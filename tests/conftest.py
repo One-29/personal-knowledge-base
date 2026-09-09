@@ -28,15 +28,19 @@ TEST_DATABASE_URL = settings.database_url.rsplit("/", 1)[0] + "/knowbase_test"
 engine = create_engine(TEST_DATABASE_URL)
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def _prepare_schema() -> Iterator[None]:
-    """会话级：建表一次（结构与 models 一致）。"""
+    """会话级：建表一次（结构与 models 一致）。
+
+    非 autouse——只有依赖数据库的 fixture（db/client）才触发，
+    纯单元测试（chunking/embedding）无需数据库即可运行。
+    """
     Base.metadata.create_all(bind=engine)
     yield
 
 
 @pytest.fixture()
-def db() -> Iterator[Session]:
+def db(_prepare_schema) -> Iterator[Session]:
     """每个测试一个事务；crud 的 commit 只落到 SAVEPOINT，结束整体回滚。"""
     connection = engine.connect()
     transaction = connection.begin()

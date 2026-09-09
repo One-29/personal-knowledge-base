@@ -21,6 +21,18 @@ class Settings(BaseSettings):
     # 上传大小上限（字节）—— 对应错误码 TOO_LARGE
     max_upload_bytes: int = 10 * 1024 * 1024
 
+    # 切分参数（04 §2 DR1；06 评估阶段用网格扫描回调）
+    chunk_max_chars: int = 800
+    chunk_overlap_chars: int = 80
+
+    # Embedding 通道（04 §3 DR2）：OpenAI 兼容协议，供应商可配；
+    # 全项目模型唯一——换模型需全库重向量化 + 一次维度迁移。
+    embedding_api_key: str | None = None
+    embedding_base_url: str = "https://api.openai.com/v1"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimension: int = 1536
+    embedding_timeout_seconds: float = 30.0
+
 
 # 进程内单例：整个应用共享一份配置（import settings 即用）
 settings = Settings()
