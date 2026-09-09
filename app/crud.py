@@ -71,6 +71,12 @@ def get_document(db: Session, doc_id: int) -> Document | None:
     return db.get(Document, doc_id)
 
 
+def get_document_by_title(db: Session, kb_id: int, title: str) -> Document | None:
+    """同库同名查询：上传查重（409）与重传定位用（UNIQUE(kb_id,title) 语义）。"""
+    stmt = select(Document).where(Document.kb_id == kb_id, Document.title == title)
+    return db.scalars(stmt).first()
+
+
 def delete_document(db: Session, doc_id: int) -> bool:
     doc = db.get(Document, doc_id)
     if doc is None:
