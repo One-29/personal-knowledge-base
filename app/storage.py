@@ -4,6 +4,7 @@
 —— 文件名用 doc_id 而非用户文件名：防路径注入与重名（01 §1.2 原则 2）
 """
 
+import shutil
 from pathlib import Path
 
 from app.core.config import settings
@@ -28,9 +29,24 @@ def read(rel_path: str) -> str:
 
 
 def delete(rel_path: str) -> bool:
-    """删文件。不存在返回 False（幂等，调用方决定 204/404）。"""
+    """删文件。不存在返回 False（幂等，调用方决定 204/404）。
+
+    顺带清理变空的父目录（如删掉某库最后一篇文档后，{kb_id}/ 不留空壳）。
+    """
     p = settings.storage_dir / rel_path
     if not p.exists():
         return False
     p.unlink()
+    try:
+        p.parent.rmdir()                # 目录已空才成功；非空抛 OSError，忽略
+    except OSError:
+        pass
     return True
+
+
+def delete_kb_dir(kb_id: int) -> None:
+    """删除整个知识库的原文目录（02 §3 删库编排：元数据 → 原文 → 块）。
+
+    幂等：目录不存在时无操作。
+    """
+    shutil.rmtree(settings.storage_dir / str(kb_id), ignore_errors=True)
