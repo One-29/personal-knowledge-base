@@ -10,6 +10,7 @@ dependencies = [
     "psycopg[binary]>=3.1",      # PostgreSQL 驱动（SQLAlchemy 2.x 推荐 psycopg3）
     "pydantic-settings>=2.0",    # .env 配置加载
     "alembic>=1.13",             # 数据库迁移
+    "pgvector>=0.2",             # 向量列类型（SQLAlchemy 集成）
     "python-multipart>=0.0.9",   # FastAPI 文件上传（multipart 解析）
 ]
 
