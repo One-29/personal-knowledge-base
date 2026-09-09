@@ -14,7 +14,7 @@ from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import models  # noqa: F401  注册模型到 Base.metadata
@@ -30,11 +30,13 @@ engine = create_engine(TEST_DATABASE_URL)
 
 @pytest.fixture(scope="session")
 def _prepare_schema() -> Iterator[None]:
-    """会话级：建表一次（结构与 models 一致）。
+    """会话级：建扩展 + 建表一次（结构与 models 一致）。
 
     非 autouse——只有依赖数据库的 fixture（db/client）才触发，
     纯单元测试（chunking/embedding）无需数据库即可运行。
     """
+    with engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Base.metadata.create_all(bind=engine)
     yield
 

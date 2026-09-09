@@ -2,8 +2,9 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Integer, DateTime, CheckConstraint, ForeignKey, Identity, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Identity, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from pgvector.sqlalchemy import Vector
 
 from app.db import Base  # Base 来自 db.py，绝不自己再定义
 
@@ -97,3 +98,43 @@ class Document(Base):
 
     # ── 关系空⑨（子侧）：指向父类。back_populates 点名父侧属性名（与空①成对）
     kb: Mapped["KnowledgeBase"] = relationship(back_populates="documents")
+
+    # ── 关系（子侧）：一篇文档的切块集合（M2 产物；随文档删除级联清理）
+    chunks: Mapped[list["Chunk"]] = relationship(
+        back_populates="doc", cascade="all, delete-orphan"
+    )
+
+
+class Chunk(Base):
+    """表 chunks：检索原子单元 + 溯源锚点（M2 产物，03 §3）。
+
+    冗余 kb_id（DM3）：检索按库过滤免 join documents。
+    embedding 维度与模型唯一性由 04 DR2 约束（默认 text-embedding-3-small / 1536）。
+    """
+
+    __tablename__ = "chunks"
+    __table_args__ = (
+        UniqueConstraint("doc_id", "chunk_index"),
+        Index(
+            "ix_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    doc_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    kb_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False
+    )
+    chunk_index: Mapped[int] = mapped_column(nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    char_start: Mapped[int] = mapped_column(nullable=False)
+    char_end: Mapped[int] = mapped_column(nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(Vector(1536), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    doc: Mapped["Document"] = relationship(back_populates="chunks")
