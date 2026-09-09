@@ -21,8 +21,10 @@ class KnowledgeBase(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    # ── 关系空①（父侧）：一 对 多 → 子列表。back_populates 点名子侧属性名
-    documents: Mapped[list["Document"]] = relationship(back_populates="kb")
+    # ── 关系（父侧）：子表删除交给数据库 ON DELETE CASCADE（passive_deletes）
+    documents: Mapped[list["Document"]] = relationship(
+        back_populates="kb", passive_deletes=True
+    )
 
 
 class Document(Base):
@@ -100,9 +102,9 @@ class Document(Base):
     # ── 关系空⑨（子侧）：指向父类。back_populates 点名父侧属性名（与空①成对）
     kb: Mapped["KnowledgeBase"] = relationship(back_populates="documents")
 
-    # ── 关系（子侧）：一篇文档的切块集合（M2 产物；随文档删除级联清理）
+    # ── 关系（子侧）：切块随文档删除由数据库级联清理（passive_deletes）
     chunks: Mapped[list["Chunk"]] = relationship(
-        back_populates="doc", cascade="all, delete-orphan"
+        back_populates="doc", passive_deletes=True
     )
 
 
