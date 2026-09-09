@@ -10,7 +10,10 @@
 （CI 阶段改为对测试库执行 `alembic upgrade head`）。
 """
 
+import shutil
 from collections.abc import Iterator
+from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -70,6 +73,20 @@ def client(db: Session) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_storage(monkeypatch) -> Iterator[None]:
+    """原文目录隔离到临时目录（项目 data/ 下，测试结束删除）。
+
+    数据库事务能回滚，文件系统不能——若不隔离，测试写出的原文文件会
+    永久留在工作区 data/storage 下（每次测试新建知识库都会产生新目录）。
+    不用 pytest 的 tmp_path：其基目录在系统临时区，受限环境下不可写。
+    """
+    base = Path("data") / f"test-storage-{uuid4().hex[:8]}"
+    monkeypatch.setattr(settings, "storage_dir", base)
+    yield
+    shutil.rmtree(base, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)

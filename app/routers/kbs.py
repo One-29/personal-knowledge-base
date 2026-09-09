@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 
-from .. import crud
+from .. import crud, storage
 from ..db import get_db
 from ..models import KnowledgeBase
 from ..schemas import KnowledgeBaseCreate, KnowledgeBaseOut
@@ -43,6 +43,8 @@ def get_kb(kb_id: int, db: Session = Depends(get_db)):
 
 @router.delete("/{kb_id}", status_code=204)
 def delete_kb(kb_id: int, db: Session = Depends(get_db)):
+    """删除知识库（02 §3 编排：删元数据 → 删原文目录 → 块随外键级联）。"""
     if not crud.delete_kb(db, kb_id):
         raise HTTPException(status_code=404, detail="知识库不存在")
+    storage.delete_kb_dir(kb_id)
     return Response(status_code=204)
