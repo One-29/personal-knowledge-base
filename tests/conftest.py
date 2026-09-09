@@ -68,3 +68,16 @@ def client(db: Session) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _fake_embedding(monkeypatch) -> None:
+    """所有测试统一使用假向量 provider：绝不真调 embedding API，结果确定。"""
+
+    class _FakeProvider:
+        def embed_texts(self, texts: list[str]) -> list[list[float]]:
+            return [[0.0] * 1536 for _ in texts]
+
+    from app import ingest
+
+    monkeypatch.setattr(ingest, "get_embedding_provider", lambda: _FakeProvider())
