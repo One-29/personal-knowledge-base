@@ -17,16 +17,21 @@ def create_kb(db: Session, data: KnowledgeBaseCreate) -> KnowledgeBase:
 
 
 def list_kbs(db: Session) -> list[KnowledgeBase]:
-    stmt = select(KnowledgeBase).order_by(desc(KnowledgeBase.created_at))
+    """全部知识库，按创建时间倒序；同时间戳（同事务/并发）用 id 兜底排序。"""
+    stmt = select(KnowledgeBase).order_by(
+        desc(KnowledgeBase.created_at), desc(KnowledgeBase.id)
+    )
     return list(db.scalars(stmt).all())
 
 
 def get_kb(db: Session, kb_id: int) -> KnowledgeBase | None:
     return db.get(KnowledgeBase, kb_id)
 
+
 def get_kb_by_name(db: Session, name: str) -> KnowledgeBase | None:
     stmt = select(KnowledgeBase).where(KnowledgeBase.name == name)
     return db.scalars(stmt).first()
+
 
 def delete_kb(db: Session, kb_id: int) -> bool:
     db_kb = db.get(KnowledgeBase, kb_id)
@@ -64,7 +69,7 @@ def list_documents(
         stmt = stmt.where(Document.status == status)
     if title is not None:
         stmt = stmt.where(Document.title.ilike(f"%{title}%"))
-    stmt = stmt.order_by(desc(Document.created_at))
+    stmt = stmt.order_by(desc(Document.created_at), desc(Document.id))
     return list(db.scalars(stmt).all())
 
 def get_document(db: Session, doc_id: int) -> Document | None:
