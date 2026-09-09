@@ -7,6 +7,7 @@
 from sqlalchemy import func, select
 
 from app import ingest, storage
+from app.core.config import settings
 from app.models import Chunk, Document
 
 MD = """# TCP 三次握手
@@ -52,7 +53,7 @@ def test_process_document_creates_chunks(db, client):
     assert chunks[0].content.startswith("# TCP 三次握手")
     assert chunks[0].char_start == 0
     assert chunks[0].kb_id == kb_id                     # 冗余归属（DM3）
-    assert len(chunks[0].embedding) == 1536             # 维度与 DR2 一致
+    assert len(chunks[0].embedding) == settings.embedding_dimension  # 与 DR2 配置一致
 
 
 def test_reprocess_replaces_chunks(db, client):

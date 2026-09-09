@@ -37,6 +37,8 @@ def _prepare_schema() -> Iterator[None]:
     """
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    # 测试库专用：每次会话重建结构，保证与 models 一致（含向量维度变化）
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     yield
 
@@ -76,7 +78,7 @@ def _fake_embedding(monkeypatch) -> None:
 
     class _FakeProvider:
         def embed_texts(self, texts: list[str]) -> list[list[float]]:
-            return [[0.0] * 1536 for _ in texts]
+            return [[0.0] * settings.embedding_dimension for _ in texts]
 
     from app import ingest
 

@@ -6,6 +6,7 @@ from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Identi
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
+from app.core.config import settings
 from app.db import Base  # Base 来自 db.py，绝不自己再定义
 
 
@@ -134,7 +135,9 @@ class Chunk(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     char_start: Mapped[int] = mapped_column(nullable=False)
     char_end: Mapped[int] = mapped_column(nullable=False)
-    embedding: Mapped[list[float]] = mapped_column(Vector(1536), nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(
+        Vector(settings.embedding_dimension), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     doc: Mapped["Document"] = relationship(back_populates="chunks")
