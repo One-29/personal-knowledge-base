@@ -53,3 +53,17 @@ def test_delete_kb_204_then_404(client):
 def test_delete_kb_404(client):
     """删除不存在的库 → 404。"""
     assert client.delete("/api/v1/kbs/999999").status_code == 404
+
+
+def test_delete_kb_with_documents_cascades(client):
+    """删除含文档的库：数据库 ON DELETE CASCADE 清理，不触发 ORM 置空外键（回归）。"""
+    kb_id = _create_kb(client).json()["id"]
+    upload = client.post(
+        f"/api/v1/kbs/{kb_id}/documents",
+        files={"file": ("tcp.md", "# TCP\n三次握手", "text/markdown")},
+    )
+    doc_id = upload.json()["document"]["id"]
+
+    assert client.delete(f"/api/v1/kbs/{kb_id}").status_code == 204
+    assert client.get(f"/api/v1/documents/{doc_id}").status_code == 404
+    assert client.get(f"/api/v1/kbs/{kb_id}").status_code == 404

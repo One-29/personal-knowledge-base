@@ -17,6 +17,9 @@ pytest-cache-files-*/
 # 运行时数据（原文存储目录：storage/ 默认在 data/ 下）
 data/
 
+# 临时脚本（下划线前缀约定：一次性验证脚本不入库）
+_*.py
+
 # Node / 前端
 node_modules/
 dist/

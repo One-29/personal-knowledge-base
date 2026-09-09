@@ -37,6 +37,8 @@ def _prepare_schema() -> Iterator[None]:
     """
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    # 测试库专用：每次会话重建结构，保证与 models 一致（含向量维度变化）
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     yield
 
@@ -68,3 +70,16 @@ def client(db: Session) -> Iterator[TestClient]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def _fake_embedding(monkeypatch) -> None:
+    """所有测试统一使用假向量 provider：绝不真调 embedding API，结果确定。"""
+
+    class _FakeProvider:
+        def embed_texts(self, texts: list[str]) -> list[list[float]]:
+            return [[0.0] * settings.embedding_dimension for _ in texts]
+
+    from app import ingest
+
+    monkeypatch.setattr(ingest, "get_embedding_provider", lambda: _FakeProvider())

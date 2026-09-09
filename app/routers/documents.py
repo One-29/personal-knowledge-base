@@ -13,10 +13,19 @@ import hashlib
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+)
 from sqlalchemy.orm import Session
 
-from .. import crud, storage
+from .. import crud, ingest, storage
 from ..core.config import settings
 from ..db import get_db
 from ..models import Document
@@ -71,13 +80,15 @@ async def _validate_upload(file: UploadFile) -> tuple[str, bytes, str]:
 @kb_documents_router.post("/{kb_id}/documents", response_model=UploadResult, status_code=201)
 async def upload_document(
     kb_id: int,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    """上传文档：校验 → 登记（flush 取 id）→ 写原文 → 提交（US-M1-02、D6）。
+    """上传文档：校验 → 登记（flush 取 id）→ 写原文 → 提交 → 异步触发入库管线。
 
     顺序说明：先 flush 让数据库分配 doc_id（事务未提交），再按
     {kb_id}/{doc_id}.md 写文件；写文件失败则 rollback，无需清理已提交数据。
+    登记提交后经 BackgroundTasks 触发 M2 处理（D3/D4），响应立即返回 pending 状态。
     """
     if crud.get_kb(db, kb_id) is None:
         raise HTTPException(status_code=404, detail="知识库不存在")
@@ -102,18 +113,20 @@ async def upload_document(
         raise HTTPException(status_code=500, detail="原文写入失败") from None
     db.commit()
     db.refresh(doc)
+    background_tasks.add_task(ingest.process_document, doc.id)
     return UploadResult(document=_doc_out(doc), content_changed=True)
 
 
 @documents_router.post("/{doc_id}/reupload", response_model=UploadResult)
 async def reupload_document(
     doc_id: int,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
     """重传覆盖：同文档换内容；sha256 未变则幂等跳过（US-M1-04）。
 
-    内容变更后状态回到 pending，等待 M2 重建切块与向量；
+    内容变更后状态回到 pending，经 BackgroundTasks 触发 M2 全量重建；
     重建失败时按 DM5 保留旧内容并记录 last_error（由 M2 写入）。
     """
     doc = crud.get_document(db, doc_id)
@@ -135,6 +148,7 @@ async def reupload_document(
     doc.last_error_message = None
     db.commit()
     db.refresh(doc)
+    background_tasks.add_task(ingest.process_document, doc.id)
     return UploadResult(document=_doc_out(doc), content_changed=True)
 
 

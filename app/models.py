@@ -6,6 +6,7 @@ from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Identi
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
+from app.core.config import settings
 from app.db import Base  # Base 来自 db.py，绝不自己再定义
 
 
@@ -20,8 +21,10 @@ class KnowledgeBase(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     
-    # ── 关系空①（父侧）：一 对 多 → 子列表。back_populates 点名子侧属性名
-    documents: Mapped[list["Document"]] = relationship(back_populates="kb")
+    # ── 关系（父侧）：子表删除交给数据库 ON DELETE CASCADE（passive_deletes）
+    documents: Mapped[list["Document"]] = relationship(
+        back_populates="kb", passive_deletes=True
+    )
 
 
 class Document(Base):
@@ -99,9 +102,9 @@ class Document(Base):
     # ── 关系空⑨（子侧）：指向父类。back_populates 点名父侧属性名（与空①成对）
     kb: Mapped["KnowledgeBase"] = relationship(back_populates="documents")
 
-    # ── 关系（子侧）：一篇文档的切块集合（M2 产物；随文档删除级联清理）
+    # ── 关系（子侧）：切块随文档删除由数据库级联清理（passive_deletes）
     chunks: Mapped[list["Chunk"]] = relationship(
-        back_populates="doc", cascade="all, delete-orphan"
+        back_populates="doc", passive_deletes=True
     )
 
 
@@ -134,7 +137,9 @@ class Chunk(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     char_start: Mapped[int] = mapped_column(nullable=False)
     char_end: Mapped[int] = mapped_column(nullable=False)
-    embedding: Mapped[list[float]] = mapped_column(Vector(1536), nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(
+        Vector(settings.embedding_dimension), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     doc: Mapped["Document"] = relationship(back_populates="chunks")
