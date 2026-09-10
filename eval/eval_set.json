@@ -1,0 +1,78 @@
+{
+  "description": "KnowBase 检索质量评估集：问题 + 期望命中来源与内容特征。in_kb=false 表示库外问题（应拒答）。",
+  "version": 1,
+  "items": [
+    {
+      "question": "TCP 为什么需要三次握手？",
+      "expected_doc": "tcp.md",
+      "expected_keywords": ["确认双方的发送与接收能力", "为什么不是两次"],
+      "in_kb": true
+    },
+    {
+      "question": "TCP 挥手为什么是四次？",
+      "expected_doc": "tcp.md",
+      "expected_keywords": ["全双工", "FIN"],
+      "in_kb": true
+    },
+    {
+      "question": "为什么两次握手不够？",
+      "expected_doc": "tcp.md",
+      "expected_keywords": ["接收能力", "第三次 ACK"],
+      "in_kb": true
+    },
+    {
+      "question": "SYN 和 ACK 分别是什么含义？",
+      "expected_doc": "tcp.md",
+      "expected_keywords": ["SYN", "ACK"],
+      "in_kb": true
+    },
+    {
+      "question": "时间片轮转调度有什么优缺点？",
+      "expected_doc": "os.md",
+      "expected_keywords": ["时间片", "公平"],
+      "in_kb": true
+    },
+    {
+      "question": "优先级调度会导致什么问题，怎么解决？",
+      "expected_doc": "os.md",
+      "expected_keywords": ["饥饿", "老化"],
+      "in_kb": true
+    },
+    {
+      "question": "死锁的四个必要条件是什么？",
+      "expected_doc": "os.md",
+      "expected_keywords": ["互斥", "循环等待"],
+      "in_kb": true
+    },
+    {
+      "question": "Python 装饰器的作用是什么？",
+      "expected_doc": "python.md",
+      "expected_keywords": ["装饰器", "增强行为"],
+      "in_kb": true
+    },
+    {
+      "question": "闭包里修改外部变量要注意什么？",
+      "expected_doc": "python.md",
+      "expected_keywords": ["nonlocal"],
+      "in_kb": true
+    },
+    {
+      "question": "生成器为什么省内存？",
+      "expected_doc": "python.md",
+      "expected_keywords": ["惰性求值", "yield"],
+      "in_kb": true
+    },
+    {
+      "question": "量子计算的 Shor 算法原理是什么？",
+      "expected_doc": null,
+      "expected_keywords": [],
+      "in_kb": false
+    },
+    {
+      "question": "如何申请成都的落户补贴？",
+      "expected_doc": null,
+      "expected_keywords": [],
+      "in_kb": false
+    }
+  ]
+}
