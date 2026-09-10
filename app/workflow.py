@@ -20,9 +20,10 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from . import ask as ask_service
+from . import generation
 from .ask import CitationData
 from .core.config import settings
-from .generation import LLMError, LLMProvider, get_llm_provider
+from .generation import LLMError, LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ def plan_steps(
     """把任务拆成子步骤；失败退化为「单步 = 原任务」（AW1）。"""
     fallback = [StepPlan(goal=task, query=task)]
     try:
-        llm = provider or get_llm_provider()
+        llm = provider or generation.get_llm_provider()
         raw = llm.complete(
             PLANNER_SYSTEM_PROMPT.format(max_steps=max_steps), task
         )

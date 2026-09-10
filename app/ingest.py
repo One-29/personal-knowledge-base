@@ -16,10 +16,10 @@ from datetime import datetime, timezone
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from . import chunking, crud, storage
+from . import chunking, crud, embedding, storage
 from .core.config import settings
 from .db import SessionLocal
-from .embedding import EmbeddingError, get_embedding_provider
+from .embedding import EmbeddingError
 from .models import Chunk, Document
 
 logger = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ def process_document(doc_id: int, db: Session | None = None) -> None:
             return
 
         try:
-            vectors = get_embedding_provider().embed_texts([c.text for c in chunks])
+            vectors = embedding.get_embedding_provider().embed_texts([c.text for c in chunks])
         except EmbeddingError as exc:
             _mark_failure(db, doc, ERROR_EMBED_FAILED, str(exc))
             return

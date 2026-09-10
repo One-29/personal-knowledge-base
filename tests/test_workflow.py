@@ -178,9 +178,8 @@ def test_run_workflow_api_contract(client, db, no_l1_threshold, monkeypatch):
         '[{"goal": "查握手", "query": "三次握手"}]',
         "三次握手确认收发能力 [1]。",
     ])
-    # workflow 与 generation 都各自持有 provider 工厂引用，两个都要替换
+    # 单一替换点：workflow / ask 都经 generation 模块动态取 provider
     monkeypatch.setattr(generation, "get_llm_provider", lambda: scripted)
-    monkeypatch.setattr(workflow, "get_llm_provider", lambda: scripted)
 
     resp = client.post("/api/v1/workflow", json={"task": "总结握手", "kb_id": kb_id})
 

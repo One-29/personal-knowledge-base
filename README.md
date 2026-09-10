@@ -1,5 +1,7 @@
 # KnowBase · 个人知识库问答系统
 
+[![CI](https://github.com/One-29/personal-knowledge-base/actions/workflows/ci.yml/badge.svg)](https://github.com/One-29/personal-knowledge-base/actions/workflows/ci.yml)
+
 > 设计阶段（v0.1）· 首个可运行版本规划见 [路线图](#路线图)
 
 **自托管的个人知识库：把 Markdown 笔记喂给它，用自然语言提问，每个回答都附原文出处；知识库覆盖不了的问题，它明说不知道，不编造。**

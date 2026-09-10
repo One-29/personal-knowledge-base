@@ -18,9 +18,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
-from . import crud, generation, retrieval, session
+from . import crud, embedding, generation, retrieval, session
 from .core.config import settings
-from .embedding import get_embedding_provider
 from .generation import LLMError, LLMProvider
 from .session import Turn as SessionTurn
 
@@ -209,5 +208,9 @@ def _refuse(question: str, reason: str) -> AnswerData:
 
 
 def _embed_query(question: str) -> list[float]:
-    """问题向量化：与入库使用同一模型（04 DR2 全项目模型唯一）。"""
-    return get_embedding_provider().embed_texts([question])[0]
+    """问题向量化：与入库使用同一模型（04 DR2 全项目模型唯一）。
+
+    经 embedding 模块动态调用（而非模块级导入函数）：保证测试替换 provider 时
+    只需改一处，也避免各调用方持有独立的函数引用。
+    """
+    return embedding.get_embedding_provider().embed_texts([question])[0]
