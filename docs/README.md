@@ -8,11 +8,11 @@ docs/
 ├── README.md              # 本文件：文档地图 + 写作规范（先读这里）
 ├── workflow.md            # 开发流程规范：步骤/DoD/内容归属表/简洁原则
 ├── design/                # 设计文档（按思考顺序编号，向下依赖）
-│   ├── 01-requirements.md # 产品需求 PRD：定位/范围/NFR/用户故事/流程/决策（v0.3 草案）
-│   ├── 02-modules.md      # 模块拆分：判据 / 边界 / 依赖方向 / 时序 / PR 规划（v0.2 草案）
+│   ├── 01-requirements.md # 产品需求 PRD：定位/范围/NFR/用户故事/流程/决策（v0.4 已拍板）
+│   ├── 02-modules.md      # 模块拆分：判据 / 边界 / 依赖方向 / 时序 / PR 规划（v0.3 草案）
 │   ├── 03-data-model.md   # 数据模型：ER / DDL 草案 / 状态机 / 存储选型（v0.2 已拍板）
 │   ├── 04-retrieval.md    # 检索链路：切分 / embedding / 混合检索 / 防幻 / 拒答（v0.2 已拍板）
-│   ├── 05-agent-workflow.md   # Agent 多步工作流设计（待写）
+│   ├── 05-agent-workflow.md   # Agent 多步工作流：规划 / 执行 / 缺料 / 汇总（v0.1 待拍板）
 │   └── 06-evaluation.md   # 评估方案：检索质量与回答质量怎么测（待写）
 ├── templates/
 │   └── module-design.md   # 模块设计模板（= GitHub 子 Issue 模板）
