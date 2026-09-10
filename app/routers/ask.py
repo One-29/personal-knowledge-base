@@ -29,7 +29,7 @@ def ask_question(payload: AskRequest, db: Session = Depends(get_db)):
         result = ask_service.answer_question(
             db, payload.question, payload.kb_id, session_id=payload.session_id
         )
-    except LookupError as exc:                       # 知识库不存在
+    except ask_service.KnowledgeBaseNotFound as exc:   # 知识库不存在
         raise HTTPException(status_code=404, detail=str(exc)) from None
 
     return AnswerOut(

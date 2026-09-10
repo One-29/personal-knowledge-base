@@ -29,6 +29,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+class KnowledgeBaseNotFound(LookupError):
+    """指定的知识库不存在（路由层据此返回 404）。
+
+    用专用异常而非裸 LookupError：后者会把 KeyError 之类的编程错误
+    也误判成 404（KeyError 是 LookupError 的子类）。
+    """
+
+
 REFUSAL_EMPTY_KB = "empty_kb"                 # 库为空 / 无任何命中
 REFUSAL_LOW_RELEVANCE = "low_relevance"       # 最高相似度低于阈值 τ / 模型自述资料不足
 REFUSAL_INVALID_CITATION = "invalid_citation"  # 引用越界（幻觉引用）
@@ -85,7 +94,7 @@ def answer_question(
     :param session_id: 提供时启用会话——按上文改写追问，并记录本轮（D5）
     """
     if kb_id is not None and crud.get_kb(db, kb_id) is None:
-        raise LookupError("知识库不存在")
+        raise KnowledgeBaseNotFound("知识库不存在")
 
     store = session_store or session.store
     history = store.history(session_id) if session_id else []

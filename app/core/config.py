@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     session_ttl_seconds: float = 1800.0     # 30 分钟无活动即过期
     session_max_turns: int = 5              # 只保留最近 5 轮作为改写上下文
 
+    # 多步工作流（05 §5 AW2）：单次任务的步骤上限
+    workflow_max_steps: int = 5
+
 
 # 进程内单例：整个应用共享一份配置（import settings 即用）
 settings = Settings()
