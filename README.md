@@ -148,6 +148,15 @@ flowchart LR
 | [04-retrieval](docs/design/04-retrieval.md) | 检索链路（切分 / embedding / 混合检索 / 防幻 / 拒答，DR1–DR6） |
 | [05-agent-workflow](docs/design/05-agent-workflow.md) | Agent 多步工作流（AW1–AW5） |
 | [06-evaluation](docs/design/06-evaluation.md) | 评估方案与首次评估结论（含 τ 校准） |
+| [07-frontend-design](docs/design/07-frontend-design.md) | 前端界面设计（token 系统 / 关键决策） |
+
+## 🖥 界面
+
+前端是单页应用（`frontend/`，原生 HTML/CSS/JS，零构建），四个视图：**问答**（引用编号可点，原文显示在常驻边注栏）、**工作流**（步骤序列 + 缺料标注）、**文档**（清单 + 处理状态）、**知识库**（新建/删除）。
+
+设计取向：界面隐喻为「**纸面与页边注**」——笔记与引文的现实形态是手稿与文献，因此回答是正文、`[n]` 是上标引文、**原文是页边注**。核对原文是产品的核心动作，所以边注栏常驻而非弹窗。设计 token 与决策见 [07-frontend-design](docs/design/07-frontend-design.md)。
+
+启动后打开 <http://127.0.0.1:8000/ui/> 即可使用（根路径会自动跳转）。
 
 ## 🧪 测试与评估
 

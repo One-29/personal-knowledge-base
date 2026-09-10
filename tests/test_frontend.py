@@ -23,9 +23,10 @@ def test_ui_serves_index_page():
         resp = client.get("/ui/")
         assert resp.status_code == 200
         assert "KnowBase" in resp.text
-        assert 'id="qa-form"' in resp.text          # 问答入口
-        assert 'id="wf-form"' in resp.text          # 工作流入口
-        assert 'id="citation-drawer"' in resp.text  # 溯源抽屉
+        assert 'id="ask-form"' in resp.text       # 问答入口
+        assert 'id="trace-form"' in resp.text     # 工作流入口
+        assert 'id="margin"' in resp.text         # 页边注：核对原文
+        assert 'id="docs-file"' in resp.text      # 文档上传
         assert "app.js" in resp.text
 
 
