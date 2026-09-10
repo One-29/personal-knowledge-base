@@ -113,6 +113,8 @@ def _fake_embedding(monkeypatch) -> None:
                 vectors.append([x / norm for x in raw])
             return vectors
 
-    from app import ingest
+    from app import embedding, ingest
 
+    # 两个模块都要替换：ingest 是模块级导入；ask 经 embedding 模块调用
+    monkeypatch.setattr(embedding, "get_embedding_provider", lambda: _FakeProvider())
     monkeypatch.setattr(ingest, "get_embedding_provider", lambda: _FakeProvider())
