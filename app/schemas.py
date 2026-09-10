@@ -149,3 +149,30 @@ class WorkflowResultOut(BaseModel):
     steps: list[WorkflowStepOut]
     answer: str
     citations: list[CitationOut] = []
+
+
+class GraphNodeOut(BaseModel):
+    """关联图节点（= 一篇文档）。"""
+
+    doc_id: int
+    title: str
+    chunks: int
+    chars: int
+
+
+class GraphEdgeOut(BaseModel):
+    """关联图边（文档间的语义关联）。"""
+
+    source: int
+    target: int
+    weight: float        # 归一化强度 0–1（线宽/透明度）
+    links: int           # 跨文档近邻对数
+    similarity: float    # 平均相似度
+
+
+class GraphOut(BaseModel):
+    """关联图响应（Obsidian graph view 的对应物）。"""
+
+    nodes: list[GraphNodeOut] = []
+    edges: list[GraphEdgeOut] = []
+    truncated: bool = False   # 块数超过计算上限时为 True（结果不完整，诚实标注）

@@ -19,6 +19,7 @@
 - **会话记录本地保存**：多会话（新建/切换/删除）存在浏览器本地，刷新不丢；上下文随请求回传，服务端保持无状态
 - **可中断**：等待回答或任务时随时点「停止」，不必干等
 - **Agent 多步工作流**：跨文档综合任务自动拆步执行，**缺料步骤显式标注**，引用全局统一编号
+- **关联图**：Obsidian 式 graph view——节点是笔记、连线是语义关联强度（悬停看关联文档、可拖动、可调阈值）
 - **可评估**：内置评估集与指标（recall@k / MRR / 拒答率 / τ 扫描），参数由数据校准
 
 ## 🚀 快速开始
@@ -117,6 +118,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask \
 | **POST** | **`/api/v1/ask`** | **问答（带引用；覆盖不足返回 `refused=true`）** |
 | GET | `/api/v1/citations/{chunk_id}` | 引用溯源（原文片段 + 字符区间） |
 | **POST** | **`/api/v1/workflow`** | **多步综合任务（拆步、缺料可见、汇总）** |
+| GET | `/api/v1/graph` | 关联图数据（节点=文档，边=语义关联强度） |
 
 ## 🏗 架构
 
@@ -151,6 +153,7 @@ flowchart LR
 | [05-agent-workflow](docs/design/05-agent-workflow.md) | Agent 多步工作流（AW1–AW5） |
 | [06-evaluation](docs/design/06-evaluation.md) | 评估方案与首次评估结论（含 τ 校准） |
 | [07-frontend-design](docs/design/07-frontend-design.md) | 前端界面设计（token 系统 / 关键决策） |
+| [08-graph-view](docs/design/08-graph-view.md) | 关联图设计（边的计算 / 权重合成 / 决策） |
 
 ## 🖥 界面
 

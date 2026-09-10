@@ -14,7 +14,8 @@ docs/
 │   ├── 04-retrieval.md    # 检索链路：切分 / embedding / 混合检索 / 防幻 / 拒答（v0.2 已拍板）
 │   ├── 05-agent-workflow.md   # Agent 多步工作流：规划 / 执行 / 缺料 / 汇总（v0.2 已拍板）
 │   ├── 06-evaluation.md   # 评估方案：评估集 / recall@k / τ 校准（v0.1 含首次结论）
-│   └── 07-frontend-design.md  # 前端界面设计：token 系统 / 关键决策（v0.1）
+│   ├── 07-frontend-design.md  # 前端界面设计：token 系统 / 关键决策（v0.1）
+│   └── 08-graph-view.md   # 关联图：边的计算 / 权重合成 / 决策（v0.1）
 ├── templates/
 │   └── module-design.md   # 模块设计模板（= GitHub 子 Issue 模板）
 └── issue-map.md           # 本地文档 → GitHub Issue 的映射（建仓后维护，待写）

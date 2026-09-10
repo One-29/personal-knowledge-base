@@ -164,6 +164,7 @@ document.querySelectorAll(".views button").forEach((btn) => {
     btn.classList.add("on");
     document.getElementById("view-" + btn.dataset.view).classList.add("on");
     if (btn.dataset.view === "docs") loadDocs();
+    if (btn.dataset.view === "map") loadGraph();
   });
 });
 
@@ -246,6 +247,7 @@ function renderKbSelects() {
   const askSelect = document.getElementById("ask-kb");
   const traceSelect = document.getElementById("trace-kb");
   const docsSelect = document.getElementById("docs-kb");
+  const mapSelect = document.getElementById("map-kb");
 
   const html = ['<option value="">全部知识库</option>']
     .concat(state.kbs.map((kb) => `<option value="${kb.id}">${esc(kb.name)}</option>`)).join("");
@@ -254,12 +256,15 @@ function renderKbSelects() {
   traceSelect.innerHTML = html;
   if (keep) askSelect.value = keep;
 
-  docsSelect.innerHTML = state.kbs.map((kb) => `<option value="${kb.id}">${esc(kb.name)}</option>`).join("");
+  const onlyKbs = state.kbs.map((kb) => `<option value="${kb.id}">${esc(kb.name)}</option>`).join("");
+  docsSelect.innerHTML = onlyKbs;
+  mapSelect.innerHTML = onlyKbs;
   if (state.docsKbId && state.kbs.some((kb) => kb.id === state.docsKbId)) {
     docsSelect.value = String(state.docsKbId);
   } else if (state.kbs.length) {
     docsSelect.value = String(state.kbs[0].id);
   }
+  if (!mapSelect.value && state.kbs.length) mapSelect.value = String(state.kbs[0].id);
   state.docsKbId = docsSelect.value ? Number(docsSelect.value) : null;
 }
 
@@ -533,6 +538,214 @@ function renderTrace(task, result) {
     </div>`;
 }
 
+/* ── 关联图（Canvas 力导向，零依赖） ─────────────── */
+
+const mapState = {
+  nodes: [],
+  edges: [],
+  dragging: null,
+  hover: null,
+  raf: null,
+  alpha: 1,
+};
+
+async function loadGraph() {
+  const kbId = document.getElementById("map-kb").value;
+  const empty = document.getElementById("map-empty");
+  const stat = document.getElementById("map-stat");
+  if (!kbId) {
+    empty.textContent = "先建一个知识库并导入笔记，这里会出现笔记之间的关联。";
+    empty.classList.remove("hidden");
+    stat.textContent = "";
+    mapState.nodes = [];
+    mapState.edges = [];
+    drawGraph();
+    return;
+  }
+  const threshold = document.getElementById("map-threshold").value;
+  stat.textContent = "计算中…";
+  try {
+    const data = await api(`/graph?kb_id=${kbId}&min_similarity=${threshold}`);
+    if (!data.nodes.length || data.nodes.length < 2) {
+      empty.textContent = "这个知识库至少需要两篇文档才能看出关联。";
+      empty.classList.remove("hidden");
+      stat.textContent = "";
+      mapState.nodes = [];
+      mapState.edges = [];
+      drawGraph();
+      return;
+    }
+    empty.classList.add("hidden");
+    prepareGraph(data);
+    stat.textContent = `${data.nodes.length} 篇 · ${data.edges.length} 条关联${data.truncated ? "（块数超上限，结果不完整）" : ""}`;
+  } catch (err) {
+    stat.textContent = "";
+    notify(err.message, true);
+  }
+}
+
+/** 初始化节点位置（圆环分布 + 少量抖动，避免全叠在中心）并启动力模拟。 */
+function prepareGraph(data) {
+  const count = data.nodes.length;
+  const radius = Math.min(200, 60 + count * 8);
+  mapState.nodes = data.nodes.map((node, i) => {
+    const angle = (i / count) * Math.PI * 2;
+    return {
+      ...node,
+      x: 450 + Math.cos(angle) * radius,
+      y: 280 + Math.sin(angle) * radius,
+      vx: 0,
+      vy: 0,
+      r: 8 + Math.min(14, node.chunks * 1.6),
+    };
+  });
+  const index = new Map(mapState.nodes.map((n) => [n.doc_id, n]));
+  mapState.edges = data.edges
+    .map((e) => ({ ...e, a: index.get(e.source), b: index.get(e.target) }))
+    .filter((e) => e.a && e.b);
+  mapState.alpha = 1;
+  if (mapState.raf) cancelAnimationFrame(mapState.raf);
+  tickGraph();
+}
+
+function tickGraph() {
+  const nodes = mapState.nodes;
+  const edges = mapState.edges;
+  const alpha = mapState.alpha;
+
+  // 斥力：节点两两推开（文档数一般在几十以内，O(n²) 可接受）
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i];
+      const b = nodes[j];
+      let dx = a.x - b.x;
+      let dy = a.y - b.y;
+      let dist = Math.hypot(dx, dy) || 0.01;
+      const force = (2200 * alpha) / (dist * dist);
+      dx /= dist; dy /= dist;
+      a.vx += dx * force; a.vy += dy * force;
+      b.vx -= dx * force; b.vy -= dy * force;
+    }
+  }
+
+  // 弹簧：有边相连的节点互相吸引（权重越大越紧）
+  edges.forEach((e) => {
+    let dx = e.b.x - e.a.x;
+    let dy = e.b.y - e.a.y;
+    const dist = Math.hypot(dx, dy) || 0.01;
+    const target = 160 - e.weight * 60;
+    const force = ((dist - target) / dist) * 0.02 * alpha * (0.4 + e.weight);
+    dx *= force; dy *= force;
+    e.a.vx += dx; e.a.vy += dy;
+    e.b.vx -= dx; e.b.vy -= dy;
+  });
+
+  // 向心 + 阻尼 + 边界
+  nodes.forEach((n) => {
+    n.vx += (450 - n.x) * 0.002 * alpha;
+    n.vy += (280 - n.y) * 0.002 * alpha;
+    if (n === mapState.dragging) { n.vx = 0; n.vy = 0; return; }
+    n.vx *= 0.82;
+    n.vy *= 0.82;
+    n.x = Math.max(n.r + 30, Math.min(870 - n.r, n.x + n.vx));
+    n.y = Math.max(n.r + 24, Math.min(536 - n.r, n.y + n.vy));
+  });
+
+  mapState.alpha = Math.max(0.02, alpha * 0.99);
+  drawGraph();
+  mapState.raf = requestAnimationFrame(tickGraph);
+}
+
+function drawGraph() {
+  const canvas = document.getElementById("map-canvas");
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const style = getComputedStyle(document.documentElement);
+  const rule = style.getPropertyValue("--rule").trim() || "#D6D3CB";
+  const stamp = style.getPropertyValue("--stamp").trim() || "#93262A";
+  const ink = style.getPropertyValue("--ink").trim() || "#191A1C";
+  const ledger = style.getPropertyValue("--ledger").trim() || "#2B4741";
+  const serif = '"Source Han Serif SC", "Songti SC", Georgia, serif';
+
+  // 边
+  mapState.edges.forEach((e) => {
+    const active = mapState.hover === e.a.doc_id || mapState.hover === e.b.doc_id;
+    ctx.strokeStyle = active ? stamp : rule;
+    ctx.globalAlpha = active ? 0.9 : 0.25 + e.weight * 0.5;
+    ctx.lineWidth = 0.6 + e.weight * 3;
+    ctx.beginPath();
+    ctx.moveTo(e.a.x, e.a.y);
+    ctx.lineTo(e.b.x, e.b.y);
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+
+  // 节点
+  mapState.nodes.forEach((n) => {
+    const isHover = mapState.hover === n.doc_id;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+    ctx.fillStyle = isHover ? stamp : ledger;
+    ctx.globalAlpha = isHover ? 1 : 0.82;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.font = `${isHover ? "600 " : ""}12.5px ${serif}`;
+    ctx.fillStyle = ink;
+    ctx.textAlign = "center";
+    ctx.fillText(n.title.replace(/\.(md|txt)$/i, "").slice(0, 14), n.x, n.y + n.r + 15);
+  });
+}
+
+function bindGraphCanvas() {
+  const canvas = document.getElementById("map-canvas");
+  const hover = document.getElementById("map-hover");
+
+  const pick = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = (event.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (event.clientY - rect.top) * (canvas.height / rect.height);
+    return mapState.nodes.find((n) => Math.hypot(n.x - x, n.y - y) <= n.r + 4) || null;
+  };
+
+  canvas.addEventListener("mousemove", (event) => {
+    const node = pick(event);
+    mapState.hover = node ? node.doc_id : null;
+    if (node) {
+      const links = mapState.edges
+        .filter((e) => e.a.doc_id === node.doc_id || e.b.doc_id === node.doc_id)
+        .map((e) => (e.a.doc_id === node.doc_id ? e.b.title : e.a.title));
+      hover.textContent = `${node.title} · ${node.chunks} 块 · ${node.chars} 字`
+        + (links.length ? ` · 关联：${links.slice(0, 4).join("、")}` : " · 暂无关联");
+    } else {
+      hover.textContent = "";
+    }
+    drawGraph();
+  });
+
+  canvas.addEventListener("mousedown", (event) => {
+    const node = pick(event);
+    if (!node) return;
+    mapState.dragging = node;
+    mapState.alpha = Math.max(mapState.alpha, 0.4);
+    if (!mapState.raf) tickGraph();
+  });
+
+  window.addEventListener("mouseup", () => { mapState.dragging = null; });
+
+  canvas.addEventListener("mousemove", (event) => {
+    if (!mapState.dragging) return;
+    const rect = canvas.getBoundingClientRect();
+    mapState.dragging.x = (event.clientX - rect.left) * (canvas.width / rect.width);
+    mapState.dragging.y = (event.clientY - rect.top) * (canvas.height / rect.height);
+  });
+}
+
+document.getElementById("map-kb").addEventListener("change", loadGraph);
+document.getElementById("map-threshold").addEventListener("change", loadGraph);
+document.getElementById("map-reload").addEventListener("click", loadGraph);
+
 /* ── 会话渲染（含历史记录回看） ───────────────────── */
 
 function renderConversation() {
@@ -561,6 +774,7 @@ function renderConversation() {
 
 (async function start() {
   try {
+    bindGraphCanvas();
     ensureConversation();
     renderConvSelect();
     renderConversation();

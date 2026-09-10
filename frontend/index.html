@@ -15,6 +15,7 @@
     <nav class="views">
       <button data-view="ask" class="on">问答</button>
       <button data-view="trace">工作流</button>
+      <button data-view="map">关联图</button>
       <button data-view="docs">文档</button>
       <button data-view="kbs">知识库</button>
     </nav>
@@ -51,6 +52,31 @@
         <button type="submit">执行</button>
       </form>
       <div id="trace-flow" class="flow"></div>
+    </section>
+
+    <!-- 关联图 -->
+    <section id="view-map" class="view">
+      <p class="intro">每篇笔记是一个节点，连线表示两篇笔记在语义上互相靠近的程度。悬停查看标题，拖动可调整布局。</p>
+      <div class="underbar">
+        <label>知识库
+          <select id="map-kb"></select>
+        </label>
+        <label>连边阈值
+          <select id="map-threshold">
+            <option value="0.25">宽松 0.25</option>
+            <option value="0.30" selected>标准 0.30</option>
+            <option value="0.40">严格 0.40</option>
+            <option value="0.50">只连最像 0.50</option>
+          </select>
+        </label>
+        <button id="map-reload" class="link">重新计算</button>
+        <span id="map-stat" class="note"></span>
+      </div>
+      <div class="map-wrap">
+        <canvas id="map-canvas" width="900" height="560"></canvas>
+        <p id="map-hover" class="map-hover"></p>
+      </div>
+      <p id="map-empty" class="empty hidden"></p>
     </section>
 
     <!-- 文档 -->

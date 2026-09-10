@@ -12,7 +12,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings  # noqa: F401  （供后续装配读取配置）
-from app.routers import ask, documents, kbs, workflow
+from app.routers import ask, documents, graph, kbs, workflow
 
 API_PREFIX = "/api/v1"
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
@@ -29,6 +29,7 @@ app.include_router(documents.kb_documents_router, prefix=API_PREFIX)
 app.include_router(documents.documents_router, prefix=API_PREFIX)
 app.include_router(ask.router, prefix=API_PREFIX)
 app.include_router(workflow.router, prefix=API_PREFIX)
+app.include_router(graph.router, prefix=API_PREFIX)
 
 
 @app.get("/health")
