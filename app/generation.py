@@ -21,14 +21,19 @@ logger = logging.getLogger(__name__)
 # 引用标注：形如 [1]、[12]
 _CITATION_RE = re.compile(r"\[(\d+)\]")
 
-SYSTEM_PROMPT = """你是一个严谨的知识库问答助手。只能依据用户提供的资料片段作答。
+SYSTEM_PROMPT_TEMPLATE = """你是一个严谨的知识库问答助手。只能依据用户提供的资料片段作答。
 
 规则：
 1. 每个陈述句后必须标注来源编号，格式为 [n]，n 是资料片段的编号。
-2. 资料中没有的信息，一律不要写入回答；不要使用你自己的常识补充。
-3. 如果资料不足以回答问题，只回复：资料不足，无法回答。
-4. 不要编造资料中不存在的引用编号。
+2. **本次资料片段只有 {count} 条，合法编号仅限 [1] 到 [{count}]**，不得使用其它编号。
+3. 资料中没有的信息，一律不要写入回答；不要使用你自己的常识补充。
+4. 如果资料不足以回答问题，只回复：资料不足，无法回答。
 """
+
+
+def build_system_prompt(count: int) -> str:
+    """系统提示：显式声明合法引用编号范围（实测可降低越界引用率）。"""
+    return SYSTEM_PROMPT_TEMPLATE.format(count=count)
 
 
 class LLMError(RuntimeError):
@@ -131,4 +136,5 @@ def generate_answer(
 ) -> str:
     """调用 LLM 生成回答（不做校验——校验由调用方按 04 §5 执行）。"""
     llm = provider or get_llm_provider()
-    return llm.complete(SYSTEM_PROMPT, build_user_prompt(question, chunks)).strip()
+    system = build_system_prompt(len(chunks))
+    return llm.complete(system, build_user_prompt(question, chunks)).strip()

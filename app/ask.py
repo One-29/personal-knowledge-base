@@ -24,16 +24,34 @@ from .generation import LLMError, LLMProvider
 logger = logging.getLogger(__name__)
 
 REFUSAL_EMPTY_KB = "empty_kb"                 # 库为空 / 无任何命中
-REFUSAL_LOW_RELEVANCE = "low_relevance"       # 最高相似度低于阈值 τ
+REFUSAL_LOW_RELEVANCE = "low_relevance"       # 最高相似度低于阈值 τ / 模型自述资料不足
 REFUSAL_INVALID_CITATION = "invalid_citation"  # 引用越界（幻觉引用）
+REFUSAL_NO_CITATION = "no_citation"           # 有实质内容却零引用（不可溯源）
 REFUSAL_LLM_UNAVAILABLE = "llm_unavailable"   # 生成服务不可用
 
 REFUSAL_MESSAGES = {
     REFUSAL_EMPTY_KB: "知识库里还没有相关内容，无法回答这个问题。可以先导入相关笔记再试。",
     REFUSAL_LOW_RELEVANCE: "知识库中没有找到与该问题足够相关的内容，无法给出可信回答。",
     REFUSAL_INVALID_CITATION: "生成的回答引用了不存在的来源，为保证可信性已拒绝这次回答。",
+    REFUSAL_NO_CITATION: "生成的回答没有标注任何来源，无法核对，为保证可信性已拒绝这次回答。",
     REFUSAL_LLM_UNAVAILABLE: "回答生成服务暂时不可用，请稍后重试。",
 }
+
+# 模型自述"资料不足"的常见说法（此时归入低相关度拒答，文案更贴切）
+_INSUFFICIENT_MARKERS = ("资料不足", "无法回答", "没有相关", "未提及", "无法确定")
+
+
+@dataclass
+class CitationData:
+    """一条引用：回答中 [n] 对应的块与来源文档（供前端溯源展示）。"""
+
+    index: int          # 在回答中的 [n] 序号（= 候选列表中的位置）
+    chunk_id: int
+    doc_id: int
+    doc_title: str
+    chunk_text: str
+    char_start: int
+    char_end: int
 
 
 @dataclass
@@ -42,7 +60,7 @@ class AnswerData:
 
     question: str
     content: str
-    citations: list[retrieval.RetrievedChunk] = field(default_factory=list)
+    citations: list[CitationData] = field(default_factory=list)
     refused: bool = False
     refusal_reason: str | None = None
 
@@ -86,9 +104,53 @@ def answer_question(
         logger.warning("L2 拒答：越界引用 %s（提供 %d 块）", invalid, len(candidates))
         return _refuse(question, REFUSAL_INVALID_CITATION)
 
+    # L2-b：零引用（有实质内容却无来源）→ 不可溯源，同样拒答（可信优先）
     cited_indexes = generation.parse_citations(content)
-    cited_chunks = [c for i, c in enumerate(candidates, start=1) if i in cited_indexes]
-    return AnswerData(question=question, content=content, citations=cited_chunks)
+    if not cited_indexes:
+        reason = (
+            REFUSAL_LOW_RELEVANCE
+            if any(marker in content for marker in _INSUFFICIENT_MARKERS)
+            else REFUSAL_NO_CITATION
+        )
+        logger.info("L2 拒答：回答无有效引用（reason=%s）", reason)
+        return _refuse(question, reason)
+
+    cited = [(i, c) for i, c in enumerate(candidates, start=1) if i in cited_indexes]
+    return AnswerData(
+        question=question,
+        content=content,
+        citations=_build_citations(db, cited),
+    )
+
+
+def _build_citations(
+    db: Session,
+    cited: list[tuple[int, retrieval.RetrievedChunk]],
+) -> list[CitationData]:
+    """组装引用：批量取文档标题（避免逐条查询）。"""
+    from sqlalchemy import select
+
+    from .models import Document
+
+    doc_ids = {chunk.doc_id for _, chunk in cited}
+    titles = {
+        doc_id: title
+        for doc_id, title in db.execute(
+            select(Document.id, Document.title).where(Document.id.in_(doc_ids))
+        ).all()
+    }
+    return [
+        CitationData(
+            index=index,
+            chunk_id=chunk.chunk_id,
+            doc_id=chunk.doc_id,
+            doc_title=titles.get(chunk.doc_id, ""),
+            chunk_text=chunk.content,
+            char_start=chunk.char_start,
+            char_end=chunk.char_end,
+        )
+        for index, chunk in cited
+    ]
 
 
 def _refuse(question: str, reason: str) -> AnswerData:
