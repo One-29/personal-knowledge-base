@@ -25,14 +25,19 @@
     <section id="view-ask" class="view on">
       <form id="ask-form" class="askbar">
         <input id="ask-input" placeholder="例如：TCP 为什么需要三次握手？" autocomplete="off">
-        <button type="submit">提问</button>
+        <button type="submit" id="ask-send">提问</button>
+        <button type="button" id="ask-stop" class="stop hidden">停止</button>
       </form>
       <div class="underbar">
         <label>知识库
           <select id="ask-kb"></select>
         </label>
-        <span id="ask-session" class="note"></span>
-        <button id="ask-new" class="link">开始新会话</button>
+        <label>会话
+          <select id="ask-conv"></select>
+        </label>
+        <button id="ask-new" class="link">新会话</button>
+        <button id="ask-drop" class="link">删除当前会话</button>
+        <span id="ask-saved" class="note"></span>
       </div>
       <div id="ask-flow" class="flow"></div>
     </section>

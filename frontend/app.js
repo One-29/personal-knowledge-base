@@ -3,26 +3,26 @@
  *
  * 设计约束（frontend-design skill 的设计计划）：
  * - 前端只渲染后端契约对象，不做业务判定（排序/拒答/溯源拼接都在后端，02 §3 M5 边界）；
- * - 「核对」是核心动作，所以原文显示在常驻的页边注栏，而不是弹窗；
+ * - 「核对」是核心动作，原文显示在常驻页边注栏，而非弹窗；
  * - 引用编号是整页唯一的高饱和元素。
+ *
+ * 会话记录保存在浏览器本地（localStorage），并把最近几轮随请求回传给后端做
+ * 追问改写——后端因此保持无状态：刷新页面或重启服务都不会丢掉对话上下文。
  */
 
 const API = "/api/v1";
+const CONV_KEY = "kb_conversations";
+const ACTIVE_KEY = "kb_active_conv";
+const HISTORY_TURNS = 6;          // 回传给后端的最近轮数（用于指代句改写）
 
 const state = {
   kbs: [],
   docsKbId: null,
   askKbId: null,
-  sessionId: sessionStorage.getItem("kb_session") || newSessionId(),
+  controller: null,               // 请求中的 AbortController（停止按钮用）
 };
 
 /* ── 基础工具 ─────────────────────────────────────── */
-
-function newSessionId() {
-  const id = "s-" + Math.random().toString(36).slice(2, 10);
-  sessionStorage.setItem("kb_session", id);
-  return id;
-}
 
 async function api(path, options = {}) {
   const resp = await fetch(API + path, {
@@ -55,7 +55,6 @@ function esc(text) {
   ));
 }
 
-/** 把回答里的 [n] 变成可点的引用编号；其余内容转义后原样输出。 */
 function withCitations(content) {
   return esc(content).replace(/\[(\d+)\]/g, (_, n) =>
     `<span class="cite" data-index="${n}" role="button" tabindex="0">[${n}]</span>`);
@@ -66,6 +65,94 @@ function stamp(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+/* ── 会话（本地保存） ─────────────────────────────── */
+
+function loadConversations() {
+  try { return JSON.parse(localStorage.getItem(CONV_KEY)) || []; } catch (_) { return []; }
+}
+
+function persistConversations(list) {
+  localStorage.setItem(CONV_KEY, JSON.stringify(list.slice(0, 50)));
+}
+
+function activeConversation() {
+  const id = localStorage.getItem(ACTIVE_KEY);
+  return loadConversations().find((c) => c.id === id) || null;
+}
+
+function startConversation() {
+  const conv = {
+    id: "c-" + Date.now().toString(36),
+    title: "",
+    at: Date.now(),
+    turns: [],
+  };
+  const list = loadConversations();
+  list.unshift(conv);
+  persistConversations(list);
+  localStorage.setItem(ACTIVE_KEY, conv.id);
+  return conv;
+}
+
+function ensureConversation() {
+  return activeConversation() || startConversation();
+}
+
+function useConversation(id) {
+  localStorage.setItem(ACTIVE_KEY, id);
+  renderConversation();
+  renderConvSelect();
+}
+
+function dropConversation(id) {
+  const list = loadConversations().filter((c) => c.id !== id);
+  persistConversations(list);
+  if (localStorage.getItem(ACTIVE_KEY) === id) {
+    if (list.length) localStorage.setItem(ACTIVE_KEY, list[0].id);
+    else localStorage.removeItem(ACTIVE_KEY);
+  }
+  renderConversation();
+  renderConvSelect();
+}
+
+function rememberTurn(turn) {
+  const conv = ensureConversation();
+  conv.turns.push(turn);
+  conv.at = Date.now();
+  if (!conv.title) conv.title = turn.question.slice(0, 24);
+  const list = loadConversations();
+  const index = list.findIndex((c) => c.id === conv.id);
+  if (index >= 0) list[index] = conv; else list.unshift(conv);
+  persistConversations(list);
+  renderConvSelect();
+  flashSaved();
+}
+
+function flashSaved() {
+  const el = document.getElementById("ask-saved");
+  el.textContent = "已保存到本地";
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.textContent = ""; }, 1800);
+}
+
+function renderConvSelect() {
+  const select = document.getElementById("ask-conv");
+  const list = loadConversations();
+  select.innerHTML = list.map((c) =>
+    `<option value="${c.id}">${esc(c.title || "新会话")} · ${c.turns.length} 轮</option>`).join("");
+  const active = activeConversation();
+  if (active) select.value = active.id;
+  else if (list.length) select.value = list[0].id;
+}
+
+/** 回传给后端的最近几轮（用于指代句改写）。 */
+function historyForRequest(conv) {
+  return conv.turns.slice(-HISTORY_TURNS).map((t) => ({
+    question: t.question,
+    answer: (t.answerText || "").slice(0, 1500),
+  }));
 }
 
 /* ── 视图切换 ─────────────────────────────────────── */
@@ -87,35 +174,36 @@ async function showInMargin(chunkId) {
     const detail = await api(`/citations/${chunkId}`);
     document.getElementById("margin-hint").classList.add("hidden");
     const body = document.getElementById("margin-body");
-    body.classList.remove("hidden");
-    body.classList.remove("margin-body-enter");
-    void body.offsetWidth;                       // 重放淡入（只响应点击动作）
+    body.classList.remove("hidden", "margin-body-enter");
+    void body.offsetWidth;                          // 重放淡入（只响应点击）
     body.classList.add("margin-body-enter");
 
     document.getElementById("margin-src").textContent =
       `${detail.doc_title} · 偏移 ${detail.char_start}–${detail.char_end}`;
     document.getElementById("margin-text").textContent = detail.chunk_text;
-    document.getElementById("margin-note").textContent = `块 ${chunkId} · 块内文本即上方段落`;
+    document.getElementById("margin-note").textContent = `块 ${chunkId}`;
     document.querySelectorAll(".cite.on").forEach((el) => el.classList.remove("on"));
-    document.querySelectorAll(`.cite[data-index]`).forEach((el) => {
+    document.querySelectorAll(".cite[data-chunk]").forEach((el) => {
       if (el.dataset.chunk === String(chunkId)) el.classList.add("on");
     });
-    if (window.innerWidth <= 900) document.getElementById("margin").scrollIntoView({ behavior: "smooth" });
+    if (window.innerWidth <= 900) {
+      document.getElementById("margin").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   } catch (err) { notify(err.message, true); }
 }
 
 function bindCitations(scope, citations) {
   scope.querySelectorAll(".cite").forEach((el) => {
-    const chunkId = el.dataset.chunk;
-    const index = el.dataset.index;
     const open = () => {
-      if (chunkId) return showInMargin(Number(chunkId));
-      const hit = (citations || []).find((c) => String(c.index) === index);
+      if (el.dataset.chunk) return showInMargin(Number(el.dataset.chunk));
+      const hit = (citations || []).find((c) => String(c.index) === el.dataset.index);
       if (hit) showInMargin(hit.chunk_id);
       else notify("这条编号不在本次引用列表中", true);
     };
     el.addEventListener("click", open);
-    el.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); } });
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+    });
   });
 }
 
@@ -144,10 +232,9 @@ function renderShelf() {
 
   list.querySelectorAll("[data-drop]").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      const id = btn.dataset.drop;
       if (!confirm("删除这个知识库？它下面的文档和索引会一起清理。")) return;
       try {
-        await api(`/kbs/${id}`, { method: "DELETE" });
+        await api(`/kbs/${btn.dataset.drop}`, { method: "DELETE" });
         notify("知识库已删除");
         await loadKbs();
       } catch (err) { notify(err.message, true); }
@@ -160,12 +247,12 @@ function renderKbSelects() {
   const traceSelect = document.getElementById("trace-kb");
   const docsSelect = document.getElementById("docs-kb");
 
-  const askHtml = ['<option value="">全部知识库</option>']
+  const html = ['<option value="">全部知识库</option>']
     .concat(state.kbs.map((kb) => `<option value="${kb.id}">${esc(kb.name)}</option>`)).join("");
-  const keepAsk = askSelect.value;
-  askSelect.innerHTML = askHtml;
-  traceSelect.innerHTML = askHtml;
-  if (keepAsk) askSelect.value = keepAsk;
+  const keep = askSelect.value;
+  askSelect.innerHTML = html;
+  traceSelect.innerHTML = html;
+  if (keep) askSelect.value = keep;
 
   docsSelect.innerHTML = state.kbs.map((kb) => `<option value="${kb.id}">${esc(kb.name)}</option>`).join("");
   if (state.docsKbId && state.kbs.some((kb) => kb.id === state.docsKbId)) {
@@ -280,45 +367,85 @@ document.getElementById("ask-kb").addEventListener("change", (event) => {
   state.askKbId = event.target.value ? Number(event.target.value) : null;
 });
 
-document.getElementById("ask-new").addEventListener("click", () => {
-  state.sessionId = newSessionId();
-  showSession();
-  document.getElementById("ask-flow").innerHTML = "";
-  notify("已开始新会话，之前的问题不再作为上下文");
+document.getElementById("ask-conv").addEventListener("change", (event) => {
+  if (event.target.value) useConversation(event.target.value);
 });
 
-function showSession() {
-  document.getElementById("ask-session").textContent = `会话 ${state.sessionId}`;
+document.getElementById("ask-new").addEventListener("click", () => {
+  startConversation();
+  renderConversation();
+  renderConvSelect();
+  notify("已新建会话");
+});
+
+document.getElementById("ask-drop").addEventListener("click", () => {
+  const conv = activeConversation();
+  if (!conv) { notify("还没有会话", true); return; }
+  if (!confirm(`删除会话「${conv.title || "新会话"}」？本机保存的记录会一并清除。`)) return;
+  dropConversation(conv.id);
+  notify("会话已删除");
+});
+
+document.getElementById("ask-stop").addEventListener("click", () => {
+  if (state.controller) {
+    state.controller.abort();
+    notify("已停止等待这次回答");
+  }
+});
+
+function setBusy(busy) {
+  document.getElementById("ask-stop").classList.toggle("hidden", !busy);
+  document.getElementById("ask-send").disabled = busy;
 }
 
 document.getElementById("ask-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (state.controller) { notify("上一次提问还在进行中", true); return; }
+
   const input = document.getElementById("ask-input");
   const question = input.value.trim();
   if (!question) return;
   input.value = "";
 
+  const conv = ensureConversation();
   const flow = document.getElementById("ask-flow");
   const entry = document.createElement("article");
   entry.className = "entry";
-  entry.innerHTML = `<h3 class="entry-q">${esc(question)}</h3><p class="entry-a">正在检索并生成…</p>`;
+  entry.innerHTML = `<h3 class="entry-q">${esc(question)}</h3>
+    <p class="entry-a">正在检索资料并组织回答…</p>`;
   flow.appendChild(entry);
   entry.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
+  state.controller = new AbortController();
+  setBusy(true);
   try {
     const answer = await api("/ask", {
       method: "POST",
-      body: JSON.stringify({ question, kb_id: state.askKbId, session_id: state.sessionId }),
+      signal: state.controller.signal,
+      body: JSON.stringify({
+        question,
+        kb_id: state.askKbId,
+        history: historyForRequest(conv),
+      }),
     });
-    entry.innerHTML = renderEntry(question, answer);
+    entry.innerHTML = renderAnswerEntry(question, answer);
     bindCitations(entry, answer.citations);
+    rememberTurn({ kind: "ask", question, answer, answerText: answer.content, at: Date.now() });
   } catch (err) {
-    entry.innerHTML = `<h3 class="entry-q">${esc(question)}</h3>
-      <p class="entry-a">没能取到回答：${esc(err.message)}</p>`;
+    if (err.name === "AbortError") {
+      entry.innerHTML = `<h3 class="entry-q">${esc(question)}</h3>
+        <p class="entry-a">已停止等待这次回答。问题没有保存进会话。</p>`;
+    } else {
+      entry.innerHTML = `<h3 class="entry-q">${esc(question)}</h3>
+        <p class="entry-a">没能取到回答：${esc(err.message)}</p>`;
+    }
+  } finally {
+    state.controller = null;
+    setBusy(false);
   }
 });
 
-function renderEntry(question, answer) {
+function renderAnswerEntry(question, answer) {
   const refusal = answer.refused
     ? `<span class="refused">未作答 · ${esc(answer.refusal_reason || "")}</span>` : "";
   const rewrote = answer.search_query && answer.search_query !== question
@@ -332,28 +459,49 @@ function renderEntry(question, answer) {
 
 document.getElementById("trace-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (state.controller) { notify("上一次任务还在进行中", true); return; }
+
   const input = document.getElementById("trace-input");
   const task = input.value.trim();
   if (!task) return;
   input.value = "";
 
+  const conv = ensureConversation();
   const flow = document.getElementById("trace-flow");
   const entry = document.createElement("article");
   entry.className = "entry";
-  entry.innerHTML = `<h3 class="entry-q">${esc(task)}</h3><p class="entry-a">正在拆解任务并逐步执行…</p>`;
+  entry.innerHTML = `<h3 class="entry-q">${esc(task)}</h3>
+    <p class="entry-a">正在拆解任务并逐步执行…（可点「停止」中断等待）</p>`;
   flow.appendChild(entry);
 
   const kbValue = document.getElementById("trace-kb").value;
+  const stop = document.createElement("button");
+  stop.type = "button";
+  stop.className = "link";
+  stop.textContent = "停止";
+  stop.addEventListener("click", () => state.controller && state.controller.abort());
+  entry.appendChild(stop);
+
+  state.controller = new AbortController();
   try {
     const result = await api("/workflow", {
       method: "POST",
+      signal: state.controller.signal,
       body: JSON.stringify({ task, kb_id: kbValue ? Number(kbValue) : null }),
     });
     entry.innerHTML = renderTrace(task, result);
     bindCitations(entry, result.citations);
+    rememberTurn({ kind: "workflow", question: task, result, answerText: result.answer, at: Date.now() });
   } catch (err) {
-    entry.innerHTML = `<h3 class="entry-q">${esc(task)}</h3>
-      <p class="entry-a">没能执行：${esc(err.message)}</p>`;
+    if (err.name === "AbortError") {
+      entry.innerHTML = `<h3 class="entry-q">${esc(task)}</h3>
+        <p class="entry-a">已停止等待这个任务。任务没有保存进会话。</p>`;
+    } else {
+      entry.innerHTML = `<h3 class="entry-q">${esc(task)}</h3>
+        <p class="entry-a">没能执行：${esc(err.message)}</p>`;
+    }
+  } finally {
+    state.controller = null;
   }
 });
 
@@ -385,11 +533,37 @@ function renderTrace(task, result) {
     </div>`;
 }
 
+/* ── 会话渲染（含历史记录回看） ───────────────────── */
+
+function renderConversation() {
+  const flow = document.getElementById("ask-flow");
+  const conv = activeConversation();
+  flow.innerHTML = "";
+  if (!conv || !conv.turns.length) {
+    flow.innerHTML = '<p class="empty">这个会话还没有内容。开始提问吧。</p>';
+    return;
+  }
+  conv.turns.forEach((turn) => {
+    const entry = document.createElement("article");
+    entry.className = "entry";
+    if (turn.kind === "workflow") {
+      entry.innerHTML = renderTrace(turn.question, turn.result);
+      bindCitations(entry, (turn.result && turn.result.citations) || []);
+    } else {
+      entry.innerHTML = renderAnswerEntry(turn.question, turn.answer);
+      bindCitations(entry, (turn.answer && turn.answer.citations) || []);
+    }
+    flow.appendChild(entry);
+  });
+}
+
 /* ── 启动 ─────────────────────────────────────────── */
 
 (async function start() {
-  showSession();
   try {
+    ensureConversation();
+    renderConvSelect();
+    renderConversation();
     await loadKbs();
     await loadDocs();
   } catch (err) {

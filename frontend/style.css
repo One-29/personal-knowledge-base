@@ -132,6 +132,15 @@ main {
   cursor: pointer;
 }
 .askbar button:hover { text-decoration: underline; }
+.askbar button:disabled { color: var(--ink-2); cursor: default; text-decoration: none; }
+
+.askbar button.stop {
+  border: 1px solid var(--stamp);
+  padding: 6px 12px;
+  font-size: 14px;
+  margin-left: 4px;
+}
+.askbar button.stop:hover { background: rgba(147, 38, 42, .08); text-decoration: none; }
 
 .underbar {
   display: flex;
