@@ -26,7 +26,9 @@ router = APIRouter(tags=["Q&A"])
 def ask_question(payload: AskRequest, db: Session = Depends(get_db)):
     """基于知识库回答问题；覆盖不足时拒答（refused=true）。"""
     try:
-        result = ask_service.answer_question(db, payload.question, payload.kb_id)
+        result = ask_service.answer_question(
+            db, payload.question, payload.kb_id, session_id=payload.session_id
+        )
     except LookupError as exc:                       # 知识库不存在
         raise HTTPException(status_code=404, detail=str(exc)) from None
 
@@ -34,6 +36,7 @@ def ask_question(payload: AskRequest, db: Session = Depends(get_db)):
         question=result.question,
         content=result.content,
         session_id=payload.session_id,
+        search_query=result.search_query,
         citations=[
             CitationOut(
                 index=c.index,

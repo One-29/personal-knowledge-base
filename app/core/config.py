@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # 拒答阈值（04 §6 DR6）：候选块最高向量相似度低于 τ → 拒答（06 评估校准）
     refusal_similarity_threshold: float = 0.35
 
+    # 会话（决策 D5：进程内存，不落库）；追问改写见 04 DR5
+    session_ttl_seconds: float = 1800.0     # 30 分钟无活动即过期
+    session_max_turns: int = 5              # 只保留最近 5 轮作为改写上下文
+
 
 # 进程内单例：整个应用共享一份配置（import settings 即用）
 settings = Settings()
