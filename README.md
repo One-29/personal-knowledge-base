@@ -4,7 +4,7 @@
 
 **自托管的个人知识库：把 Markdown 笔记喂给它，用自然语言提问，每个回答都附原文出处；知识库覆盖不了的问题，它明说不知道，不编造。**
 
-后端已完整可用（M1–M4 + 评估 + CI）；前端规划中。产品背景与决策见 [docs/design/01-requirements.md](docs/design/01-requirements.md)。
+后端已完整可用（M1–M4 + 评估 + CI），前端单页可用（M5）。产品背景与决策见 [docs/design/01-requirements.md](docs/design/01-requirements.md)。
 
 ## ✨ 核心特性
 
@@ -67,8 +67,10 @@ LLM_MODEL=deepseek-ai/DeepSeek-V4-Flash
 
 ```bash
 alembic upgrade head
-uvicorn app.main:app --reload      # Swagger 文档: http://127.0.0.1:8000/docs
+uvicorn app.main:app --reload      # 界面: http://127.0.0.1:8000/ui/  ·  API 文档: /docs
 ```
+
+打开 <http://127.0.0.1:8000/ui/> 即可使用界面：**知识库**（新建/删除）→ **文档**（上传 .md、查看处理状态、重传）→ **问答**（选库提问、点引用 `[n]` 看原文）→ **工作流**（跨文档综合任务）。
 
 ### 5. 试一条完整链路
 
@@ -118,7 +120,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask \
 
 ```mermaid
 flowchart LR
-    FE[前端 M5·规划中] -->|REST| M1[M1 库与文档管理]
+    FE[前端单页 M5<br/>frontend/ 原生 JS] -->|REST| M1[M1 库与文档管理]
     FE --> M3[M3 问答·溯源·拒答]
     FE --> M4[M4 Agent 工作流]
     M1 -->|触发| M2[M2 入库管线]
@@ -146,6 +148,15 @@ flowchart LR
 | [04-retrieval](docs/design/04-retrieval.md) | 检索链路（切分 / embedding / 混合检索 / 防幻 / 拒答，DR1–DR6） |
 | [05-agent-workflow](docs/design/05-agent-workflow.md) | Agent 多步工作流（AW1–AW5） |
 | [06-evaluation](docs/design/06-evaluation.md) | 评估方案与首次评估结论（含 τ 校准） |
+| [07-frontend-design](docs/design/07-frontend-design.md) | 前端界面设计（token 系统 / 关键决策） |
+
+## 🖥 界面
+
+前端是单页应用（`frontend/`，原生 HTML/CSS/JS，零构建），四个视图：**问答**（引用编号可点，原文显示在常驻边注栏）、**工作流**（步骤序列 + 缺料标注）、**文档**（清单 + 处理状态）、**知识库**（新建/删除）。
+
+设计取向：界面隐喻为「**纸面与页边注**」——笔记与引文的现实形态是手稿与文献，因此回答是正文、`[n]` 是上标引文、**原文是页边注**。核对原文是产品的核心动作，所以边注栏常驻而非弹窗。设计 token 与决策见 [07-frontend-design](docs/design/07-frontend-design.md)。
+
+启动后打开 <http://127.0.0.1:8000/ui/> 即可使用（根路径会自动跳转）。
 
 ## 🧪 测试与评估
 
@@ -169,7 +180,7 @@ python -m eval.run_eval --retrieval   # 只跑检索评估（不消耗 LLM）
 | M4 Agent 多步工作流 | 任务拆解、逐步执行、缺料可见、汇总 | ✅ 完成 |
 | 06 检索质量评估 | 评估集、recall/MRR、τ 校准 | ✅ 完成 |
 | CI/CD | GitHub Actions 自动化测试 | ✅ 完成 |
-| **M5 前端** | 库/文档管理、问答与溯源高亮、工作流进度 | ⏸ 规划中 |
+| **M5 前端** | 库/文档管理、问答与溯源高亮、工作流进度 | ✅ 完成（原生单页，零构建） |
 | V1.0 | PDF/Word 导入、问答历史持久化、增量同步 | 规划 |
 
 ## 📄 License

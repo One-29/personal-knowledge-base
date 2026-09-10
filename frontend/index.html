@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KnowBase · 个人知识库问答</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="masthead">
+    <div class="mark">
+      <h1>KnowBase</h1>
+      <p>在你自己的笔记里提问。每个回答都标着出处，点一下就能回到原文核对。</p>
+    </div>
+    <nav class="views">
+      <button data-view="ask" class="on">问答</button>
+      <button data-view="trace">工作流</button>
+      <button data-view="docs">文档</button>
+      <button data-view="kbs">知识库</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- 问答 -->
+    <section id="view-ask" class="view on">
+      <form id="ask-form" class="askbar">
+        <input id="ask-input" placeholder="例如：TCP 为什么需要三次握手？" autocomplete="off">
+        <button type="submit">提问</button>
+      </form>
+      <div class="underbar">
+        <label>知识库
+          <select id="ask-kb"></select>
+        </label>
+        <span id="ask-session" class="note"></span>
+        <button id="ask-new" class="link">开始新会话</button>
+      </div>
+      <div id="ask-flow" class="flow"></div>
+    </section>
+
+    <!-- 工作流 -->
+    <section id="view-trace" class="view">
+      <p class="intro">综合任务会自动拆成几个子问题，逐个查库，并说明哪一步没有材料。</p>
+      <form id="trace-form" class="askbar">
+        <input id="trace-input" placeholder="例如：总结我在 TCP 上记过哪些知识点，逐条给出出处" autocomplete="off">
+        <select id="trace-kb"></select>
+        <button type="submit">执行</button>
+      </form>
+      <div id="trace-flow" class="flow"></div>
+    </section>
+
+    <!-- 文档 -->
+    <section id="view-docs" class="view">
+      <div class="underbar">
+        <label>知识库
+          <select id="docs-kb"></select>
+        </label>
+        <label class="pick">
+          <input type="file" id="docs-file" accept=".md,.txt">
+          <span class="link">上传 .md / .txt</span>
+        </label>
+        <button id="docs-refresh" class="link">刷新清单</button>
+      </div>
+      <table class="ledger" id="docs-table">
+        <thead>
+          <tr>
+            <th>文档</th><th>状态</th><th>块</th><th>字数</th><th>更新</th><th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="docs-empty" class="empty">这个知识库还是空的。上传一篇 Markdown 笔记，它会被切块并建立索引。</p>
+    </section>
+
+    <!-- 知识库 -->
+    <section id="view-kbs" class="view">
+      <form id="kb-form" class="askbar">
+        <input id="kb-name" placeholder="知识库名称，例如：计算机网络" maxlength="100" required>
+        <input id="kb-desc" placeholder="一句话说明（可选）" maxlength="500">
+        <button type="submit">新建</button>
+      </form>
+      <ul id="kb-list" class="shelf"></ul>
+    </section>
+  </main>
+
+  <!-- 页边注：核对原文的常驻位置 -->
+  <aside class="margin" id="margin" aria-live="polite">
+    <h2>原文核对</h2>
+    <p id="margin-hint" class="hint">问答里的引用编号是链接。点一下，对应原文段落出现在这里。</p>
+    <div id="margin-body" class="hidden">
+      <p class="margin-src" id="margin-src"></p>
+      <blockquote id="margin-text"></blockquote>
+      <p class="margin-note" id="margin-note"></p>
+    </div>
+  </aside>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>
