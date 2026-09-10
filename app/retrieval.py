@@ -23,7 +23,7 @@ RRF_K = 60
 
 @dataclass(frozen=True)
 class RetrievedChunk:
-    """检索结果：块 + 融合分数（供阈值判定与引用标注）。"""
+    """检索结果：块 + 融合分数 + 向量相似度（供阈值判定与引用标注）。"""
 
     chunk_id: int
     doc_id: int
@@ -31,8 +31,9 @@ class RetrievedChunk:
     char_start: int
     char_end: int
     rrf_score: float
-    vector_rank: int | None      # 在向量通道中的排名（None = 未命中）
-    keyword_rank: int | None     # 在关键词通道中的排名
+    vector_similarity: float | None   # 1 - cosine 距离（L1 拒答判定依据）
+    vector_rank: int | None           # 在向量通道中的排名（None = 未命中）
+    keyword_rank: int | None          # 在关键词通道中的排名
 
 
 def _kb_filter(stmt: Select, kb_id: int | None) -> Select:
@@ -45,11 +46,19 @@ def search_vector(
     query_vector: list[float],
     kb_id: int | None,
     limit: int = 20,
-) -> list[int]:
-    """向量通道：cosine 距离升序取 top-N，返回块 id 列表（按相似度降序）。"""
-    stmt = select(Chunk.id).order_by(Chunk.embedding.cosine_distance(query_vector)).limit(limit)
+) -> list[tuple[int, float]]:
+    """向量通道：cosine 距离升序取 top-N。
+
+    :return: [(chunk_id, 相似度)]，相似度 = 1 - cosine 距离（降序排列）
+    """
+    distance = Chunk.embedding.cosine_distance(query_vector)
+    stmt = (
+        select(Chunk.id, (1 - distance).label("similarity"))
+        .order_by(distance)
+        .limit(limit)
+    )
     stmt = _kb_filter(stmt, kb_id)
-    return list(db.scalars(stmt).all())
+    return [(row[0], float(row[1])) for row in db.execute(stmt).all()]
 
 
 def search_keyword(
@@ -101,9 +110,10 @@ def retrieve(
 
     :param top_k: 交给生成层的候选块数（向量 20 + 关键词 10 的召回量见 04 §4.2）
     """
-    vector_ids = search_vector(db, query_vector, kb_id, limit=settings.vector_top_k)
+    vector_hits = search_vector(db, query_vector, kb_id, limit=settings.vector_top_k)
     keyword_ids = search_keyword(db, query, kb_id, limit=settings.keyword_top_k)
-    fused = fuse_rrf(vector_ids, keyword_ids)[:top_k]
+    similarity = {cid: sim for cid, sim in vector_hits}
+    fused = fuse_rrf([cid for cid, _ in vector_hits], keyword_ids)[:top_k]
 
     if not fused:
         return []
@@ -120,6 +130,7 @@ def retrieve(
             char_start=chunks[cid].char_start,
             char_end=chunks[cid].char_end,
             rrf_score=score,
+            vector_similarity=similarity.get(cid),
             vector_rank=v_rank,
             keyword_rank=k_rank,
         )

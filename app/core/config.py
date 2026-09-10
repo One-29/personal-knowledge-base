@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     embedding_dimension: int = 1536
     embedding_timeout_seconds: float = 30.0
 
+    # LLM 通道（M3 生成层）：OpenAI 兼容协议，供应商可配
+    llm_api_key: str | None = None
+    llm_base_url: str = "https://api.siliconflow.cn/v1"
+    llm_model: str = "Qwen/Qwen2.5-7B-Instruct"
+    llm_timeout_seconds: float = 60.0
+
+    # 拒答阈值（04 §6 DR6）：候选块最高向量相似度低于 τ → 拒答（06 评估校准）
+    refusal_similarity_threshold: float = 0.35
+
 
 # 进程内单例：整个应用共享一份配置（import settings 即用）
 settings = Settings()

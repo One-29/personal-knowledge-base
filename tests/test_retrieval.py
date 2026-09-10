@@ -74,9 +74,10 @@ def test_vector_search_filters_by_kb(db, client):
     _add_doc(db, kb1, "tcp.md", DOC_TCP)
     _add_doc(db, kb2, "os.md", DOC_OS)
 
-    hits_kb1 = retrieval.search_vector(db, _query_vector(), kb1)
-    assert hits_kb1
-    rows = db.scalars(select(Chunk).where(Chunk.id.in_(hits_kb1))).all()
+    hits = retrieval.search_vector(db, _query_vector(), kb1)
+    ids = [chunk_id for chunk_id, _similarity in hits]
+    assert ids
+    rows = db.scalars(select(Chunk).where(Chunk.id.in_(ids))).all()
     assert all(c.kb_id == kb1 for c in rows)
 
 
