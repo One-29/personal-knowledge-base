@@ -94,6 +94,7 @@ class AnswerOut(BaseModel):
     question: str
     content: str
     session_id: str | None = None
+    search_query: str | None = None    # 实际检索用语（有会话追问时可能被改写）
     citations: list[CitationOut] = []
     refused: bool = False
     refusal_reason: str | None = None

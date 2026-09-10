@@ -9,12 +9,15 @@
 
 import logging
 import re
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 
 from .core.config import settings
 from .retrieval import RetrievedChunk
+
+if TYPE_CHECKING:                      # 仅类型检查期导入，避免运行期循环依赖
+    from .session import Turn as TurnRef
 
 logger = logging.getLogger(__name__)
 
@@ -138,3 +141,40 @@ def generate_answer(
     llm = provider or get_llm_provider()
     system = build_system_prompt(len(chunks))
     return llm.complete(system, build_user_prompt(question, chunks)).strip()
+
+
+# ── 追问改写（04 DR5） ───────────────────────────────────────
+
+REWRITE_SYSTEM_PROMPT = """把用户的追问改写成一个不依赖上下文、可以独立用于检索的完整问题。
+
+要求：
+1. 把指代词（它、这个、那、上面说的）替换成上文中的具体主题。
+2. 只输出改写后的问题本身，不要解释、不要引号、不要前缀。
+3. 追问本身已完整时，原样输出。"""
+
+
+def build_rewrite_prompt(question: str, history: list["TurnRef"]) -> str:
+    """构造改写提示：只带最近三轮，且回答截断（控制上下文长度）。"""
+    recent = "\n\n".join(
+        f"用户：{turn.question}\n助手：{turn.answer[:200]}" for turn in history[-3:]
+    )
+    return f"最近对话：\n\n{recent}\n\n追问：{question}\n\n改写后的问题："
+
+
+def rewrite_query(
+    question: str,
+    history: list["TurnRef"],
+    provider: LLMProvider | None = None,
+) -> str:
+    """把追问改写为自包含问题（04 DR5）。
+
+    边界：无历史或改写结果为空时返回原问题——**增强件不得成为链路单点**，
+    改写失败也必须能检索（失败时由调用方捕获 LLMError 后沿用原问题）。
+    """
+    if not history:
+        return question
+    llm = provider or get_llm_provider()
+    rewritten = llm.complete(
+        REWRITE_SYSTEM_PROMPT, build_rewrite_prompt(question, history)
+    ).strip()
+    return rewritten or question
