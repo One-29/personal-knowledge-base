@@ -68,12 +68,24 @@ class UploadResult(BaseModel):
     content_changed: bool
 
 
+class TurnIn(BaseModel):
+    """一轮历史问答（前端持久化后随请求回传，用于追问改写）。"""
+
+    question: str = Field(max_length=500)
+    answer: str = Field(max_length=4000)
+
+
 class AskRequest(BaseModel):
-    """问答请求（M3 契约 §3）。kb_id 为 None 表示全库检索。"""
+    """问答请求（M3 契约 §3）。kb_id 为 None 表示全库检索。
+
+    对话历史由前端持久化并回传（history）：服务端保持无状态——
+    刷新页面或重启服务都不会丢上下文，会话体验无需落库。
+    """
 
     question: str = Field(min_length=1, max_length=500)
     kb_id: int | None = None
-    session_id: str | None = None      # 预留：D5 会话追问（改写块落地时启用）
+    session_id: str | None = None
+    history: list[TurnIn] | None = Field(default=None, max_length=10)
 
 
 class CitationOut(BaseModel):
@@ -137,3 +149,30 @@ class WorkflowResultOut(BaseModel):
     steps: list[WorkflowStepOut]
     answer: str
     citations: list[CitationOut] = []
+
+
+class GraphNodeOut(BaseModel):
+    """关联图节点（= 一篇文档）。"""
+
+    doc_id: int
+    title: str
+    chunks: int
+    chars: int
+
+
+class GraphEdgeOut(BaseModel):
+    """关联图边（文档间的语义关联）。"""
+
+    source: int
+    target: int
+    weight: float        # 归一化强度 0–1（线宽/透明度）
+    links: int           # 跨文档近邻对数
+    similarity: float    # 平均相似度
+
+
+class GraphOut(BaseModel):
+    """关联图响应（Obsidian graph view 的对应物）。"""
+
+    nodes: list[GraphNodeOut] = []
+    edges: list[GraphEdgeOut] = []
+    truncated: bool = False   # 块数超过计算上限时为 True（结果不完整，诚实标注）

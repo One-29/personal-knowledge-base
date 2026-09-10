@@ -27,7 +27,11 @@ def ask_question(payload: AskRequest, db: Session = Depends(get_db)):
     """基于知识库回答问题；覆盖不足时拒答（refused=true）。"""
     try:
         result = ask_service.answer_question(
-            db, payload.question, payload.kb_id, session_id=payload.session_id
+            db,
+            payload.question,
+            payload.kb_id,
+            session_id=payload.session_id,
+            history=[(t.question, t.answer) for t in payload.history] if payload.history else None,
         )
     except ask_service.KnowledgeBaseNotFound as exc:   # 知识库不存在
         raise HTTPException(status_code=404, detail=str(exc)) from None

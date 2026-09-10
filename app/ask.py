@@ -85,24 +85,31 @@ def answer_question(
     question: str,
     kb_id: int | None,
     session_id: str | None = None,
+    history: list[tuple[str, str]] | None = None,
     llm: LLMProvider | None = None,
     session_store: "SessionStore | None" = None,
 ) -> AnswerData:
     """一次完整问答（含会话追问改写与两级拒答）。
 
-    :param session_id: 提供时启用会话——按上文改写追问，并记录本轮（D5）
+    :param session_id: 进程内会话 id（D5）
+    :param history: 请求携带的对话历史 [(question, answer), ...]，优先于进程内会话。
+        前端把会话持久化在本地并随请求回传，服务端因此保持无状态——
+        刷新页面或重启服务都不会丢失追问上下文（也不必把会话落库）。
     """
     if kb_id is not None and crud.get_kb(db, kb_id) is None:
         raise KnowledgeBaseNotFound("知识库不存在")
 
     store = session_store or session.store
-    history = store.history(session_id) if session_id else []
+    if history:
+        context = [SessionTurn(question=q, answer=a) for q, a in history]
+    else:
+        context = store.history(session_id) if session_id else []
 
     # 追问改写（04 DR5）：失败退化为原问题，不阻断检索
     search_query = question
-    if history:
+    if context:
         try:
-            search_query = generation.rewrite_query(question, history, provider=llm)
+            search_query = generation.rewrite_query(question, context, provider=llm)
         except LLMError as exc:
             logger.warning("追问改写失败，退化为原问题检索: %s", exc)
 
