@@ -66,3 +66,44 @@ class UploadResult(BaseModel):
 
     document: DocumentOut
     content_changed: bool
+
+
+class AskRequest(BaseModel):
+    """问答请求（M3 契约 §3）。kb_id 为 None 表示全库检索。"""
+
+    question: str = Field(min_length=1, max_length=500)
+    kb_id: int | None = None
+    session_id: str | None = None      # 预留：D5 会话追问（改写块落地时启用）
+
+
+class CitationOut(BaseModel):
+    """引用：回答中 [n] 对应的来源块（溯源展示用）。"""
+
+    index: int
+    chunk_id: int
+    doc_id: int
+    doc_title: str
+    chunk_text: str
+    char_start: int
+    char_end: int
+
+
+class AnswerOut(BaseModel):
+    """问答响应：拒答也是 200 + refused=true 的正常业务结果。"""
+
+    question: str
+    content: str
+    session_id: str | None = None
+    citations: list[CitationOut] = []
+    refused: bool = False
+    refusal_reason: str | None = None
+
+
+class CitationDetailOut(BaseModel):
+    """溯源端点响应：引用 → 原文定位信息。"""
+
+    doc_id: int
+    doc_title: str
+    chunk_text: str
+    char_start: int
+    char_end: int

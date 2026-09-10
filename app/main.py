@@ -7,7 +7,7 @@
 from fastapi import FastAPI
 
 from app.core.config import settings  # noqa: F401  （供后续装配读取配置）
-from app.routers import documents, kbs
+from app.routers import ask, documents, kbs
 
 API_PREFIX = "/api/v1"
 
@@ -21,6 +21,7 @@ app = FastAPI(
 app.include_router(kbs.router, prefix=API_PREFIX)
 app.include_router(documents.kb_documents_router, prefix=API_PREFIX)
 app.include_router(documents.documents_router, prefix=API_PREFIX)
+app.include_router(ask.router, prefix=API_PREFIX)
 
 
 @app.get("/health")
