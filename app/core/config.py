@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     chunk_max_chars: int = 800
     chunk_overlap_chars: int = 80
 
+    # 检索召回量（04 §4.2 DR3：向量 top-20 + 关键词 top-10 → RRF 合并）
+    vector_top_k: int = 20
+    keyword_top_k: int = 10
+    retrieval_top_k: int = 8          # 交给生成层的候选块数
+
     # Embedding 通道（04 §3 DR2）：OpenAI 兼容协议，供应商可配；
     # 全项目模型唯一——换模型需全库重向量化 + 一次维度迁移。
     embedding_api_key: str | None = None

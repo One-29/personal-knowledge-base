@@ -124,6 +124,13 @@ class Chunk(Base):
             postgresql_using="hnsw",
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
+        # 关键词通道（04 DR4）：pg_trgm 相似度查询的 GIN 索引，避免全表扫描
+        Index(
+            "ix_chunks_content_trgm",
+            "content",
+            postgresql_using="gin",
+            postgresql_ops={"content": "gin_trgm_ops"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
