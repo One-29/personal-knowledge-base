@@ -10,6 +10,8 @@
 （CI 阶段改为对测试库执行 `alembic upgrade head`）。
 """
 
+import hashlib
+import random
 import shutil
 from collections.abc import Iterator
 from pathlib import Path
@@ -39,7 +41,9 @@ def _prepare_schema() -> Iterator[None]:
     纯单元测试（chunking/embedding）无需数据库即可运行。
     """
     with engine.begin() as conn:
+        # 与迁移脚本保持一致：vector（向量列）、pg_trgm（关键词通道，04 DR4）
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
     # 测试库专用：每次会话重建结构，保证与 models 一致（含向量维度变化）
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
@@ -91,11 +95,23 @@ def _isolated_storage(monkeypatch) -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _fake_embedding(monkeypatch) -> None:
-    """所有测试统一使用假向量 provider：绝不真调 embedding API，结果确定。"""
+    """所有测试统一使用假向量 provider：绝不真调 embedding API，结果确定。
+
+    伪向量按文本 hash 生成并归一化——同一文本恒等、不同文本可区分。
+    注意不能返回全 0 向量：零向量的 cosine 距离是退化情况（0/0），
+    会让向量检索排序行为不确定。
+    """
 
     class _FakeProvider:
         def embed_texts(self, texts: list[str]) -> list[list[float]]:
-            return [[0.0] * settings.embedding_dimension for _ in texts]
+            vectors: list[list[float]] = []
+            for text in texts:
+                seed = int(hashlib.sha256(text.encode("utf-8")).hexdigest()[:8], 16)
+                rng = random.Random(seed)
+                raw = [rng.uniform(-1.0, 1.0) for _ in range(settings.embedding_dimension)]
+                norm = sum(x * x for x in raw) ** 0.5 or 1.0
+                vectors.append([x / norm for x in raw])
+            return vectors
 
     from app import ingest
 
