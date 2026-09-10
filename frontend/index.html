@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KnowBase · 个人知识库问答</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">📚</span>
+      <div>
+        <h1>KnowBase</h1>
+        <p class="tagline">自托管个人知识库 · 回答带原文出处，答不上明说不知道</p>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="qa">问答</button>
+      <button class="tab" data-tab="workflow">工作流</button>
+      <button class="tab" data-tab="docs">文档</button>
+      <button class="tab" data-tab="kbs">知识库</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- 问答 -->
+    <section id="tab-qa" class="panel active">
+      <div class="toolbar">
+        <label>知识库
+          <select id="qa-kb"></select>
+        </label>
+        <button id="qa-reset" class="ghost" title="开始新会话（清空上下文）">新会话</button>
+        <span id="qa-session" class="muted"></span>
+      </div>
+      <form id="qa-form" class="ask-form">
+        <input id="qa-input" placeholder="问一个关于你笔记的问题，例如：TCP 为什么需要三次握手？" autocomplete="off">
+        <button type="submit" class="primary">提问</button>
+      </form>
+      <div id="qa-log" class="log"></div>
+    </section>
+
+    <!-- 工作流 -->
+    <section id="tab-workflow" class="panel">
+      <p class="hint">跨文档综合任务：系统会自动拆解为多个子问题、逐步检索，并标注哪一步缺料。</p>
+      <form id="wf-form" class="ask-form">
+        <input id="wf-input" placeholder="例如：总结我在 TCP 上记过哪些知识点，逐条给出出处" autocomplete="off">
+        <select id="wf-kb"></select>
+        <button type="submit" class="primary">执行任务</button>
+      </form>
+      <div id="wf-log" class="log"></div>
+    </section>
+
+    <!-- 文档 -->
+    <section id="tab-docs" class="panel">
+      <div class="toolbar">
+        <label>知识库
+          <select id="docs-kb"></select>
+        </label>
+        <label class="file-label">
+          <input type="file" id="docs-file" accept=".md,.txt">
+          <span class="primary small">上传 .md / .txt</span>
+        </label>
+        <button id="docs-refresh" class="ghost">刷新</button>
+      </div>
+      <table class="table" id="docs-table">
+        <thead>
+          <tr><th>标题</th><th>状态</th><th>块数</th><th>字数</th><th>更新时间</th><th>操作</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="docs-empty" class="muted hidden">这个知识库还没有文档，先上传一篇 Markdown 笔记。</p>
+    </section>
+
+    <!-- 知识库 -->
+    <section id="tab-kbs" class="panel">
+      <form id="kb-form" class="ask-form">
+        <input id="kb-name" placeholder="知识库名称，例如：计算机网络" maxlength="100" required>
+        <input id="kb-desc" placeholder="描述（可选）" maxlength="500">
+        <button type="submit" class="primary">新建知识库</button>
+      </form>
+      <ul id="kb-list" class="kb-list"></ul>
+    </section>
+
+    <!-- 溯源抽屉 -->
+    <aside id="citation-drawer" class="drawer hidden">
+      <div class="drawer-head">
+        <h2 id="citation-title">引用原文</h2>
+        <button id="citation-close" class="ghost small">关闭</button>
+      </div>
+      <pre id="citation-text" class="citation-text"></pre>
+      <p id="citation-meta" class="muted"></p>
+    </aside>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>
