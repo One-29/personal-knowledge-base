@@ -108,3 +108,32 @@ class CitationDetailOut(BaseModel):
     chunk_text: str
     char_start: int
     char_end: int
+
+
+class WorkflowRequest(BaseModel):
+    """多步任务请求（05 §4）。kb_id 缺省表示全库。"""
+
+    task: str = Field(min_length=1, max_length=500)
+    kb_id: int | None = None
+    max_steps: int | None = Field(default=None, ge=1, le=10)
+
+
+class WorkflowStepOut(BaseModel):
+    """单个子步骤的执行结果（进度对用户可见，US-M4-01）。"""
+
+    index: int
+    goal: str
+    query: str
+    status: str                        # answered / insufficient / error
+    conclusion: str | None = None      # answered 时的结论
+    note: str | None = None            # 缺料或故障说明
+    citations: list[CitationOut] = []
+
+
+class WorkflowResultOut(BaseModel):
+    """多步任务结果：分步结论 + 全局统一编号的引用（AW4）。"""
+
+    task: str
+    steps: list[WorkflowStepOut]
+    answer: str
+    citations: list[CitationOut] = []
