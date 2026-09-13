@@ -15,8 +15,6 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field, replace
-from typing import Protocol
-
 from sqlalchemy.orm import Session
 
 from . import ask as ask_service
@@ -137,7 +135,11 @@ def run_workflow(
     llm: LLMProvider | None = None,
 ) -> WorkflowResultData:
     """执行一次多步任务：规划 → 逐步调 M3 → 汇总。"""
-    limit = max_steps or settings.workflow_max_steps
+    requested_limit = max_steps if max_steps is not None else settings.workflow_max_steps
+    limit = min(settings.workflow_max_steps, requested_limit)
+    if limit < 1:
+        raise ValueError("max_steps 必须大于 0")
+    ask_service.validate_kb(db, kb_id)
     plans = plan_steps(task, limit, provider=llm)
 
     steps: list[WorkflowStepData] = []
@@ -145,8 +147,10 @@ def run_workflow(
         try:
             answer = ask_service.answer_question(db, plan.query, kb_id, llm=llm)
         except ask_service.KnowledgeBaseNotFound:
+            db.rollback()
             raise                                     # 库不存在是整体性错误，不降级为单步故障
         except Exception as exc:                     # 单步技术故障不中断后续步骤
+            db.rollback()
             logger.exception("工作流第 %d 步执行失败", index)
             steps.append(
                 WorkflowStepData(

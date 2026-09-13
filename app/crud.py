@@ -1,5 +1,5 @@
-from sqlalchemy import select, desc
-from sqlalchemy.orm import Session
+from sqlalchemy import desc, select
+from sqlalchemy.orm import Session, selectinload
 
 from .models import KnowledgeBase, Document
 from .schemas import KnowledgeBaseCreate
@@ -18,8 +18,10 @@ def create_kb(db: Session, data: KnowledgeBaseCreate) -> KnowledgeBase:
 
 def list_kbs(db: Session) -> list[KnowledgeBase]:
     """全部知识库，按创建时间倒序；同时间戳（同事务/并发）用 id 兜底排序。"""
-    stmt = select(KnowledgeBase).order_by(
-        desc(KnowledgeBase.created_at), desc(KnowledgeBase.id)
+    stmt = (
+        select(KnowledgeBase)
+        .options(selectinload(KnowledgeBase.documents))
+        .order_by(desc(KnowledgeBase.created_at), desc(KnowledgeBase.id))
     )
     return list(db.scalars(stmt).all())
 

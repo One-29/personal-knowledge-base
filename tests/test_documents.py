@@ -4,6 +4,13 @@
 以及写库前的四类校验（422/413/400）与查重（409）。
 """
 
+import asyncio
+from threading import Event
+
+import httpx
+import pytest
+from fastapi import FastAPI
+
 MD = ("tcp.md", "# TCP\n三次握手与四次挥手", "text/markdown")
 
 
@@ -13,6 +20,52 @@ def _create_kb(client, name: str = "计算机网络") -> int:
 
 def _upload(client, kb_id: int, file=MD):
     return client.post(f"/api/v1/kbs/{kb_id}/documents", files={"file": file})
+
+
+@pytest.mark.parametrize("path,lookup", [
+    ("/kbs/1/documents", "get_kb"),
+    ("/documents/1/reupload", "get_document"),
+])
+def test_upload_io_does_not_block_event_loop(monkeypatch, path, lookup):
+    """上传与重传等待同步 I/O 时，事件循环仍能处理其它请求（无需数据库）。"""
+    from app.db import get_db
+    from app.routers import documents
+
+    entered, release, completed = Event(), Event(), Event()
+
+    def slow_lookup(*args):
+        entered.set()
+        release.wait(3)
+        completed.set()
+        return None
+
+    monkeypatch.setattr(documents.crud, lookup, slow_lookup)
+    application = FastAPI()
+    application.include_router(documents.kb_documents_router)
+    application.include_router(documents.documents_router)
+    application.dependency_overrides[get_db] = lambda: None
+
+    @application.get("/probe")
+    async def probe():
+        return {"ok": True}
+
+    async def exercise():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=application), base_url="http://test",
+        ) as client:
+            uploading = asyncio.create_task(client.post(path, files={"file": MD}))
+            try:
+                assert await asyncio.to_thread(entered.wait, 2)
+                assert not completed.is_set(), "同步 I/O 占用了事件循环"
+                response = await asyncio.wait_for(client.get("/probe"), timeout=1)
+                assert response.json() == {"ok": True}
+                assert not completed.is_set()
+            finally:
+                release.set()
+                result = await uploading
+            assert result.status_code == 404
+
+    asyncio.run(exercise())
 
 
 def test_upload_201_pending(client):

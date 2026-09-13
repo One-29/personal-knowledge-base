@@ -19,7 +19,8 @@ const state = {
   kbs: [],
   docsKbId: null,
   askKbId: null,
-  controller: null,               // 请求中的 AbortController（停止按钮用）
+  // 问答与工作流各自的请求控制器：两者互不影响，可以同时进行
+  controllers: { ask: null, trace: null },
 };
 
 /* ── 基础工具 ─────────────────────────────────────── */
@@ -168,37 +169,93 @@ document.querySelectorAll(".views button").forEach((btn) => {
   });
 });
 
-/* ── 页边注：核对原文 ─────────────────────────────── */
+/* ── 页边注：核对原文（可同时钉住多条） ───────────── */
 
-async function showInMargin(chunkId) {
+const marginItems = new Map();     // chunkId -> 元素，去重
+
+async function pinToMargin(chunkId) {
   try {
     const detail = await api(`/citations/${chunkId}`);
     document.getElementById("margin-hint").classList.add("hidden");
-    const body = document.getElementById("margin-body");
-    body.classList.remove("hidden", "margin-body-enter");
-    void body.offsetWidth;                          // 重放淡入（只响应点击）
-    body.classList.add("margin-body-enter");
+    const list = document.getElementById("margin-list");
 
-    document.getElementById("margin-src").textContent =
-      `${detail.doc_title} · 偏移 ${detail.char_start}–${detail.char_end}`;
-    document.getElementById("margin-text").textContent = detail.chunk_text;
-    document.getElementById("margin-note").textContent = `块 ${chunkId}`;
-    document.querySelectorAll(".cite.on").forEach((el) => el.classList.remove("on"));
-    document.querySelectorAll(".cite[data-chunk]").forEach((el) => {
-      if (el.dataset.chunk === String(chunkId)) el.classList.add("on");
+    const existing = marginItems.get(chunkId);
+    if (existing) {                                  // 已钉住：滚动过去并高亮
+      existing.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      existing.classList.remove("margin-item-enter");
+      void existing.offsetWidth;
+      existing.classList.add("margin-item-enter");
+      markActiveCite(chunkId);
+      return;
+    }
+
+    const item = document.createElement("div");
+    item.className = "margin-item margin-item-enter";
+    item.dataset.chunk = String(chunkId);
+    item.innerHTML = `
+      <div class="item-head">
+        <p class="item-src">${esc(detail.doc_title)} · 偏移 ${detail.char_start}–${detail.char_end}</p>
+        <button class="link" data-unpin="${chunkId}">移除</button>
+      </div>
+      <blockquote>${esc(detail.chunk_text)}</blockquote>`;
+    item.querySelector("[data-unpin]").addEventListener("click", () => {
+      marginItems.delete(chunkId);
+      item.remove();
+      if (!marginItems.size) document.getElementById("margin-hint").classList.remove("hidden");
+      document.querySelectorAll(`.cite.on[data-chunk="${chunkId}"]`).forEach((el) => el.classList.remove("on"));
     });
+    list.appendChild(item);
+    marginItems.set(chunkId, item);
+    item.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    markActiveCite(chunkId);
+
     if (window.innerWidth <= 900) {
       document.getElementById("margin").scrollIntoView({ behavior: "smooth", block: "start" });
     }
   } catch (err) { notify(err.message, true); }
 }
 
+function markActiveCite(chunkId) {
+  document.querySelectorAll(".cite.on").forEach((el) => el.classList.remove("on"));
+  document.querySelectorAll(`.cite[data-chunk="${chunkId}"]`).forEach((el) => el.classList.add("on"));
+}
+
+document.getElementById("margin-clear").addEventListener("click", () => {
+  marginItems.clear();
+  document.getElementById("margin-list").innerHTML = "";
+  document.getElementById("margin-hint").classList.remove("hidden");
+  document.querySelectorAll(".cite.on").forEach((el) => el.classList.remove("on"));
+  notify("已清空核对区");
+});
+
+/* 宽度可拖（存 localStorage，下次打开保持） */
+(function initResizer() {
+  const resizer = document.getElementById("margin-resizer");
+  const saved = localStorage.getItem("kb_margin_width");
+  if (saved) document.documentElement.style.setProperty("--margin-width", saved);
+
+  let dragging = false;
+  resizer.addEventListener("mousedown", () => { dragging = true; resizer.classList.add("on"); });
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove("on");
+    localStorage.setItem("kb_margin_width", getComputedStyle(document.documentElement)
+      .getPropertyValue("--margin-width").trim());
+  });
+  window.addEventListener("mousemove", (event) => {
+    if (!dragging) return;
+    const width = Math.max(200, Math.min(720, window.innerWidth - event.clientX));
+    document.documentElement.style.setProperty("--margin-width", width + "px");
+  });
+})();
+
 function bindCitations(scope, citations) {
   scope.querySelectorAll(".cite").forEach((el) => {
     const open = () => {
-      if (el.dataset.chunk) return showInMargin(Number(el.dataset.chunk));
+      if (el.dataset.chunk) return pinToMargin(Number(el.dataset.chunk));
       const hit = (citations || []).find((c) => String(c.index) === el.dataset.index);
-      if (hit) showInMargin(hit.chunk_id);
+      if (hit) pinToMargin(hit.chunk_id);
       else notify("这条编号不在本次引用列表中", true);
     };
     el.addEventListener("click", open);
@@ -392,20 +449,37 @@ document.getElementById("ask-drop").addEventListener("click", () => {
 });
 
 document.getElementById("ask-stop").addEventListener("click", () => {
-  if (state.controller) {
-    state.controller.abort();
+  if (state.controllers.ask) {
+    state.controllers.ask.abort();
     notify("已停止等待这次回答");
   }
 });
+document.getElementById("trace-stop").addEventListener("click", () => {
+  if (state.controllers.trace) {
+    state.controllers.trace.abort();
+    notify("已停止等待这个任务");
+  }
+});
 
-function setBusy(busy) {
-  document.getElementById("ask-stop").classList.toggle("hidden", !busy);
-  document.getElementById("ask-send").disabled = busy;
+/** 各视图独立置忙：问答与工作流互不影响（可同时进行）。 */
+function setBusy(scope, busy) {
+  if (scope === "ask") {
+    document.getElementById("ask-stop").classList.toggle("hidden", !busy);
+    document.getElementById("ask-send").disabled = busy;
+  } else {
+    document.getElementById("trace-stop").classList.toggle("hidden", !busy);
+    document.getElementById("trace-send").disabled = busy;
+  }
+}
+
+/** 滚到刚追加的条目（最新内容紧邻底部输入框）。 */
+function focusLatest(entry) {
+  requestAnimationFrame(() => entry.scrollIntoView({ behavior: "smooth", block: "end" }));
 }
 
 document.getElementById("ask-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (state.controller) { notify("上一次提问还在进行中", true); return; }
+  if (state.controllers.ask) { notify("上一个提问还在进行中", true); return; }
 
   const input = document.getElementById("ask-input");
   const question = input.value.trim();
@@ -419,14 +493,15 @@ document.getElementById("ask-form").addEventListener("submit", async (event) => 
   entry.innerHTML = `<h3 class="entry-q">${esc(question)}</h3>
     <p class="entry-a">正在检索资料并组织回答…</p>`;
   flow.appendChild(entry);
-  entry.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  focusLatest(entry);
 
-  state.controller = new AbortController();
-  setBusy(true);
+  const controller = new AbortController();
+  state.controllers.ask = controller;
+  setBusy("ask", true);
   try {
     const answer = await api("/ask", {
       method: "POST",
-      signal: state.controller.signal,
+      signal: controller.signal,
       body: JSON.stringify({
         question,
         kb_id: state.askKbId,
@@ -436,6 +511,7 @@ document.getElementById("ask-form").addEventListener("submit", async (event) => 
     entry.innerHTML = renderAnswerEntry(question, answer);
     bindCitations(entry, answer.citations);
     rememberTurn({ kind: "ask", question, answer, answerText: answer.content, at: Date.now() });
+    focusLatest(entry);
   } catch (err) {
     if (err.name === "AbortError") {
       entry.innerHTML = `<h3 class="entry-q">${esc(question)}</h3>
@@ -445,8 +521,8 @@ document.getElementById("ask-form").addEventListener("submit", async (event) => 
         <p class="entry-a">没能取到回答：${esc(err.message)}</p>`;
     }
   } finally {
-    state.controller = null;
-    setBusy(false);
+    state.controllers.ask = null;
+    setBusy("ask", false);
   }
 });
 
@@ -464,7 +540,7 @@ function renderAnswerEntry(question, answer) {
 
 document.getElementById("trace-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (state.controller) { notify("上一次任务还在进行中", true); return; }
+  if (state.controllers.trace) { notify("上一个任务还在进行中", true); return; }
 
   const input = document.getElementById("trace-input");
   const task = input.value.trim();
@@ -476,27 +552,24 @@ document.getElementById("trace-form").addEventListener("submit", async (event) =
   const entry = document.createElement("article");
   entry.className = "entry";
   entry.innerHTML = `<h3 class="entry-q">${esc(task)}</h3>
-    <p class="entry-a">正在拆解任务并逐步执行…（可点「停止」中断等待）</p>`;
+    <p class="entry-a">正在拆解任务并逐步执行…</p>`;
   flow.appendChild(entry);
+  focusLatest(entry);
 
   const kbValue = document.getElementById("trace-kb").value;
-  const stop = document.createElement("button");
-  stop.type = "button";
-  stop.className = "link";
-  stop.textContent = "停止";
-  stop.addEventListener("click", () => state.controller && state.controller.abort());
-  entry.appendChild(stop);
-
-  state.controller = new AbortController();
+  const controller = new AbortController();
+  state.controllers.trace = controller;
+  setBusy("trace", true);
   try {
     const result = await api("/workflow", {
       method: "POST",
-      signal: state.controller.signal,
+      signal: controller.signal,
       body: JSON.stringify({ task, kb_id: kbValue ? Number(kbValue) : null }),
     });
     entry.innerHTML = renderTrace(task, result);
     bindCitations(entry, result.citations);
     rememberTurn({ kind: "workflow", question: task, result, answerText: result.answer, at: Date.now() });
+    focusLatest(entry);
   } catch (err) {
     if (err.name === "AbortError") {
       entry.innerHTML = `<h3 class="entry-q">${esc(task)}</h3>
@@ -506,7 +579,8 @@ document.getElementById("trace-form").addEventListener("submit", async (event) =
         <p class="entry-a">没能执行：${esc(err.message)}</p>`;
     }
   } finally {
-    state.controller = null;
+    state.controllers.trace = null;
+    setBusy("trace", false);
   }
 });
 
@@ -753,7 +827,7 @@ function renderConversation() {
   const conv = activeConversation();
   flow.innerHTML = "";
   if (!conv || !conv.turns.length) {
-    flow.innerHTML = '<p class="empty">这个会话还没有内容。开始提问吧。</p>';
+    flow.innerHTML = '<p class="empty">这个会话还没有内容。在下面输入问题开始。</p>';
     return;
   }
   conv.turns.forEach((turn) => {
@@ -767,6 +841,12 @@ function renderConversation() {
       bindCitations(entry, (turn.answer && turn.answer.citations) || []);
     }
     flow.appendChild(entry);
+  });
+  // 历史按旧→新排列，进来先看到最新的几轮（贴近底部输入框）
+  requestAnimationFrame(() => {
+    const last = flow.querySelector(".entry:last-child");
+    if (last) last.scrollIntoView({ block: "end" });
+    else window.scrollTo({ top: document.body.scrollHeight });
   });
 }
 

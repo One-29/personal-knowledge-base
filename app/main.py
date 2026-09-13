@@ -5,6 +5,7 @@
 文档：http://127.0.0.1:8000/docs      （OpenAPI，联调与答辩备用）
 """
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -12,15 +13,27 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings  # noqa: F401  （供后续装配读取配置）
+from app.http_client import close_http_client
 from app.routers import ask, documents, graph, kbs, workflow
 
 API_PREFIX = "/api/v1"
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """HTTP 池按需创建，服务完成在途请求和后台任务后统一释放。"""
+    try:
+        yield
+    finally:
+        close_http_client()
+
+
 app = FastAPI(
     title="KnowBase API",
     description="个人知识库问答系统：文档管理 / RAG 问答（溯源 + 拒答）/ Agent 工作流",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # 版本前缀在装配层统一管理（单点修改）；各 router 只声明业务前缀

@@ -4,11 +4,15 @@
 所以边的权重反映的是"结构正确性"，不是真实语义相似度（后者由 06 评估覆盖）。
 """
 
+from collections import Counter
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 
-from app import ingest, storage
+from app import graph, ingest, storage
 from app.core.config import settings
-from app.models import Document
+from app.models import Chunk, Document, KnowledgeBase
 
 TCP = "# TCP 三次握手\n\n客户端发 SYN，服务端回 SYN+ACK，客户端再回 ACK。\n\n## 拥塞控制\n\n慢启动与拥塞避免。\n"
 OS = "# 操作系统调度\n\n时间片轮转与优先级调度。\n"
@@ -96,3 +100,77 @@ def test_graph_invalid_params_422(client):
     kb_id = client.post("/api/v1/kbs", json={"name": "计算机网络"}).json()["id"]
     assert client.get(f"/api/v1/graph?kb_id={kb_id}&top_k=99").status_code == 422
     assert client.get(f"/api/v1/graph?kb_id={kb_id}&min_similarity=2").status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("chunk_counts", "max_chunks", "truncated"),
+    [
+        ([], 400, False),
+        ([401], 400, True),
+        ([200, 201], 400, True),
+        ([200, 200], 400, False),
+        ([200, 201], 900, True),
+    ],
+)
+def test_graph_without_edges_reports_truncation_from_nodes(chunk_counts, max_chunks, truncated):
+    """空边和单文档早返回也必须诚实标注源块是否超出实际预算。"""
+    node_rows = [
+        SimpleNamespace(doc_id=i, title=f"文档{i}", chunks=count, char_count=count)
+        for i, count in enumerate(chunk_counts)
+    ]
+    db = Mock()
+    db.execute.side_effect = [Mock(all=lambda: node_rows), Mock(all=lambda: [])]
+
+    result = graph.build_graph(db, kb_id=1, max_chunks=max_chunks)
+
+    assert result.edges == []
+    assert result.truncated is truncated
+    assert sum(node.chunks for node in result.nodes) == sum(chunk_counts)
+
+
+@pytest.mark.parametrize(
+    ("chunk_counts", "max_chunks", "expected_counts"),
+    [((410, 2, 1), 400, (397, 2, 1)), ((8, 3, 2), 5, (2, 2, 1))],
+)
+def test_graph_source_pool_samples_documents_in_rounds(db, chunk_counts, max_chunks, expected_counts):
+    """实际执行近邻 SQL：早期长文不能挤掉后导入短文的源块配额。"""
+    kb = KnowledgeBase(name="图采样测试")
+    db.add(kb)
+    db.flush()
+    vector = [1.0] + [0.0] * (settings.embedding_dimension - 1)
+    docs = []
+    for slot, count in enumerate(chunk_counts):
+        doc = Document(
+            kb_id=kb.id,
+            title=f"采样{slot}.md",
+            file_path=f"unused-{slot}.md",
+            content_hash=f"sampling-{slot}",
+            char_count=count,
+        )
+        db.add(doc)
+        db.flush()
+        docs.append(doc)
+        db.add_all([
+            Chunk(
+                kb_id=kb.id,
+                doc_id=doc.id,
+                chunk_index=index,
+                content="块",
+                char_start=index,
+                char_end=index + 1,
+                embedding=vector,
+            )
+            for index in range(count)
+        ])
+        db.flush()
+
+    rows = db.execute(
+        graph._PAIRS_SQL,
+        {"kb_id": kb.id, "max_chunks": max_chunks, "top_k": 1, "min_similarity": 0.5},
+    ).all()
+
+    # 每个源块恰好连一个近邻，从源文档计数直接验证池的组成，而非仅验证有边。
+    assert len(rows) == max_chunks
+    assert Counter(row.source_doc for row in rows) == {
+        doc.id: expected for doc, expected in zip(docs, expected_counts)
+    }

@@ -9,7 +9,8 @@
 设计取舍：
 - 节点用**文档**而非块：块级图在大库上会变成毛线团，文档级更可读；
 - 边权重要同时反映"关联条数"（跨文档近邻对数）与"关联强度"（平均相似度）；
-- 计算量有上限（`max_chunks`），超出时截断并在响应里标注（诚实告知不全）。
+- 按文档轮流选块，参与近邻查询的源块最多 400 个，超出时标注截断；
+- 文档数超过上限时仍无法覆盖所有文档，按文档 id 确定性取样。
 """
 
 import logging
@@ -68,18 +69,19 @@ _NODES_SQL = text("""
 """)
 
 _PAIRS_SQL = text("""
-    WITH pool AS (
-        SELECT id, doc_id, embedding
+    WITH ranked AS (
+        SELECT id, doc_id, embedding,
+               ROW_NUMBER() OVER (PARTITION BY doc_id ORDER BY chunk_index, id) AS chunk_rank
         FROM chunks
         WHERE kb_id = :kb_id
-        ORDER BY id
-        LIMIT :max_chunks
     ),
-    total AS (
-        SELECT COUNT(*) AS n FROM chunks WHERE kb_id = :kb_id
+    pool AS (
+        SELECT id, doc_id, embedding
+        FROM ranked
+        ORDER BY chunk_rank, doc_id
+        LIMIT :max_chunks
     )
-    SELECT (SELECT n FROM total) AS total_chunks,
-           p.doc_id AS source_doc,
+    SELECT p.doc_id AS source_doc,
            n.doc_id AS target_doc,
            1 - (p.embedding <=> n.embedding) AS similarity
     FROM pool p
@@ -102,6 +104,9 @@ def build_graph(
     max_chunks: int = MAX_CHUNKS,
 ) -> GraphData:
     """构建某个知识库的文档关联图。"""
+    if max_chunks <= 0:
+        raise ValueError("max_chunks must be greater than zero")
+    max_chunks = min(max_chunks, MAX_CHUNKS)
     nodes = [
         GraphNode(
             doc_id=row.doc_id,
@@ -111,8 +116,9 @@ def build_graph(
         )
         for row in db.execute(_NODES_SQL, {"kb_id": kb_id}).all()
     ]
+    truncated = sum(node.chunks for node in nodes) > max_chunks
     if len(nodes) < 2:
-        return GraphData(nodes=nodes)          # 单文档没有"关联"可言
+        return GraphData(nodes=nodes, truncated=truncated)  # 单文档没有"关联"可言
 
     rows = db.execute(
         _PAIRS_SQL,
@@ -123,8 +129,6 @@ def build_graph(
             "max_chunks": max_chunks,
         },
     ).all()
-
-    truncated = bool(rows) and rows[0].total_chunks > max_chunks
 
     # 按文档对聚合：跨文档近邻对数 + 平均相似度
     buckets: dict[tuple[int, int], list[float]] = {}

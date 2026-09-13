@@ -32,6 +32,7 @@ STATUS_FAILED = "failed"
 # 错误码（US-M1-06 分类；上传期错误由 M1 现场拦截，此处为处理期错误）
 ERROR_PARSE_FAILED = "PARSE_FAILED"
 ERROR_EMBED_FAILED = "EMBED_FAILED"
+ERROR_PROCESS_FAILED = "PROCESS_FAILED"
 
 
 def process_document(doc_id: int, db: Session | None = None) -> None:
@@ -40,8 +41,8 @@ def process_document(doc_id: int, db: Session | None = None) -> None:
     :param db: 可选外部会话（测试注入用）；缺省时自建独立会话
         （后台任务路径：请求级会话在响应后已关闭，不能复用）。
 
-    本函数不向调用方抛异常：任何失败都落到文档状态与 last_error
-    （否则后台任务会静默死亡，用户永远看到 processing）。
+    捕获处理异常并尽力更新文档状态与 last_error，避免任务停留在 processing。
+    若数据库持续不可用导致状态恢复也失败，记录完整异常以供排查。
     """
     own_session = db is None
     if db is None:
@@ -72,6 +73,7 @@ def process_document(doc_id: int, db: Session | None = None) -> None:
 
         try:
             vectors = embedding.get_embedding_provider().embed_texts([c.text for c in chunks])
+            _validate_vectors(vectors, expected_count=len(chunks))
         except EmbeddingError as exc:
             _mark_failure(db, doc, ERROR_EMBED_FAILED, str(exc))
             return
@@ -97,9 +99,25 @@ def process_document(doc_id: int, db: Session | None = None) -> None:
         doc.processed_at = datetime.now(timezone.utc)
         db.commit()
         logger.info("文档处理完成: doc_id=%s chunks=%s", doc.id, len(chunks))
-    except Exception:
-        db.rollback()
+    except Exception as exc:
         logger.exception("处理文档异常: doc_id=%s", doc_id)
+        try:
+            # 写块失败会让事务不可用；先回滚（同时恢复被删除的旧块），
+            # 再重新查询文档，避免沿用已过期或处于失败事务的 ORM 状态。
+            db.rollback()
+            failed_doc = crud.get_document(db, doc_id)
+            if failed_doc is None:
+                logger.warning("处理失败后无法恢复状态，文档已不存在: doc_id=%s", doc_id)
+            else:
+                _mark_failure(
+                    db, failed_doc, ERROR_PROCESS_FAILED, f"{type(exc).__name__}: {exc}"
+                )
+        except Exception:
+            logger.exception("处理失败后恢复文档状态也失败: doc_id=%s", doc_id)
+            try:
+                db.rollback()
+            except Exception:
+                logger.exception("状态恢复失败后的事务回滚也失败: doc_id=%s", doc_id)
     finally:
         if own_session:
             db.close()
@@ -116,3 +134,21 @@ def _mark_failure(db: Session, doc: Document, code: str, message: str) -> None:
     doc.status = STATUS_READY if has_old_chunks else STATUS_FAILED
     db.commit()
     logger.warning("文档处理失败: doc_id=%s code=%s kept_old=%s", doc.id, code, has_old_chunks)
+
+
+def _validate_vectors(vectors: list[list[float]], expected_count: int) -> None:
+    """拒绝不完整或维度错误的 provider 响应，避免 zip 静默少写知识块。"""
+    if len(vectors) != expected_count:
+        raise EmbeddingError(
+            f"embedding 返回数量不匹配：期望 {expected_count}，实际 {len(vectors)}"
+        )
+    invalid = [
+        index
+        for index, vector in enumerate(vectors)
+        if len(vector) != settings.embedding_dimension
+    ]
+    if invalid:
+        raise EmbeddingError(
+            f"embedding 维度不匹配：期望 {settings.embedding_dimension}，"
+            f"异常位置 {invalid[:5]}"
+        )

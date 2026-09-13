@@ -5,7 +5,8 @@ embedding 由 conftest 的假 provider 提供（按文本 hash 的确定性伪�
 真实语义相似度由 06 评估阶段用真向量测。关键词通道用真 pg_trgm。
 """
 
-from sqlalchemy import select
+import pytest
+from sqlalchemy import event, select, text
 
 from app import ingest, retrieval, storage
 from app.core.config import settings
@@ -120,3 +121,58 @@ def test_retrieve_all_kbs_without_filter(db, client):
 
     results = retrieval.retrieve(db, "调度", _query_vector(), kb_id=None, top_k=10)
     assert len(results) >= 2                      # 两个库的块都在候选里
+
+
+def test_keyword_threshold_filters_weak_matches_and_stays_local(db, client, monkeypatch):
+    kb = client.post("/api/v1/kbs", json={"name": "关键词阈值"}).json()["id"]
+    _add_doc(db, kb, "os.md", DOC_OS)
+    # 先在外层连接上建立基线，再检查检索的局部设置随会话rollback恢复。
+    db.rollback()
+    connection = db.get_bind()
+    baseline = connection.scalar(text("SHOW pg_trgm.similarity_threshold"))
+    monkeypatch.setattr(settings, "keyword_similarity_threshold", 0.95)
+    assert retrieval.search_keyword(db, "时间片轮转与优先级调度", kb) == []
+    assert float(db.scalar(text("SHOW pg_trgm.similarity_threshold"))) == pytest.approx(0.95)
+    monkeypatch.setattr(settings, "keyword_similarity_threshold", 0.1)
+    assert retrieval.search_keyword(db, "时间片轮转与优先级调度", kb)
+    db.rollback()
+    assert connection.scalar(text("SHOW pg_trgm.similarity_threshold")) == baseline
+
+
+def test_keyword_search_filters_by_kb(db, client):
+    kb1 = client.post("/api/v1/kbs", json={"name": "关键词库1"}).json()["id"]
+    kb2 = client.post("/api/v1/kbs", json={"name": "关键词库2"}).json()["id"]
+    _add_doc(db, kb1, "same.md", DOC_OS)
+    _add_doc(db, kb2, "same.md", DOC_OS)
+    hits1 = retrieval.search_keyword(db, "时间片轮转与优先级调度", kb1)
+    hits2 = retrieval.search_keyword(db, "时间片轮转与优先级调度", kb2)
+    assert hits1 and hits2 and set(hits1).isdisjoint(hits2)
+    assert set(retrieval.search_keyword(db, "时间片轮转与优先级调度", None)) == set(hits1 + hits2)
+
+
+def test_keyword_query_can_use_trigram_index(db, client):
+    """对实际应用SQL运行EXPLAIN，验证GIN是可用路径；小表默认顺序扫描仍合理。"""
+    kb = client.post("/api/v1/kbs", json={"name": "索引检查"}).json()["id"]
+    _add_doc(db, kb, "os.md", DOC_OS)
+    statements = []
+    connection = db.connection()
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        if "FROM chunks" in statement:
+            statements.append((statement, parameters))
+
+    event.listen(connection, "before_cursor_execute", capture)
+    try:
+        assert retrieval.search_keyword(db, "时间片轮转与优先级调度", kb)
+    finally:
+        event.remove(connection, "before_cursor_execute", capture)
+    db.execute(text("SET LOCAL enable_seqscan = off"))
+    statement, parameters = statements[-1]
+    plan = connection.exec_driver_sql("EXPLAIN (FORMAT JSON) " + statement, parameters).scalar_one()
+
+    def indexes(node):
+        yield node.get("Index Name")
+        for child in node.get("Plans", []):
+            yield from indexes(child)
+
+    assert "ix_chunks_content_trgm" in list(indexes(plan[0]["Plan"]))

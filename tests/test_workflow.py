@@ -4,7 +4,10 @@ M4 不自己检索——测试通过假 LLM 控制「规划输出」与「每步
 以此验证编排逻辑（真检索由 M3 的测试覆盖）。
 """
 
+import json
+
 import pytest
+from sqlalchemy import text
 
 from app import ingest, storage, workflow
 from app.core.config import settings
@@ -167,6 +170,40 @@ def test_run_workflow_continues_after_step_error(db, client, no_l1_threshold, mo
     assert result.steps[1].status == "answered"              # 后续步骤照常执行
 
 
+def test_step_error_rolls_back_poisoned_session_before_following_steps(monkeypatch):
+    """无需数据库的状态机回归：第2步污染会话后，回滚使第3–5步继续。"""
+    from app.ask import AnswerData
+
+    class PoisonableSession:
+        poisoned = False
+        rollbacks = 0
+
+        def rollback(self):
+            self.poisoned = False
+            self.rollbacks += 1
+
+    db = PoisonableSession()
+
+    def answer(db_, query, kb_id, **kwargs):
+        if query == "2":
+            db_.poisoned = True
+            raise RuntimeError("模拟数据库事务中止")
+        if db_.poisoned:
+            raise RuntimeError("current transaction is aborted")
+        return AnswerData(question=query, content="完成")
+
+    monkeypatch.setattr(workflow.ask_service, "validate_kb", lambda *args: None)
+    monkeypatch.setattr(workflow.ask_service, "answer_question", answer)
+    plan = json.dumps([{"goal": str(i), "query": str(i)} for i in range(1, 6)])
+
+    result = workflow.run_workflow(db, "任务", None, llm=_ScriptedLLM([plan]))
+
+    assert [step.status for step in result.steps] == [
+        "answered", "error", "answered", "answered", "answered"
+    ]
+    assert db.rollbacks == 1
+
+
 def test_run_workflow_api_contract(client, db, no_l1_threshold, monkeypatch):
     """端点契约：200 + steps/answer/citations 结构。"""
     from app import generation
@@ -194,3 +231,51 @@ def test_run_workflow_api_contract(client, db, no_l1_threshold, monkeypatch):
 
 def test_workflow_empty_task_422(client):
     assert client.post("/api/v1/workflow", json={"task": ""}).status_code == 422
+
+
+def test_workflow_recovers_after_database_error(db, monkeypatch):
+    """第2步使PostgreSQL事务中止，第3–5步仍能执行SQL。"""
+    from app.ask import AnswerData
+
+    def answer(db_, question, kb_id, **kwargs):
+        if question == "2":
+            db_.execute(text("SELECT 1 / 0"))
+        assert db_.scalar(text("SELECT 1")) == 1
+        return AnswerData(question=question, content="已完成")
+
+    monkeypatch.setattr(workflow.ask_service, "answer_question", answer)
+    plan = json.dumps([{"goal": str(i), "query": str(i)} for i in range(1, 6)])
+    result = workflow.run_workflow(db, "任务", None, llm=_ScriptedLLM([plan]))
+    assert [step.status for step in result.steps] == [
+        "answered", "error", "answered", "answered", "answered"
+    ]
+
+
+@pytest.mark.parametrize("requested,expected", [(None, 3), (10, 3), (2, 2)])
+def test_workflow_enforces_configured_step_limit(db, monkeypatch, requested, expected):
+    from app.ask import AnswerData
+
+    monkeypatch.setattr(settings, "workflow_max_steps", 3)
+    monkeypatch.setattr(
+        workflow.ask_service, "answer_question",
+        lambda db, query, kb_id, **kw: AnswerData(question=query, content="完成"),
+    )
+    plan = json.dumps([{"goal": str(i), "query": str(i)} for i in range(10)])
+
+    class Planner(_ScriptedLLM):
+        def complete(self, system, user):
+            assert not db.in_transaction()
+            assert f"最多 {expected} 个步骤" in system
+            return super().complete(system, user)
+
+    db.execute(text("SELECT 1"))
+    result = workflow.run_workflow(db, "任务", None, max_steps=requested, llm=Planner([plan]))
+    assert len(result.steps) == expected
+
+
+def test_workflow_missing_kb_does_not_call_planner(db):
+    llm = _ScriptedLLM([])
+    with pytest.raises(workflow.ask_service.KnowledgeBaseNotFound):
+        workflow.run_workflow(db, "任务", 999999, llm=llm)
+    assert not llm.calls
+    assert not db.in_transaction()

@@ -11,6 +11,7 @@ from typing import Protocol
 import httpx
 
 from .core.config import settings
+from .http_client import get_http_client
 
 
 class EmbeddingError(RuntimeError):
@@ -34,17 +35,21 @@ class OpenAICompatibleEmbedding:
         base_url: str,
         model: str,
         timeout: float = 30.0,
+        *,
+        client: httpx.Client | None = None,
     ) -> None:
         self._api_key = api_key
         self._url = f"{base_url.rstrip('/')}/embeddings"
         self._model = model
         self._timeout = timeout
+        self._client = client
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         try:
-            response = httpx.post(
+            client = self._client if self._client is not None else get_http_client()
+            response = client.post(
                 self._url,
                 headers={"Authorization": f"Bearer {self._api_key}"},
                 json={"model": self._model, "input": texts},

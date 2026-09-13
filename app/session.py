@@ -9,6 +9,7 @@ V1.0 若要持久化问答历史，另起 conversations 表（03 §2.3 演进路
 
 import time
 from dataclasses import dataclass, field
+from threading import RLock
 
 from .core.config import settings
 
@@ -34,32 +35,38 @@ class SessionStore:
         self._ttl = ttl_seconds
         self._max_turns = max_turns
         self._sessions: dict[str, _Session] = {}
+        self._lock = RLock()
 
     def history(self, session_id: str) -> list[Turn]:
         """取会话历史（触发一次过期清理）。"""
-        self._evict_expired()
-        session = self._sessions.get(session_id)
-        return list(session.turns) if session is not None else []
+        with self._lock:
+            self._evict_expired()
+            session = self._sessions.get(session_id)
+            return list(session.turns) if session is not None else []
 
     def append(self, session_id: str, turn: Turn) -> None:
         """追加一轮，并只保留最近 max_turns 轮（防上下文无限增长）。"""
-        session = self._sessions.setdefault(session_id, _Session())
-        session.turns.append(turn)
-        session.turns = session.turns[-self._max_turns :]
-        session.updated_at = time.monotonic()
+        with self._lock:
+            self._evict_expired()
+            session = self._sessions.setdefault(session_id, _Session())
+            session.turns.append(turn)
+            session.turns = session.turns[-self._max_turns :]
+            session.updated_at = time.monotonic()
 
     def clear(self, session_id: str) -> None:
         """显式结束会话（前端"新对话"时调用）。"""
-        self._sessions.pop(session_id, None)
+        with self._lock:
+            self._sessions.pop(session_id, None)
 
     def _evict_expired(self) -> None:
-        now = time.monotonic()
-        expired = [
-            sid for sid, session in self._sessions.items()
-            if now - session.updated_at > self._ttl
-        ]
-        for sid in expired:
-            del self._sessions[sid]
+        with self._lock:
+            now = time.monotonic()
+            expired = [
+                sid for sid, session in self._sessions.items()
+                if now - session.updated_at > self._ttl
+            ]
+            for sid in expired:
+                del self._sessions[sid]
 
 
 # 进程内单例：应用共享（app 内 import 即用）

@@ -16,13 +16,30 @@
 - **防幻觉两道闸**：引用越界校验（纯规则，必执行）+ 零引用拒答
 - **两级拒答**：阈值 τ（素材相关性）+ 生成后校验，五态拒答原因可查
 - **会话追问**：指代句自动改写为自包含问题（"那它怎么调？" → "TCP 拥塞窗口如何调整？"）
-- **会话记录本地保存**：多会话（新建/切换/删除）存在浏览器本地，刷新不丢；上下文随请求回传，服务端保持无状态
-- **可中断**：等待回答或任务时随时点「停止」，不必干等
+- **会话记录本地保存**：多会话（新建/切换/删除）存在浏览器本地，刷新不丢；上下文随请求回传，当前界面不依赖服务端兼容会话的存活
+- **可停止等待**：等待回答或任务时可点「停止」；这是客户端中断，服务端仍继续本次模型调用，详见[运行边界](docs/operations.md)
 - **Agent 多步工作流**：跨文档综合任务自动拆步执行，**缺料步骤显式标注**，引用全局统一编号
 - **关联图**：Obsidian 式 graph view——节点是笔记、连线是语义关联强度（悬停看关联文档、可拖动、可调阈值）
 - **可评估**：内置评估集与指标（recall@k / MRR / 拒答率 / τ 扫描），参数由数据校准
 
 ## 🚀 快速开始
+
+### Windows 桌面一键启动
+
+已经完成下面第 1–3 步的首次配置后，可以安装桌面快捷方式：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-shortcut.ps1
+```
+
+之后双击桌面的 **KnowBase** 即可。启动器会依次完成以下工作：
+
+1. 在 PATH 未配置时也会从 `%LOCALAPPDATA%\Programs\DockerDesktop`（包括本项目开发机的安装位置）寻找并启动 Docker Desktop；
+2. 首次启动时创建 `knowbase-pg`，以后复用并启动该容器和 `knowbase_pgdata` 数据卷；
+3. 等待 PostgreSQL 就绪，执行 `alembic upgrade head`；
+4. 以单 worker 启动 KnowBase，健康检查通过后自动打开 <http://127.0.0.1:8000/ui/>。
+
+运行期间请保留启动窗口；按 `Ctrl+C` 可停止 API。Docker Desktop 和数据库容器会继续运行，下一次启动可直接复用。若 `.venv` 或 `.env` 尚未配置，窗口会保留明确的修复提示。安装脚本可以重复执行，用于刷新移动仓库后的快捷方式路径。
 
 ### 1. 启动数据库（PostgreSQL 16 + pgvector + pg_trgm）
 
@@ -73,6 +90,8 @@ alembic upgrade head
 uvicorn app.main:app --reload      # 界面: http://127.0.0.1:8000/ui/  ·  API 文档: /docs
 ```
 
+演示时使用 `uvicorn app.main:app --workers 1`，避免修改文件触发开发热重载。当前按**单 worker**运行：兼容会话和后台入库任务均在进程内，不能直接通过增加 worker 获得可靠的跨进程会话与任务恢复。停止语义、连接池设置、旧文档重建说明见[运行与维护](docs/operations.md)。
+
 打开 <http://127.0.0.1:8000/ui/> 即可使用界面：**知识库**（新建/删除）→ **文档**（上传 .md、查看处理状态、重传）→ **问答**（选库提问、点引用 `[n]` 看原文）→ **工作流**（跨文档综合任务）。
 
 ### 5. 试一条完整链路
@@ -97,12 +116,12 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask \
 
 | 层 | 选型 | 说明 |
 |---|---|---|
-| 语言 / 框架 | Python 3.13 · FastAPI · Pydantic v2 | 异步 API、请求/响应契约 |
+| 语言 / 框架 | Python 3.13 · FastAPI · Pydantic v2 | 同步业务路由由线程池执行、请求/响应契约 |
 | 数据库 | PostgreSQL 16 · SQLAlchemy 2.x · Alembic | 迁移可重放；测试库独立 |
 | 向量与检索 | pgvector 0.8（HNSW / cosine）· pg_trgm（GIN） | 单库同事务，向量与元数据一致备份 |
 | Embedding | OpenAI 兼容 API（默认 `BAAI/bge-m3`，1024 维） | 全项目模型唯一 |
 | 生成 | OpenAI 兼容 Chat API（默认 `deepseek-ai/DeepSeek-V4-Flash`） | 供应商可配 |
-| 测试 / CI | pytest（91 项）· GitHub Actions（pgvector service container） | 测试不依赖真实密钥 |
+| 测试 / CI | pytest · GitHub Actions（pgvector service container） | 测试不依赖真实密钥 |
 
 ## 📡 API 概览
 
@@ -146,6 +165,7 @@ flowchart LR
 |---|---|
 | [docs/README.md](docs/README.md) | 文档体系与写作规范 |
 | [docs/workflow.md](docs/workflow.md) | 开发流程（S0–S6、DoD、内容归属） |
+| [docs/operations.md](docs/operations.md) | 运行边界、卡住排查、旧文档重建与后续优化建议 |
 | [01-requirements](docs/design/01-requirements.md) | 产品需求 PRD（定位/范围/NFR/用户故事/D1–D7） |
 | [02-modules](docs/design/02-modules.md) | 模块拆分与业务边界 |
 | [03-data-model](docs/design/03-data-model.md) | 数据模型（ER / DDL / 状态机 / DM1–DM6） |
@@ -166,14 +186,20 @@ flowchart LR
 ## 🧪 测试与评估
 
 ```bash
-pytest -q                             # 91 项测试（独立测试库 + 事务回滚隔离）
+pytest -q                             # 全量测试（独立测试库 + 事务回滚隔离）
 python -m eval.run_eval               # 检索质量评估（recall@k / MRR / 拒答率 / τ 扫描）
 python -m eval.run_eval --retrieval   # 只跑检索评估（不消耗 LLM）
 ```
 
+数据库集成测试会重建独立的 `knowbase_test` 表结构，请只在专用测试库运行。没有 PostgreSQL 时可先运行 `pytest -q tests/test_chunking.py tests/test_embedding.py`；这部分通过不能替代事务恢复、查询与 API 的数据库集成验证。
+
+评估脚本会在当前 `DATABASE_URL` 下删除并重建名为「评估语料库」的知识库，且真实调用 Embedding（完整评估还调用 LLM）。运行前请切到独立评估数据库，避免覆盖日常资料。
+
 **首次评估结果**（3 篇语料 / 12 条样本）：recall@8 = **1.000**、MRR = **1.000**、
 库外拒答率 **100%**、库内误拒率 **0%**；据此把拒答阈值 τ 由 0.35 校准为 **0.45**。
 详见 [06-evaluation](docs/design/06-evaluation.md)。
+
+这些是早期小样本结果；本轮已修正 MRR 未命中计分与来源文档校验，但修正后尚未重新运行真实评估，不能用旧数字推断真实多库表现，见[后续优化](docs/operations.md#6-修复后的优化顺序)。
 
 ## 🗺 路线图
 

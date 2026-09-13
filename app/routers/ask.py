@@ -16,7 +16,7 @@ from ..schemas import (
     AnswerOut,
     AskRequest,
     CitationDetailOut,
-    CitationOut,
+    citations_out,
 )
 
 router = APIRouter(tags=["Q&A"])
@@ -41,18 +41,7 @@ def ask_question(payload: AskRequest, db: Session = Depends(get_db)):
         content=result.content,
         session_id=payload.session_id,
         search_query=result.search_query,
-        citations=[
-            CitationOut(
-                index=c.index,
-                chunk_id=c.chunk_id,
-                doc_id=c.doc_id,
-                doc_title=c.doc_title,
-                chunk_text=c.chunk_text,
-                char_start=c.char_start,
-                char_end=c.char_end,
-            )
-            for c in result.citations
-        ],
+        citations=citations_out(result.citations),
         refused=result.refused,
         refusal_reason=result.refusal_reason,
     )
