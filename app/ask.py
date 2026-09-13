@@ -16,11 +16,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import crud, embedding, generation, retrieval, session
 from .core.config import settings
 from .generation import LLMError, LLMProvider
+from .models import Document
 from .session import Turn as SessionTurn
 
 if TYPE_CHECKING:
@@ -85,31 +87,43 @@ def answer_question(
     question: str,
     kb_id: int | None,
     session_id: str | None = None,
+    history: list[tuple[str, str]] | None = None,
     llm: LLMProvider | None = None,
     session_store: "SessionStore | None" = None,
 ) -> AnswerData:
     """一次完整问答（含会话追问改写与两级拒答）。
 
-    :param session_id: 提供时启用会话——按上文改写追问，并记录本轮（D5）
+    :param session_id: 进程内会话 id（D5）
+    :param history: 请求携带的对话历史 [(question, answer), ...]，优先于进程内会话。
+        前端把会话持久化在本地并随请求回传，服务端因此保持无状态——
+        刷新页面或重启服务都不会丢失追问上下文（也不必把会话落库）。
     """
-    if kb_id is not None and crud.get_kb(db, kb_id) is None:
-        raise KnowledgeBaseNotFound("知识库不存在")
+    validate_kb(db, kb_id)
 
     store = session_store or session.store
-    history = store.history(session_id) if session_id else []
+    if history:
+        context = [SessionTurn(question=q, answer=a) for q, a in history]
+    else:
+        context = store.history(session_id) if session_id else []
 
     # 追问改写（04 DR5）：失败退化为原问题，不阻断检索
     search_query = question
-    if history:
+    if context:
         try:
-            search_query = generation.rewrite_query(question, history, provider=llm)
+            search_query = generation.rewrite_query(question, context, provider=llm)
         except LLMError as exc:
             logger.warning("追问改写失败，退化为原问题检索: %s", exc)
 
     query_vector = _embed_query(search_query)
-    candidates = retrieval.retrieve(
-        db, search_query, query_vector, kb_id, top_k=settings.retrieval_top_k
-    )
+    # 本服务使用只读会话：把候选与标题都复制成普通数据后结束事务。
+    # 生成阶段不再访问 ORM，避免长时间等待模型时占用连接池。
+    try:
+        candidates = retrieval.retrieve(
+            db, search_query, query_vector, kb_id, top_k=settings.retrieval_top_k
+        )
+        candidate_citations = _build_citations(db, list(enumerate(candidates, start=1)))
+    finally:
+        db.rollback()
 
     # L1-a：无候选
     if not candidates:
@@ -146,13 +160,24 @@ def answer_question(
         logger.info("L2 拒答：回答无有效引用（reason=%s）", reason)
         return _finish(store, session_id, _refuse(question, reason), search_query)
 
-    cited = [(i, c) for i, c in enumerate(candidates, start=1) if i in cited_indexes]
     result = AnswerData(
         question=question,
         content=content,
-        citations=_build_citations(db, cited),
+        citations=[c for c in candidate_citations if c.index in cited_indexes],
     )
     return _finish(store, session_id, result, search_query)
+
+
+def validate_kb(db: Session, kb_id: int | None) -> None:
+    """短只读事务校验库范围，在规划/改写/向量化前归还连接。
+
+    问答与工作流传入的会话不得包含待提交写入；事务边界由服务层管理。
+    """
+    try:
+        if kb_id is not None and crud.get_kb(db, kb_id) is None:
+            raise KnowledgeBaseNotFound("知识库不存在")
+    finally:
+        db.rollback()
 
 
 def _finish(
@@ -173,10 +198,8 @@ def _build_citations(
     cited: list[tuple[int, retrieval.RetrievedChunk]],
 ) -> list[CitationData]:
     """组装引用：批量取文档标题（避免逐条查询）。"""
-    from sqlalchemy import select
-
-    from .models import Document
-
+    if not cited:
+        return []
     doc_ids = {chunk.doc_id for _, chunk in cited}
     titles = {
         doc_id: title

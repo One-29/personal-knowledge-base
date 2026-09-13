@@ -73,6 +73,33 @@ def test_ask_returns_answer_with_citations(client, db, fake_llm, no_l1_threshold
     assert citation["chunk_id"] > 0
 
 
+def test_ask_with_history_rewrites_followup(client, db, no_l1_threshold, monkeypatch):
+    """请求携带 history（前端持久化的会话）时，用它做追问改写的上下文。"""
+    from app import generation
+
+    kb_id = client.post("/api/v1/kbs", json={"name": "计算机网络"}).json()["id"]
+    _add_doc(db, kb_id, "tcp.md", DOC_TCP)
+
+    replies = ["TCP 三次握手有什么好处？", "确认双方收发能力 [1]。"]
+
+    class _Scripted:
+        def complete(self, system: str, user: str) -> str:
+            return replies.pop(0) if replies else ""
+
+    monkeypatch.setattr(generation, "get_llm_provider", lambda: _Scripted())
+
+    resp = client.post("/api/v1/ask", json={
+        "question": "那它有什么好处？",
+        "kb_id": kb_id,
+        "history": [{"question": "TCP 为什么需要三次握手？", "answer": "确认双方收发能力 [1]。"}],
+    })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["search_query"] == "TCP 三次握手有什么好处？"   # 用了 history 做改写
+    assert body["refused"] is False
+
+
 def test_ask_refusal_is_200(client, db, fake_llm):
     """拒答是正常业务结果：HTTP 200 + refused=true（非错误响应）。"""
     kb_id = client.post("/api/v1/kbs", json={"name": "空库"}).json()["id"]

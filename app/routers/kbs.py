@@ -16,7 +16,7 @@ def _kb_out(kb: KnowledgeBase) -> KnowledgeBaseOut:
         id=kb.id,
         name=kb.name,
         description=kb.description,
-        doc_count=len(kb.documents),   # 技术债：N+1，规模上来后改 selectinload
+        doc_count=len(kb.documents),   # 列表查询由 crud.list_kbs 批量预加载
         created_at=kb.created_at,
     )
 

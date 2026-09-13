@@ -4,7 +4,7 @@
 
 **自托管的个人知识库：把 Markdown 笔记喂给它，用自然语言提问，每个回答都附原文出处；知识库覆盖不了的问题，它明说不知道，不编造。**
 
-后端已完整可用（M1–M4 + 评估 + CI）；前端规划中。产品背景与决策见 [docs/design/01-requirements.md](docs/design/01-requirements.md)。
+后端已完整可用（M1–M4 + 评估 + CI），前端单页可用（M5）。产品背景与决策见 [docs/design/01-requirements.md](docs/design/01-requirements.md)。
 
 ## ✨ 核心特性
 
@@ -12,14 +12,34 @@
 - **异步入库管线**：上传登记立即返回，切分与向量化后台执行，状态机可见（`pending/processing/ready/failed`）
 - **结构感知切分**：按 Markdown 标题边界切块，块记录原文**字符偏移**作为溯源锚点
 - **混合检索**：向量（pgvector HNSW/cosine）+ 关键词（pg_trgm GIN）双通道召回，RRF 融合排序
-- **带引用的回答**：回答逐句标注 `[n]`，可定位到原文段落
+- **带引用的回答**：先给结论、再用资料里的机制/步骤/条件展开解释，每个论断标注 `[n]` 并可定位原文
 - **防幻觉两道闸**：引用越界校验（纯规则，必执行）+ 零引用拒答
 - **两级拒答**：阈值 τ（素材相关性）+ 生成后校验，五态拒答原因可查
-- **会话追问**：同会话指代句自动改写为自包含问题（"那它怎么调？" → "TCP 拥塞窗口如何调整？"）
+- **会话追问**：指代句自动改写为自包含问题（"那它怎么调？" → "TCP 拥塞窗口如何调整？"）
+- **会话记录本地保存**：多会话（新建/切换/删除）存在浏览器本地，刷新不丢；上下文随请求回传，当前界面不依赖服务端兼容会话的存活
+- **可停止等待**：等待回答或任务时可点「停止」；这是客户端中断，服务端仍继续本次模型调用，详见[运行边界](docs/operations.md)
 - **Agent 多步工作流**：跨文档综合任务自动拆步执行，**缺料步骤显式标注**，引用全局统一编号
+- **关联图**：Obsidian 式 graph view——节点是笔记、连线是语义关联强度（悬停看关联文档、可拖动、可调阈值）
 - **可评估**：内置评估集与指标（recall@k / MRR / 拒答率 / τ 扫描），参数由数据校准
 
 ## 🚀 快速开始
+
+### Windows 桌面一键启动
+
+已经完成下面第 1–3 步的首次配置后，可以安装桌面快捷方式：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-shortcut.ps1
+```
+
+之后双击桌面的 **KnowBase** 即可。启动器会依次完成以下工作：
+
+1. 在 PATH 未配置时也会从 `%LOCALAPPDATA%\Programs\DockerDesktop`（包括本项目开发机的安装位置）寻找并启动 Docker Desktop；
+2. 首次启动时创建 `knowbase-pg`，以后复用并启动该容器和 `knowbase_pgdata` 数据卷；
+3. 等待 PostgreSQL 就绪，执行 `alembic upgrade head`；
+4. 以单 worker 启动 KnowBase，健康检查通过后自动打开 <http://127.0.0.1:8000/ui/>。
+
+运行期间请保留启动窗口；按 `Ctrl+C` 可停止 API。Docker Desktop 和数据库容器会继续运行，下一次启动可直接复用。若 `.venv` 或 `.env` 尚未配置，窗口会保留明确的修复提示。安装脚本可以重复执行，用于刷新移动仓库后的快捷方式路径。
 
 ### 1. 启动数据库（PostgreSQL 16 + pgvector + pg_trgm）
 
@@ -67,8 +87,12 @@ LLM_MODEL=deepseek-ai/DeepSeek-V4-Flash
 
 ```bash
 alembic upgrade head
-uvicorn app.main:app --reload      # Swagger 文档: http://127.0.0.1:8000/docs
+uvicorn app.main:app --reload      # 界面: http://127.0.0.1:8000/ui/  ·  API 文档: /docs
 ```
+
+演示时使用 `uvicorn app.main:app --workers 1`，避免修改文件触发开发热重载。当前按**单 worker**运行：兼容会话和后台入库任务均在进程内，不能直接通过增加 worker 获得可靠的跨进程会话与任务恢复。停止语义、连接池设置、旧文档重建说明见[运行与维护](docs/operations.md)。
+
+打开 <http://127.0.0.1:8000/ui/> 即可使用界面：**知识库**（新建/删除）→ **文档**（上传 .md、查看处理状态、重传）→ **问答**（选库提问、点引用 `[n]` 看原文）→ **工作流**（跨文档综合任务）。
 
 ### 5. 试一条完整链路
 
@@ -92,12 +116,12 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask \
 
 | 层 | 选型 | 说明 |
 |---|---|---|
-| 语言 / 框架 | Python 3.13 · FastAPI · Pydantic v2 | 异步 API、请求/响应契约 |
+| 语言 / 框架 | Python 3.13 · FastAPI · Pydantic v2 | 同步业务路由由线程池执行、请求/响应契约 |
 | 数据库 | PostgreSQL 16 · SQLAlchemy 2.x · Alembic | 迁移可重放；测试库独立 |
 | 向量与检索 | pgvector 0.8（HNSW / cosine）· pg_trgm（GIN） | 单库同事务，向量与元数据一致备份 |
 | Embedding | OpenAI 兼容 API（默认 `BAAI/bge-m3`，1024 维） | 全项目模型唯一 |
 | 生成 | OpenAI 兼容 Chat API（默认 `deepseek-ai/DeepSeek-V4-Flash`） | 供应商可配 |
-| 测试 / CI | pytest（91 项）· GitHub Actions（pgvector service container） | 测试不依赖真实密钥 |
+| 测试 / CI | pytest · GitHub Actions（pgvector service container） | 测试不依赖真实密钥 |
 
 ## 📡 API 概览
 
@@ -113,12 +137,13 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask \
 | **POST** | **`/api/v1/ask`** | **问答（带引用；覆盖不足返回 `refused=true`）** |
 | GET | `/api/v1/citations/{chunk_id}` | 引用溯源（原文片段 + 字符区间） |
 | **POST** | **`/api/v1/workflow`** | **多步综合任务（拆步、缺料可见、汇总）** |
+| GET | `/api/v1/graph` | 关联图数据（节点=文档，边=语义关联强度） |
 
 ## 🏗 架构
 
 ```mermaid
 flowchart LR
-    FE[前端 M5·规划中] -->|REST| M1[M1 库与文档管理]
+    FE[前端单页 M5<br/>frontend/ 原生 JS] -->|REST| M1[M1 库与文档管理]
     FE --> M3[M3 问答·溯源·拒答]
     FE --> M4[M4 Agent 工作流]
     M1 -->|触发| M2[M2 入库管线]
@@ -140,24 +165,41 @@ flowchart LR
 |---|---|
 | [docs/README.md](docs/README.md) | 文档体系与写作规范 |
 | [docs/workflow.md](docs/workflow.md) | 开发流程（S0–S6、DoD、内容归属） |
+| [docs/operations.md](docs/operations.md) | 运行边界、卡住排查、旧文档重建与后续优化建议 |
 | [01-requirements](docs/design/01-requirements.md) | 产品需求 PRD（定位/范围/NFR/用户故事/D1–D7） |
 | [02-modules](docs/design/02-modules.md) | 模块拆分与业务边界 |
 | [03-data-model](docs/design/03-data-model.md) | 数据模型（ER / DDL / 状态机 / DM1–DM6） |
 | [04-retrieval](docs/design/04-retrieval.md) | 检索链路（切分 / embedding / 混合检索 / 防幻 / 拒答，DR1–DR6） |
 | [05-agent-workflow](docs/design/05-agent-workflow.md) | Agent 多步工作流（AW1–AW5） |
 | [06-evaluation](docs/design/06-evaluation.md) | 评估方案与首次评估结论（含 τ 校准） |
+| [07-frontend-design](docs/design/07-frontend-design.md) | 前端界面设计（token 系统 / 关键决策） |
+| [08-graph-view](docs/design/08-graph-view.md) | 关联图设计（边的计算 / 权重合成 / 决策） |
+
+## 🖥 界面
+
+前端是单页应用（`frontend/`，原生 HTML/CSS/JS，零构建），四个视图：**问答**（引用编号可点，原文显示在常驻边注栏）、**工作流**（步骤序列 + 缺料标注）、**文档**（清单 + 处理状态）、**知识库**（新建/删除）。
+
+设计取向：界面隐喻为「**纸面与页边注**」——笔记与引文的现实形态是手稿与文献，因此回答是正文、`[n]` 是上标引文、**原文是页边注**。核对原文是产品的核心动作，所以边注栏常驻而非弹窗。设计 token 与决策见 [07-frontend-design](docs/design/07-frontend-design.md)。
+
+启动后打开 <http://127.0.0.1:8000/ui/> 即可使用（根路径会自动跳转）。
 
 ## 🧪 测试与评估
 
 ```bash
-pytest -q                             # 91 项测试（独立测试库 + 事务回滚隔离）
+pytest -q                             # 全量测试（独立测试库 + 事务回滚隔离）
 python -m eval.run_eval               # 检索质量评估（recall@k / MRR / 拒答率 / τ 扫描）
 python -m eval.run_eval --retrieval   # 只跑检索评估（不消耗 LLM）
 ```
 
+数据库集成测试会重建独立的 `knowbase_test` 表结构，请只在专用测试库运行。没有 PostgreSQL 时可先运行 `pytest -q tests/test_chunking.py tests/test_embedding.py`；这部分通过不能替代事务恢复、查询与 API 的数据库集成验证。
+
+评估脚本会在当前 `DATABASE_URL` 下删除并重建名为「评估语料库」的知识库，且真实调用 Embedding（完整评估还调用 LLM）。运行前请切到独立评估数据库，避免覆盖日常资料。
+
 **首次评估结果**（3 篇语料 / 12 条样本）：recall@8 = **1.000**、MRR = **1.000**、
 库外拒答率 **100%**、库内误拒率 **0%**；据此把拒答阈值 τ 由 0.35 校准为 **0.45**。
 详见 [06-evaluation](docs/design/06-evaluation.md)。
+
+这些是早期小样本结果；本轮已修正 MRR 未命中计分与来源文档校验，但修正后尚未重新运行真实评估，不能用旧数字推断真实多库表现，见[后续优化](docs/operations.md#6-修复后的优化顺序)。
 
 ## 🗺 路线图
 
@@ -169,7 +211,7 @@ python -m eval.run_eval --retrieval   # 只跑检索评估（不消耗 LLM）
 | M4 Agent 多步工作流 | 任务拆解、逐步执行、缺料可见、汇总 | ✅ 完成 |
 | 06 检索质量评估 | 评估集、recall/MRR、τ 校准 | ✅ 完成 |
 | CI/CD | GitHub Actions 自动化测试 | ✅ 完成 |
-| **M5 前端** | 库/文档管理、问答与溯源高亮、工作流进度 | ⏸ 规划中 |
+| **M5 前端** | 库/文档管理、问答与溯源高亮、工作流进度 | ✅ 完成（原生单页，零构建） |
 | V1.0 | PDF/Word 导入、问答历史持久化、增量同步 | 规划 |
 
 ## 📄 License

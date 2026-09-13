@@ -43,20 +43,20 @@ def _split_by_headings(text: str) -> list[tuple[int, int]]:
 
 
 def _window(segment: str, offset: int, max_chars: int, overlap: int) -> list[tuple[int, int]]:
-    """超长段落按窗口切分：窗口 max_chars，步长 max_chars - overlap，边界优先对齐换行。"""
+    """超长段落按窗口切分：从实际块尾回退 overlap，边界优先对齐换行。"""
     spans: list[tuple[int, int]] = []
     pos = 0
-    step = max(max_chars - overlap, 1)
     while pos < len(segment):
         end = min(pos + max_chars, len(segment))
         if end < len(segment):                       # 尽量在换行处断开
             newline = segment.rfind("\n", pos, end)
-            if newline > pos:
+            # 回缩后的块必须长于重叠区，否则下一窗口无法前进。
+            if newline > pos and newline + 1 - pos > overlap:
                 end = newline + 1
         spans.append((offset + pos, offset + end))
         if end >= len(segment):
             break
-        pos += step
+        pos = end - overlap
     return spans
 
 
@@ -67,7 +67,12 @@ def split_markdown(text: str, max_chars: int = 800, overlap_chars: int = 80) -> 
     :param max_chars: 单块字符上限（≈512 token 量级，见 04 §2）
     :param overlap_chars: 相邻块重叠字符数（≈10%）
     :return: 按原文顺序排列的块列表；空文本返回空列表
+    :raises ValueError: 上限非正，或重叠不在 [0, max_chars) 内
     """
+    if max_chars <= 0:
+        raise ValueError("max_chars must be greater than zero")
+    if not 0 <= overlap_chars < max_chars:
+        raise ValueError("overlap_chars must be between zero and max_chars - 1")
     if not text.strip():
         return []
 

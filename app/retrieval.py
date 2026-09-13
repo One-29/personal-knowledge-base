@@ -3,7 +3,7 @@
 设计要点：
 - 向量通道：pgvector cosine（`<=>` 运算符，与 HNSW 索引的 vector_cosine_ops 匹配，
   否则索引失效退化为全表扫描）；
-- 关键词通道：pg_trgm `similarity()`（DR4：内置扩展零部署，中文 2 字词偏弱由向量通道互补）；
+- 关键词通道：pg_trgm `%` 索引预过滤 + `similarity()` 排序（中文短词由向量通道互补）；
 - 合并：RRF（Reciprocal Rank Fusion，k=60）——只吃排名不吃原始分，免权重标定。
 
 本层只负责「找到候选块」，不生成回答（那属 M3 的生成层）。
@@ -68,9 +68,14 @@ def search_keyword(
     limit: int = 10,
 ) -> list[int]:
     """关键词通道：pg_trgm 相似度降序取 top-N（04 DR4），返回块 id 列表。"""
+    # set_config(..., true) 等价 SET LOCAL，支持绑定参数；提交/回滚后恢复，
+    # 不会把本次检索阈值泄漏给复用连接的其它请求。
+    db.execute(select(func.set_config(
+        "pg_trgm.similarity_threshold", str(settings.keyword_similarity_threshold), True
+    )))
     stmt = select(Chunk.id).where(
-        func.similarity(Chunk.content, query) > 0
-    ).order_by(func.similarity(Chunk.content, query).desc()).limit(limit)
+        Chunk.content.bool_op("%")(query)
+    ).order_by(func.similarity(Chunk.content, query).desc(), Chunk.id).limit(limit)
     stmt = _kb_filter(stmt, kb_id)
     return list(db.scalars(stmt).all())
 

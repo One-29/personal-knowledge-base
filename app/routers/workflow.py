@@ -11,28 +11,13 @@ from .. import workflow as workflow_service
 from ..ask import KnowledgeBaseNotFound
 from ..db import get_db
 from ..schemas import (
-    CitationOut,
+    citations_out,
     WorkflowRequest,
     WorkflowResultOut,
     WorkflowStepOut,
 )
 
 router = APIRouter(tags=["Workflow"])
-
-
-def _citation_out(citations) -> list[CitationOut]:
-    return [
-        CitationOut(
-            index=c.index,
-            chunk_id=c.chunk_id,
-            doc_id=c.doc_id,
-            doc_title=c.doc_title,
-            chunk_text=c.chunk_text,
-            char_start=c.char_start,
-            char_end=c.char_end,
-        )
-        for c in citations
-    ]
 
 
 @router.post("/workflow", response_model=WorkflowResultOut)
@@ -55,10 +40,10 @@ def run_workflow(payload: WorkflowRequest, db: Session = Depends(get_db)):
                 status=step.status,
                 conclusion=step.conclusion,
                 note=step.note,
-                citations=_citation_out(step.citations),
+                citations=citations_out(step.citations),
             )
             for step in result.steps
         ],
         answer=result.answer,
-        citations=_citation_out(result.citations),
+        citations=citations_out(result.citations),
     )

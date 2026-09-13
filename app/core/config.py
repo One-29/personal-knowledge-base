@@ -6,6 +6,7 @@
 
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +15,10 @@ class Settings(BaseSettings):
 
     # 数据库连接串（psycopg3 方言）
     database_url: str = "postgresql+psycopg://postgres@127.0.0.1:5432/knowbase"
+    db_pool_size: int = Field(default=5, ge=1)
+    db_max_overflow: int = Field(default=10, ge=0)
+    db_pool_recycle: int = Field(default=1800, gt=0)
+    db_pool_timeout: float = Field(default=5.0, gt=0)
 
     # 原文文件存储根目录（决策 D6）
     storage_dir: Path = Path("./data/storage")
@@ -28,6 +33,7 @@ class Settings(BaseSettings):
     # 检索召回量（04 §4.2 DR3：向量 top-20 + 关键词 top-10 → RRF 合并）
     vector_top_k: int = 20
     keyword_top_k: int = 10
+    keyword_similarity_threshold: float = Field(default=0.1, gt=0, le=1)
     retrieval_top_k: int = 8          # 交给生成层的候选块数
 
     # Embedding 通道（04 §3 DR2）：OpenAI 兼容协议，供应商可配；
@@ -54,7 +60,7 @@ class Settings(BaseSettings):
     session_max_turns: int = 5              # 只保留最近 5 轮作为改写上下文
 
     # 多步工作流（05 §5 AW2）：单次任务的步骤上限
-    workflow_max_steps: int = 5
+    workflow_max_steps: int = Field(default=5, ge=1)
 
 
 # 进程内单例：整个应用共享一份配置（import settings 即用）
