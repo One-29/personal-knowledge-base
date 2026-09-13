@@ -1,11 +1,15 @@
 """问答编排测试（M3）：引用校验（纯函数）+ 两级拒答（真库 + 假 LLM）。"""
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import QueuePool
 
 from app import ask, generation, ingest, storage
 from app.core.config import settings
 from app.generation import LLMError
 from app.models import Document
+from app.retrieval import RetrievedChunk
 
 DOC_TCP = "# TCP 三次握手\n\n客户端发送 SYN，服务端回复 SYN+ACK。\n"
 
@@ -154,3 +158,63 @@ def test_unknown_kb_raises_lookup_error(db, client):
     """指定不存在的库 → LookupError（由路由层转 404）。"""
     with pytest.raises(LookupError):
         ask.answer_question(db, "问题", 999999, llm=_FakeLLM(reply="x"))
+
+
+@pytest.mark.parametrize("kb_id", [1, None])
+def test_model_calls_release_single_connection_pool(monkeypatch, kb_id):
+    """只有一个连接时，改写/向量化/生成期间其它请求仍能查询，引用无需重新查库。"""
+    engine = create_engine(
+        "sqlite://", poolclass=QueuePool, pool_size=1, max_overflow=0, pool_timeout=0.1
+    )
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE knowledge_bases (id INTEGER PRIMARY KEY, name TEXT, "
+                          "description TEXT, created_at DATETIME, updated_at DATETIME)"))
+        conn.execute(text("INSERT INTO knowledge_bases (id, name) VALUES (1, '知识库')"))
+        conn.execute(text("CREATE TABLE documents (id INTEGER PRIMARY KEY, title TEXT)"))
+        conn.execute(text("INSERT INTO documents VALUES (1, '原文.md')"))
+
+    calls = []
+    with Session(engine) as session:
+        def check_pool(stage):
+            assert not session.in_transaction(), stage
+            # 真实 QueuePool：如果问答仍占着唯一连接，此处会抛 TimeoutError。
+            with engine.connect() as other_request:
+                assert other_request.scalar(text("SELECT 1")) == 1
+            calls.append(stage)
+
+        class Model:
+            def complete(self, system, user):
+                stage = "rewrite" if not calls else "generate"
+                check_pool(stage)
+                return "独立检索问题" if stage == "rewrite" else "有依据的结论 [1]。"
+
+        def embed(query):
+            check_pool("embedding")
+            return [1.0]
+
+        def retrieve(db_, *args, **kwargs):
+            db_.execute(text("SELECT 1"))
+            return [RetrievedChunk(1, 1, "原文内容", 0, 4, 0.1, 1.0, 1, 1)]
+
+        monkeypatch.setattr(ask, "_embed_query", embed)
+        monkeypatch.setattr(ask.retrieval, "retrieve", retrieve)
+        result = ask.answer_question(
+            session, "接着解释", kb_id, history=[("前问", "前答")], llm=Model()
+        )
+        assert calls == ["rewrite", "embedding", "generate"]
+        assert not session.in_transaction()
+        assert not result.refused
+        assert result.citations[0].doc_title == "原文.md"
+        assert result.citations[0].chunk_text == "原文内容"
+    engine.dispose()
+
+
+def test_retrieval_failure_rolls_back_before_return(db, monkeypatch):
+    def broken_retrieval(db_, *args, **kwargs):
+        db_.execute(text("SELECT 1 / 0"))
+
+    monkeypatch.setattr(ask.retrieval, "retrieve", broken_retrieval)
+    with pytest.raises(Exception, match="division by zero"):
+        ask.answer_question(db, "问题", None, llm=_FakeLLM())
+    assert not db.in_transaction()
+    assert db.scalar(text("SELECT 1")) == 1

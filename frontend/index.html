@@ -24,34 +24,39 @@
   <main>
     <!-- 问答 -->
     <section id="view-ask" class="view on">
-      <form id="ask-form" class="askbar">
-        <input id="ask-input" placeholder="例如：TCP 为什么需要三次握手？" autocomplete="off">
-        <button type="submit" id="ask-send">提问</button>
-        <button type="button" id="ask-stop" class="stop hidden">停止</button>
-      </form>
-      <div class="underbar">
-        <label>知识库
-          <select id="ask-kb"></select>
-        </label>
-        <label>会话
-          <select id="ask-conv"></select>
-        </label>
-        <button id="ask-new" class="link">新会话</button>
-        <button id="ask-drop" class="link">删除当前会话</button>
-        <span id="ask-saved" class="note"></span>
-      </div>
       <div id="ask-flow" class="flow"></div>
+      <div class="dock">
+        <form id="ask-form" class="askbar">
+          <input id="ask-input" placeholder="例如：TCP 为什么需要三次握手？" autocomplete="off">
+          <button type="submit" id="ask-send">提问</button>
+          <button type="button" id="ask-stop" class="stop hidden">停止</button>
+        </form>
+        <div class="underbar">
+          <label>知识库
+            <select id="ask-kb"></select>
+          </label>
+          <label>会话
+            <select id="ask-conv"></select>
+          </label>
+          <button id="ask-new" class="link">新会话</button>
+          <button id="ask-drop" class="link">删除当前会话</button>
+          <span id="ask-saved" class="note"></span>
+        </div>
+      </div>
     </section>
 
     <!-- 工作流 -->
     <section id="view-trace" class="view">
-      <p class="intro">综合任务会自动拆成几个子问题，逐个查库，并说明哪一步没有材料。</p>
-      <form id="trace-form" class="askbar">
-        <input id="trace-input" placeholder="例如：总结我在 TCP 上记过哪些知识点，逐条给出出处" autocomplete="off">
-        <select id="trace-kb"></select>
-        <button type="submit">执行</button>
-      </form>
+      <p class="intro">综合任务会自动拆成几个子问题，逐个查库，并说明哪一步没有材料。可以和问答同时进行，互不影响。</p>
       <div id="trace-flow" class="flow"></div>
+      <div class="dock">
+        <form id="trace-form" class="askbar">
+          <input id="trace-input" placeholder="例如：总结我在 TCP 上记过哪些知识点，逐条给出出处" autocomplete="off">
+          <select id="trace-kb"></select>
+          <button type="submit" id="trace-send">执行</button>
+          <button type="button" id="trace-stop" class="stop hidden">停止</button>
+        </form>
+      </div>
     </section>
 
     <!-- 关联图 -->
@@ -113,15 +118,15 @@
     </section>
   </main>
 
-  <!-- 页边注：核对原文的常驻位置 -->
+  <!-- 页边注：核对原文的常驻位置（可钉住多条、宽度可拖） -->
+  <div class="resizer" id="margin-resizer" title="拖动调整宽度"></div>
   <aside class="margin" id="margin" aria-live="polite">
-    <h2>原文核对</h2>
-    <p id="margin-hint" class="hint">问答里的引用编号是链接。点一下，对应原文段落出现在这里。</p>
-    <div id="margin-body" class="hidden">
-      <p class="margin-src" id="margin-src"></p>
-      <blockquote id="margin-text"></blockquote>
-      <p class="margin-note" id="margin-note"></p>
+    <div class="margin-head">
+      <h2>原文核对</h2>
+      <button id="margin-clear" class="link">清空</button>
     </div>
+    <p id="margin-hint" class="hint">点回答里的引用编号，原文会加到这里——可以同时钉住多条，方便互相对照。</p>
+    <div id="margin-list" class="margin-list"></div>
   </aside>
 
   <div id="toast" class="toast hidden" role="status"></div>

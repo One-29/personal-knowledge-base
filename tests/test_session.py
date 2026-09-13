@@ -5,6 +5,8 @@
 """
 
 import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import pytest
 
@@ -66,6 +68,35 @@ def test_history_isolated_per_session():
     store.append("s2", Turn(question="q2", answer="a2"))
     assert [t.question for t in store.history("s1")] == ["q1"]
     assert [t.question for t in store.history("s2")] == ["q2"]
+
+
+def test_store_concurrent_reads_writes_and_evictions():
+    """并发追加、清理与过期扫描不会遍历已变更的 dict，也不会丢失未过期轮次。"""
+    store = SessionStore(ttl_seconds=60, max_turns=1000)
+    barrier = Barrier(8)
+
+    # 在过期扫描每轮比较时主动让出 GIL，确保覆盖原来的迭代/增删竞争。
+    class YieldingTTL(float):
+        def __lt__(self, other):
+            time.sleep(0)
+            return super().__lt__(other)
+
+    store._ttl = YieldingTTL(60)
+
+    def worker(worker_id):
+        barrier.wait()
+        for index in range(40):
+            store.append("shared", Turn(question=f"{worker_id}-{index}", answer="a"))
+            sid = f"temporary-{worker_id}"
+            store.append(sid, Turn(question="q", answer="a"))
+            store.history("shared")
+            store.clear(sid)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(worker, range(8)))
+    history = store.history("shared")
+    assert len(history) == 320
+    assert len({turn.question for turn in history}) == 320
 
 
 # ── 追问改写（DR5） ─────────────────────────────────────────

@@ -1,5 +1,7 @@
 """知识库 CRUD 端点测试（US-M1-01、M1 契约 §3）。"""
 
+from sqlalchemy import event
+
 
 def _create_kb(client, name: str = "计算机网络", description: str | None = "计网笔记"):
     return client.post("/api/v1/kbs", json={"name": name, "description": description})
@@ -36,6 +38,39 @@ def test_list_kbs_returns_created(client):
     assert r.status_code == 200
     names = [kb["name"] for kb in r.json()]
     assert names == ["计算机网络", "操作系统"]
+
+
+def test_list_kbs_loads_document_counts_in_two_queries(client, db):
+    """多个知识库的文档计数批量预加载，查询数不随知识库数量增长。"""
+    from app.models import Document
+
+    for index in range(4):
+        kb_id = _create_kb(client, name=f"kb-{index}").json()["id"]
+        for doc_index in range(index):
+            db.add(Document(
+                kb_id=kb_id, title=f"doc-{doc_index}.md", file_path="unused.md",
+                content_hash=f"hash-{index}-{doc_index}", char_count=1,
+            ))
+    db.commit()
+    db.expunge_all()
+    selects = []
+    bind = db.get_bind()
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            selects.append(statement)
+
+    event.listen(bind, "before_cursor_execute", record)
+    try:
+        response = client.get("/api/v1/kbs")
+    finally:
+        event.remove(bind, "before_cursor_execute", record)
+
+    assert response.status_code == 200
+    assert {kb["name"]: kb["doc_count"] for kb in response.json()} == {
+        f"kb-{index}": index for index in range(4)
+    }
+    assert len(selects) == 2
 
 
 def test_get_kb_404(client):

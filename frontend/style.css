@@ -317,7 +317,33 @@ main {
   pointer-events: none;
 }
 
+/* ── 底部输入坞（最新回答紧邻输入框） ─────────────── */
+.dock {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  margin-top: 26px;
+  padding: 14px 0 18px;
+  background: var(--paper);
+  border-top: 1px solid var(--ink);
+}
+.dock .askbar { border-bottom: 0; padding-bottom: 0; }
+.dock .underbar { margin: 12px 0 0; }
+
 /* ── 页边注 ───────────────────────────────────────── */
+.resizer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  right: var(--margin-width);
+  width: 8px;
+  margin-right: -4px;
+  cursor: col-resize;
+  z-index: 15;
+  background: transparent;
+}
+.resizer:hover, .resizer.on { background: rgba(147, 38, 42, .14); }
+
 .margin {
   grid-column: 2;
   grid-row: 2;
@@ -325,31 +351,41 @@ main {
   border-left: 1px solid var(--rule);
 }
 
+.margin-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
 .margin h2 {
-  margin: 0 0 12px;
+  margin: 0;
   font: 400 12.5px/1.6 var(--mono);
   color: var(--ledger);
 }
 
-.margin .hint { margin: 0; color: var(--ink-2); font-size: 14px; max-width: 34ch; }
+.margin .hint { margin: 0; color: var(--ink-2); font-size: 14px; max-width: 36ch; }
 
-.margin-src { margin: 0 0 8px; font: 12.5px/1.6 var(--mono); color: var(--ink-2); }
+.margin-list { display: flex; flex-direction: column; gap: 18px; }
 
-.margin blockquote {
-  margin: 0;
-  padding-left: 12px;
-  border-left: 2px solid var(--stamp);
-  font-size: 15px;
-  line-height: 1.72;
+.margin-item { border-left: 2px solid var(--stamp); padding-left: 12px; }
+.margin-item-enter { animation: margin-in 180ms ease-out; }
+
+.margin-item .item-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
 }
+.margin-item .item-src { margin: 0; font: 12px/1.5 var(--mono); color: var(--ink-2); }
+.margin-item blockquote { margin: 0; font-size: 14.5px; line-height: 1.72; }
 
-.margin-note { margin: 10px 0 0; color: var(--ink-2); font-size: 12.5px; font-family: var(--mono); }
-
-.margin-body-enter { animation: margin-in 180ms ease-out; }
 @keyframes margin-in { from { opacity: 0; } to { opacity: 1; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .margin-body-enter { animation: none; }
+  .margin-item-enter { animation: none; }
 }
 
 /* ── 空态与提示 ───────────────────────────────────── */

@@ -4,10 +4,15 @@
 统一使用假 embedding provider——不打真实 API（conftest 的 _fake_embedding）。
 """
 
-from sqlalchemy import func, select
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+from sqlalchemy import func, select, text
 
 from app import ingest, storage
 from app.core.config import settings
+from app.embedding import EmbeddingError
 from app.models import Chunk, Document
 
 MD = """# TCP 三次握手
@@ -18,6 +23,22 @@ MD = """# TCP 三次握手
 
 两次无法确认客户端接收能力。
 """
+
+
+@pytest.mark.parametrize(
+    "vectors,expected_message",
+    [
+        ([[0.0] * 3], "返回数量不匹配"),
+        ([[0.0] * 2, [0.0] * 3], "维度不匹配"),
+    ],
+)
+def test_embedding_batch_contract_rejects_silent_chunk_loss(
+    vectors, expected_message, monkeypatch
+):
+    """provider 少返回向量或维度错误时立即失败，不能让 zip 静默少写块。"""
+    monkeypatch.setattr(settings, "embedding_dimension", 3)
+    with pytest.raises(EmbeddingError, match=expected_message):
+        ingest._validate_vectors(vectors, expected_count=2)
 
 
 def _create_doc(db, kb_id: int, title: str = "tcp.md") -> Document:
@@ -104,3 +125,65 @@ def test_failure_keeps_old_chunks_and_ready(db, client):
     assert doc.status == "ready"                        # 保旧，不标 failed
     assert doc.last_error_code == ingest.ERROR_PARSE_FAILED
     assert db.scalar(select(func.count()).select_from(Chunk).where(Chunk.doc_id == doc.id)) > 0
+
+
+@pytest.mark.parametrize("has_old_chunks", [False, True])
+@pytest.mark.parametrize("failure_kind", ["provider", "sql"])
+def test_unexpected_failure_restores_document_status_and_old_chunks(
+    db, client, monkeypatch, has_old_chunks, failure_kind
+):
+    """意外 provider 异常或真正 SQL 事务失败均不得遗留 processing 或丢旧块。"""
+    kb_id = client.post("/api/v1/kbs", json={"name": "异常恢复测试"}).json()["id"]
+    doc = _create_doc(db, kb_id)
+    if has_old_chunks:
+        ingest.process_document(doc.id, db)
+    doc_id = doc.id
+    snapshot_query = (
+        select(Chunk.id, Chunk.content, Chunk.char_start, Chunk.char_end)
+        .where(Chunk.doc_id == doc_id)
+        .order_by(Chunk.chunk_index)
+    )
+    old_chunks = db.execute(snapshot_query).all()
+
+    if failure_kind == "provider":
+        provider = Mock()
+        provider.embed_texts.side_effect = RuntimeError("unexpected provider result")
+        monkeypatch.setattr(ingest.embedding, "get_embedding_provider", lambda: provider)
+        expected_message = "unexpected provider result"
+    else:
+        def fail_after_old_chunks_deleted(instances):
+            # 管线已在同一事务删除旧块；实际 PostgreSQL 错误将事务置为 aborted。
+            db.execute(text("SELECT 1 / 0"))
+
+        monkeypatch.setattr(db, "add_all", fail_after_old_chunks_deleted)
+        expected_message = "division by zero"
+
+    ingest.process_document(doc_id, db)
+
+    db.refresh(doc)
+    assert doc.status == ("ready" if has_old_chunks else "failed")
+    assert doc.last_error_code == ingest.ERROR_PROCESS_FAILED
+    assert expected_message in doc.last_error_message
+    assert doc.processed_at is not None
+    assert doc.chunk_count == len(old_chunks)
+    assert db.execute(snapshot_query).all() == old_chunks
+    assert db.scalar(text("SELECT 42")) == 42
+
+
+def test_failed_status_recovery_logs_both_errors_without_claiming_success(monkeypatch, caplog):
+    """数据库持续不可用时记录原始处理异常和恢复异常，不伪称状态已落库。"""
+    doc = SimpleNamespace(status="pending", file_path="missing.md")
+    db = Mock()
+    monkeypatch.setattr(
+        ingest.crud, "get_document", Mock(side_effect=[doc, RuntimeError("database unavailable")])
+    )
+    monkeypatch.setattr(ingest.storage, "read", Mock(side_effect=RuntimeError("read failed")))
+
+    ingest.process_document(17, db)
+
+    assert "read failed" in caplog.text
+    assert "database unavailable" in caplog.text
+    assert "恢复文档状态也失败" in caplog.text
+    assert "文档处理完成" not in caplog.text
+    assert "文档处理失败: doc_id=" not in caplog.text
+    assert db.rollback.call_count == 2

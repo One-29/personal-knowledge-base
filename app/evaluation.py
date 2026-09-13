@@ -11,11 +11,13 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import ask as ask_service
 from . import retrieval
 from .core.config import settings
+from .models import Document
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +49,8 @@ class RetrievalMetrics:
 
     @property
     def mrr(self) -> float:
-        return sum(self.reciprocal_ranks) / len(self.reciprocal_ranks) if self.reciprocal_ranks else 0.0
+        # 未命中的样本按 reciprocal rank = 0 计入分母，否则会系统性高估 MRR。
+        return sum(self.reciprocal_ranks) / self.total if self.total else 0.0
 
     def summary(self) -> str:
         return f"recall@k={self.recall_at_k:.3f}  MRR={self.mrr:.3f}  ({self.hits}/{self.total})"
@@ -67,8 +70,10 @@ def load_eval_set(path: Path = EVAL_SET_PATH) -> list[EvalItem]:
     ]
 
 
-def is_hit(question: str, expected_doc: str, keywords: list[str], chunk_text: str) -> bool:
-    """命中判定（06 §2.3）：块含任一关键词即算命中该问题。"""
+def is_hit(expected_doc: str, actual_doc: str, keywords: list[str], chunk_text: str) -> bool:
+    """命中判定：来源文档一致，且块含至少一个期望关键词。"""
+    if expected_doc.casefold() != actual_doc.casefold():
+        return False
     lowered = chunk_text.lower()
     return any(keyword.lower() in lowered for keyword in keywords)
 
@@ -84,7 +89,13 @@ def evaluate_retrieval(
     from .embedding import get_embedding_provider
 
     top_k = top_k or settings.retrieval_top_k
-    titles = doc_titles or {}
+    if doc_titles is None:
+        titles = dict(db.execute(
+            select(Document.id, Document.title).where(Document.kb_id == kb_id)
+        ).all())
+        db.rollback()
+    else:
+        titles = doc_titles
     provider = get_embedding_provider()
     metrics = RetrievalMetrics()
 
@@ -93,9 +104,13 @@ def evaluate_retrieval(
             continue
         metrics.total += 1
         vector = provider.embed_texts([item.question])[0]
-        candidates = retrieval.retrieve(db, item.question, vector, kb_id, top_k=top_k)
+        try:
+            candidates = retrieval.retrieve(db, item.question, vector, kb_id, top_k=top_k)
+        finally:
+            # 候选是普通 dataclass；下一次远程 Embedding 调用前归还数据库连接。
+            db.rollback()
         for rank, candidate in enumerate(candidates, start=1):
-            if is_hit(item.question, item.expected_doc,
+            if is_hit(item.expected_doc, titles.get(candidate.doc_id, ""),
                       item.expected_keywords, candidate.content):
                 metrics.hits += 1
                 metrics.reciprocal_ranks.append(1.0 / rank)
@@ -178,9 +193,12 @@ def collect_similarities(
     samples: list[tuple[EvalItem, float | None]] = []
     for item in items:
         vector = provider.embed_texts([item.question])[0]
-        candidates = retrieval.retrieve(
-            db, item.question, vector, kb_id, top_k=settings.retrieval_top_k
-        )
+        try:
+            candidates = retrieval.retrieve(
+                db, item.question, vector, kb_id, top_k=settings.retrieval_top_k
+            )
+        finally:
+            db.rollback()
         similarities = [c.vector_similarity for c in candidates if c.vector_similarity is not None]
         samples.append((item, max(similarities) if similarities else None))
     return samples

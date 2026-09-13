@@ -1,7 +1,12 @@
+from collections.abc import Iterable
 from datetime import datetime
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from .ask import CitationData
 
 
 class DocStatus(str, Enum):
@@ -98,6 +103,22 @@ class CitationOut(BaseModel):
     chunk_text: str
     char_start: int
     char_end: int
+
+
+def citations_out(citations: Iterable["CitationData"]) -> list[CitationOut]:
+    """问答与工作流共用的服务层引用 → API 引用转换。"""
+    return [
+        CitationOut(
+            index=c.index,
+            chunk_id=c.chunk_id,
+            doc_id=c.doc_id,
+            doc_title=c.doc_title,
+            chunk_text=c.chunk_text,
+            char_start=c.char_start,
+            char_end=c.char_end,
+        )
+        for c in citations
+    ]
 
 
 class AnswerOut(BaseModel):

@@ -57,7 +57,7 @@ def _doc_out(doc: Document) -> DocumentOut:
     )
 
 
-async def _validate_upload(file: UploadFile) -> tuple[str, bytes, str]:
+def _validate_upload(file: UploadFile) -> tuple[str, bytes, str]:
     """上传校验：格式 / 大小 / 空内容 / 编码，在写库前拦截（US-M1-06）。
 
     返回 (title, content_bytes, text)；不合法直接抛 HTTPException。
@@ -65,7 +65,7 @@ async def _validate_upload(file: UploadFile) -> tuple[str, bytes, str]:
     title = Path(file.filename or "").name          # 只取文件名，防路径注入
     if Path(title).suffix.lower() not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=422, detail="仅支持 .md / .txt 文件")
-    content = await file.read()
+    content = file.file.read(settings.max_upload_bytes + 1)
     if len(content) > settings.max_upload_bytes:
         raise HTTPException(status_code=413, detail="文件超过大小上限")
     if not content.strip():
@@ -78,7 +78,7 @@ async def _validate_upload(file: UploadFile) -> tuple[str, bytes, str]:
 
 
 @kb_documents_router.post("/{kb_id}/documents", response_model=UploadResult, status_code=201)
-async def upload_document(
+def upload_document(
     kb_id: int,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
@@ -92,7 +92,7 @@ async def upload_document(
     """
     if crud.get_kb(db, kb_id) is None:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    title, content, text = await _validate_upload(file)
+    title, content, text = _validate_upload(file)
     if crud.get_document_by_title(db, kb_id, title) is not None:
         raise HTTPException(status_code=409, detail="同库同名文档已存在，请使用重传接口")
 
@@ -118,7 +118,7 @@ async def upload_document(
 
 
 @documents_router.post("/{doc_id}/reupload", response_model=UploadResult)
-async def reupload_document(
+def reupload_document(
     doc_id: int,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
@@ -132,7 +132,7 @@ async def reupload_document(
     doc = crud.get_document(db, doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
-    _, content, text = await _validate_upload(file)
+    _, content, text = _validate_upload(file)
     new_hash = hashlib.sha256(content).hexdigest()
     if new_hash == doc.content_hash:
         return UploadResult(document=_doc_out(doc), content_changed=False)

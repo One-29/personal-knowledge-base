@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Protocol
 import httpx
 
 from .core.config import settings
+from .http_client import get_http_client
 from .retrieval import RetrievedChunk
 
 if TYPE_CHECKING:                      # 仅类型检查期导入，避免运行期循环依赖
@@ -69,15 +70,19 @@ class OpenAICompatibleLLM:
         base_url: str,
         model: str,
         timeout: float = 60.0,
+        *,
+        client: httpx.Client | None = None,
     ) -> None:
         self._api_key = api_key
         self._url = f"{base_url.rstrip('/')}/chat/completions"
         self._model = model
         self._timeout = timeout
+        self._client = client
 
     def complete(self, system: str, user: str) -> str:
         try:
-            response = httpx.post(
+            client = self._client if self._client is not None else get_http_client()
+            response = client.post(
                 self._url,
                 headers={"Authorization": f"Bearer {self._api_key}"},
                 json={
