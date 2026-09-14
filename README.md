@@ -18,6 +18,7 @@
 - **会话追问**：指代句自动改写为自包含问题（"那它怎么调？" → "TCP 拥塞窗口如何调整？"）
 - **会话记录本地保存**：多会话（新建/切换/删除）存在浏览器本地，刷新不丢；上下文随请求回传，当前界面不依赖服务端兼容会话的存活
 - **可停止等待**：等待回答或任务时可点「停止」；这是客户端中断，服务端仍继续本次模型调用，详见[运行边界](docs/operations.md)
+- **问答与工作流并发**：同一页面可同时运行一个普通问答和一个工作流；发起会话仍存在时，结果写回该会话，不会串到当前会话
 - **Agent 多步工作流**：跨文档综合任务自动拆步执行，**缺料步骤显式标注**，引用全局统一编号
 - **关联图**：Obsidian 式 graph view——节点是笔记、连线是语义关联强度（悬停看关联文档、可拖动、可调阈值）
 - **可评估**：内置评估集与指标（recall@k / MRR / 拒答率 / τ 扫描），参数由数据校准
@@ -92,9 +93,19 @@ uvicorn app.main:app --reload      # 界面: http://127.0.0.1:8000/ui/  ·  API 
 
 演示时使用 `uvicorn app.main:app --workers 1`，避免修改文件触发开发热重载。当前按**单 worker**运行：兼容会话和后台入库任务均在进程内，不能直接通过增加 worker 获得可靠的跨进程会话与任务恢复。停止语义、连接池设置、旧文档重建说明见[运行与维护](docs/operations.md)。
 
-打开 <http://127.0.0.1:8000/ui/> 即可使用界面：**知识库**（新建/删除）→ **文档**（上传 .md、查看处理状态、重传）→ **问答**（选库提问、点引用 `[n]` 看原文）→ **工作流**（跨文档综合任务）。
+打开 <http://127.0.0.1:8000/ui/> 即可使用界面：**知识库**（新建/删除）→ **文档**（上传 .md、查看处理状态、重传）→ **问答**（选库提问、点引用 `[n]` 看原文）→ **工作流**（跨文档综合任务）→ **关联图**（查看文档语义关系并调整阈值）。
 
-### 5. 试一条完整链路
+### 5. 加载高等数学演示库
+
+仓库内置 8 篇“大一上高等数学”Markdown 笔记。数据库和 Embedding 配置可用后，在 PowerShell 执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\load-calculus-demo.ps1
+```
+
+加载器会先完整构建临时知识库，所有文档均进入 `ready` 后才替换同名旧演示库。它不会修改其它知识库，并会输出四档关联图的节点和边数。使用项目示例模型 `BAAI/bge-m3` 对当前语料重新计算的结果为：阈值 0.60 / 0.68 / 0.72 / 0.76 分别显示 23 / 17 / 10 / 1 条边。演示问题、工作流任务和操作顺序见[高等数学演示指南](docs/demo.md)。
+
+### 6. 试一条完整链路
 
 ```bash
 # 建库
@@ -177,7 +188,7 @@ flowchart LR
 
 ## 🖥 界面
 
-前端是单页应用（`frontend/`，原生 HTML/CSS/JS，零构建），四个视图：**问答**（引用编号可点，原文显示在常驻边注栏）、**工作流**（步骤序列 + 缺料标注）、**文档**（清单 + 处理状态）、**知识库**（新建/删除）。
+前端是单页应用（`frontend/`，原生 HTML/CSS/JS，零构建），五个视图：**问答**（引用编号可点，原文显示在常驻边注栏）、**工作流**（步骤序列 + 缺料标注）、**关联图**（文档语义关系）、**文档**（清单 + 处理状态）、**知识库**（新建/删除）。
 
 设计取向：界面隐喻为「**纸面与页边注**」——笔记与引文的现实形态是手稿与文献，因此回答是正文、`[n]` 是上标引文、**原文是页边注**。核对原文是产品的核心动作，所以边注栏常驻而非弹窗。设计 token 与决策见 [07-frontend-design](docs/design/07-frontend-design.md)。
 
@@ -185,21 +196,29 @@ flowchart LR
 
 ## 🧪 测试与评估
 
-```bash
-pytest -q                             # 全量测试（独立测试库 + 事务回滚隔离）
-python -m eval.run_eval               # 检索质量评估（recall@k / MRR / 拒答率 / τ 扫描）
-python -m eval.run_eval --retrieval   # 只跑检索评估（不消耗 LLM）
+```powershell
+pytest -q
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Retrieval
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1
 ```
 
-数据库集成测试会重建独立的 `knowbase_test` 表结构，请只在专用测试库运行。没有 PostgreSQL 时可先运行 `pytest -q tests/test_chunking.py tests/test_embedding.py`；这部分通过不能替代事务恢复、查询与 API 的数据库集成验证。
+数据按用途隔离：
 
-评估脚本会在当前 `DATABASE_URL` 下删除并重建名为「评估语料库」的知识库，且真实调用 Embedding（完整评估还调用 LLM）。运行前请切到独立评估数据库，避免覆盖日常资料。
+| 用途 | PostgreSQL 数据库 | 原文目录 | 日常界面是否可见 |
+|---|---|---|---:|
+| 个人资料与演示库 | `knowbase` | `data/storage` | 是 |
+| pytest 数据库集成测试 | `knowbase_test` | `data/test-storage-*` | 否 |
+| 检索与拒答评估 | `knowbase_eval` | `data/eval-storage` | 否 |
+
+数据库集成测试会重建独立的 `knowbase_test` 表结构。没有 PostgreSQL 时可先运行 `pytest -q tests/test_chunking.py tests/test_embedding.py`；这部分通过不能替代事务恢复、查询与 API 的数据库集成验证。
+
+`run-eval.ps1` 会幂等创建 `knowbase_eval`、执行迁移，并只在子进程内覆盖数据库和原文目录。`eval.run_eval` 也有强制保护：配置与实际连接都必须指向 `knowbase_eval`，原文目录必须精确为项目内的 `data/eval-storage`，否则会在任何业务查询和删除前拒绝执行。评估语料会先在临时库中全部处理为 `ready`，再替换旧评估库，避免用半成品语料输出误导性的低分。完整评估真实调用 Embedding 和 LLM；`-Retrieval` 只运行检索评估，不调用回答模型。
 
 **首次评估结果**（3 篇语料 / 12 条样本）：recall@8 = **1.000**、MRR = **1.000**、
 库外拒答率 **100%**、库内误拒率 **0%**；据此把拒答阈值 τ 由 0.35 校准为 **0.45**。
 详见 [06-evaluation](docs/design/06-evaluation.md)。
 
-这些是早期小样本结果；本轮已修正 MRR 未命中计分与来源文档校验，但修正后尚未重新运行真实评估，不能用旧数字推断真实多库表现，见[后续优化](docs/operations.md#6-修复后的优化顺序)。
+这是早期小样本结论。2026-09-14 已在隔离的 `knowbase_eval` 中用修正后的来源文档判断和 MRR 分母重跑检索部分，结果仍为 recall@8=1.000、MRR=1.000；拒答率与 τ 分布尚未重新完整评估，也不能用 3 篇语料推断真实多库表现。详见[评估方案](docs/design/06-evaluation.md#6-评估结论)。
 
 ## 🗺 路线图
 

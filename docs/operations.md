@@ -2,9 +2,9 @@
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 已确认（当前运行边界与维护说明；优化项尚待实施） |
-| 版本 | v0.1 |
-| 日期 | 2026-09-13 |
+| 状态 | 已确认（关键修复、并发回归与数据环境隔离已实施） |
+| 版本 | v0.2 |
+| 日期 | 2026-09-14 |
 | 上游 | `design/03-data-model.md` · `design/04-retrieval.md` · `design/05-agent-workflow.md` |
 | 关联 | 本轮 A1–A2、B1–B4、C1–C7 修复 |
 
@@ -45,6 +45,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\repair-docker-runt
 | 兼容接口 `session_id` + `session.store` | 默认 TTL **30 分钟**，最近一次追加对话后计时；进程重启即清空 | TTL 到期或重启后，单凭旧 `session_id` 不能恢复上文；线程锁只解决同进程并发安全 |
 
 TTL 由 `SESSION_TTL_SECONDS` 配置；到期记录在访问存储时清理，服务端没有独立的持久化会话表。
+
+### 问答与工作流可以同时运行
+
+同一浏览器页面为普通问答和工作流分别维护请求控制器与忙碌状态，因此允许一个普通问答和一个工作流同时在途；同类入口各自限制为一个在途请求。两个同步 FastAPI 路由在线程池中执行，每个请求由 `get_db()` 创建并关闭独立 SQLAlchemy Session。工作流内部仍按规划顺序逐步执行，不并行共享 Session。
+
+请求发起时会固定浏览器会话 ID。任务完成后结果写回发起时的会话，即使用户期间切换了会话也不会串记录；切回原会话即可查看。若原会话已删除，结果不会写入本地记录，界面会提示本次结果未保存，也不会复活被删除的会话。并发回归测试同时验证两个 HTTP 请求发生执行重叠、获得不同请求级 Session，并在结束后分别关闭。
+
+这个能力面向本机单用户的一问答加一工作流。多个标签页仍能产生更多服务端请求，当前没有全局模型排队、优先级或供应商限流退避；模型端的并发额度仍可能成为瓶颈。
+
+### 日常、测试、评估与演示数据
+
+| 用途 | PostgreSQL 数据库 | 原文目录 | 日常界面 |
+|---|---|---|---:|
+| 个人资料和高等数学演示库 | `knowbase` | `data/storage` | 可见 |
+| pytest 数据库集成测试 | `knowbase_test` | `data/test-storage-*` | 不可见 |
+| 检索与拒答评估 | `knowbase_eval` | `data/eval-storage` | 不可见 |
+
+运行评估统一使用：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Retrieval
+```
+
+脚本会创建或复用 `knowbase_eval`，在该数据库执行迁移，并只为评估子进程设置数据库和存储目录。`eval.run_eval` 会先校验配置，再用只读查询核对 Session 实际连接的数据库：两者都必须精确指向 `knowbase_eval`，原文目录必须精确为项目内的 `data/eval-storage`；任何条件不满足都会在业务查询和删除前拒绝执行。评估语料先写入临时库，全部文档进入 `ready` 后才在一个事务中替换正式评估库；中途失败会保留上一次完整评估库。直接在日常配置下运行 `python -m eval.run_eval` 会拒绝执行。
+
+高等数学演示库通过以下命令幂等加载：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\load-calculus-demo.ps1
+```
+
+加载器只替换同名“大一上高等数学演示库”，并采用临时库完整处理后再切换正式名称。8 篇文档与阈值演示步骤见[高等数学演示指南](demo.md)。
 
 ### 「停止」仅停止客户端等待
 

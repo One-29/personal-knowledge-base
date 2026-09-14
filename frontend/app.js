@@ -118,17 +118,22 @@ function dropConversation(id) {
   renderConvSelect();
 }
 
-function rememberTurn(turn) {
-  const conv = ensureConversation();
+function rememberTurn(conversationId, turn) {
+  const list = loadConversations();
+  const index = list.findIndex((c) => c.id === conversationId);
+  // 请求期间用户可能切换或删除会话。只写回发起请求时的会话；
+  // 目标已删除时直接放弃保存，避免把旧结果写进当前会话或复活已删除会话。
+  if (index < 0) return false;
+
+  const conv = list[index];
   conv.turns.push(turn);
   conv.at = Date.now();
   if (!conv.title) conv.title = turn.question.slice(0, 24);
-  const list = loadConversations();
-  const index = list.findIndex((c) => c.id === conv.id);
-  if (index >= 0) list[index] = conv; else list.unshift(conv);
+  list[index] = conv;
   persistConversations(list);
   renderConvSelect();
   flashSaved();
+  return true;
 }
 
 function flashSaved() {
@@ -487,6 +492,7 @@ document.getElementById("ask-form").addEventListener("submit", async (event) => 
   input.value = "";
 
   const conv = ensureConversation();
+  const conversationId = conv.id;
   const flow = document.getElementById("ask-flow");
   const entry = document.createElement("article");
   entry.className = "entry";
@@ -510,8 +516,17 @@ document.getElementById("ask-form").addEventListener("submit", async (event) => 
     });
     entry.innerHTML = renderAnswerEntry(question, answer);
     bindCitations(entry, answer.citations);
-    rememberTurn({ kind: "ask", question, answer, answerText: answer.content, at: Date.now() });
-    focusLatest(entry);
+    const saved = rememberTurn(conversationId, {
+      kind: "ask", question, answer, answerText: answer.content, at: Date.now(),
+    });
+    if (!saved) {
+      notify("发起提问的会话已被删除，本次结果未保存", true);
+    } else if (activeConversation()?.id === conversationId && !entry.isConnected) {
+      // 用户曾切走又切回原会话时，旧的在途节点已经被重绘移除；
+      // 从刚保存的记录重绘，确保答案立即可见，无需再次切换或刷新。
+      renderConversation();
+    }
+    if (entry.isConnected) focusLatest(entry);
   } catch (err) {
     if (err.name === "AbortError") {
       entry.innerHTML = `<h3 class="entry-q">${esc(question)}</h3>
@@ -548,6 +563,7 @@ document.getElementById("trace-form").addEventListener("submit", async (event) =
   input.value = "";
 
   const conv = ensureConversation();
+  const conversationId = conv.id;
   const flow = document.getElementById("trace-flow");
   const entry = document.createElement("article");
   entry.className = "entry";
@@ -568,7 +584,10 @@ document.getElementById("trace-form").addEventListener("submit", async (event) =
     });
     entry.innerHTML = renderTrace(task, result);
     bindCitations(entry, result.citations);
-    rememberTurn({ kind: "workflow", question: task, result, answerText: result.answer, at: Date.now() });
+    const saved = rememberTurn(conversationId, {
+      kind: "workflow", question: task, result, answerText: result.answer, at: Date.now(),
+    });
+    if (!saved) notify("发起任务的会话已被删除，本次结果未保存", true);
     focusLatest(entry);
   } catch (err) {
     if (err.name === "AbortError") {
