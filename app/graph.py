@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 
 MAX_CHUNKS = 400          # 参与近邻计算的块上限（防大库上算太久）
 DEFAULT_TOP_K = 3         # 每个块取几个跨文档近邻
-DEFAULT_MIN_SIMILARITY = 0.30   # 低于此相似度不连边（噪声）
+# BAAI/bge-m3 + 高等数学演示语料实测校准；换 embedding 模型后需重新评估。
+DEFAULT_MIN_SIMILARITY = 0.68   # 低于此相似度不连边（噪声）
 
 
 @dataclass

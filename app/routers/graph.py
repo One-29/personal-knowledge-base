@@ -17,7 +17,12 @@ router = APIRouter(tags=["Graph"])
 def get_graph(
     kb_id: int = Query(..., description="知识库 id（关联图按库构建）"),
     top_k: int = Query(3, ge=1, le=10, description="每个块的跨文档近邻数"),
-    min_similarity: float = Query(0.30, ge=0.0, le=1.0, description="连边的最低相似度"),
+    min_similarity: float = Query(
+        graph_service.DEFAULT_MIN_SIMILARITY,
+        ge=0.0,
+        le=1.0,
+        description="连边的最低相似度",
+    ),
     db: Session = Depends(get_db),
 ):
     """构建知识库的文档关联图。"""
