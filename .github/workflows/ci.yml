@@ -42,6 +42,7 @@ jobs:
         run: |
           docker compose --file compose.yaml config >/dev/null
           bash -n scripts/install-wsl-docker-engine.sh
+          node --check frontend/app.js
 
       - name: Validate PowerShell scripts
         shell: pwsh
