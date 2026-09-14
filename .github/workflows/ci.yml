@@ -27,16 +27,44 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
+
+      - name: Validate Compose and shell installer
+        run: |
+          docker compose --file compose.yaml config >/dev/null
+          bash -n scripts/install-wsl-docker-engine.sh
+
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem scripts -Recurse -File |
+            Where-Object { $_.Extension -in ".ps1", ".psm1" } |
+            ForEach-Object {
+              $tokens = $null
+              $errors = $null
+              [void][System.Management.Automation.Language.Parser]::ParseFile(
+                $_.FullName,
+                [ref]$tokens,
+                [ref]$errors
+              )
+              if ($errors.Count -gt 0) {
+                $failed = $true
+                Write-Error "$($_.FullName): $($errors.Message -join '; ')"
+              }
+            }
+          if ($failed) {
+            throw "PowerShell syntax validation failed."
+          }
 
       - name: Create test database
         run: |

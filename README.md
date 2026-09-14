@@ -25,39 +25,19 @@
 
 ## 🚀 快速开始
 
-### Windows 桌面一键启动
+### 1. 在 WSL2 安装独立 Docker Engine
 
-已经完成下面第 1–3 步的首次配置后，可以安装桌面快捷方式：
+本项目不需要启动 Docker Desktop。Windows 上准备好 Ubuntu WSL2 且启用 `systemd` 后，只需执行一次：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-shortcut.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-wsl-docker-engine.ps1
 ```
 
-之后双击桌面的 **KnowBase** 即可。启动器会依次完成以下工作：
+脚本按 [Docker Engine Ubuntu 安装说明](https://docs.docker.com/engine/install/ubuntu/)从官方仓库安装 Engine、containerd、Buildx 与 Compose 插件，启用 `docker.service`，并让当前 WSL 用户可以运行 Docker 命令。安装结束时会重启 Ubuntu 发行版，使用户组立即生效。
 
-1. 在 PATH 未配置时也会从 `%LOCALAPPDATA%\Programs\DockerDesktop`（包括本项目开发机的安装位置）寻找并启动 Docker Desktop；
-2. 首次启动时创建 `knowbase-pg`，以后复用并启动该容器和 `knowbase_pgdata` 数据卷；
-3. 等待 PostgreSQL 就绪，执行 `alembic upgrade head`；
-4. 以单 worker 启动 KnowBase，健康检查通过后自动打开 <http://127.0.0.1:8000/ui/>。
+PostgreSQL 16、pgvector、健康检查和命名卷统一声明在 `compose.yaml`。数据库文件保存在 WSL2 内的 `knowbase_pgdata`，不会写入 Windows 挂载目录。
 
-运行期间请保留启动窗口；按 `Ctrl+C` 可停止 API。Docker Desktop 和数据库容器会继续运行，下一次启动可直接复用。若 `.venv` 或 `.env` 尚未配置，窗口会保留明确的修复提示。安装脚本可以重复执行，用于刷新移动仓库后的快捷方式路径。
-
-### 1. 启动数据库（PostgreSQL 16 + pgvector + pg_trgm）
-
-```bash
-docker run -d --name knowbase-pg \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=knowbase \
-  -e POSTGRES_HOST_AUTH_METHOD=trust \
-  -p 5432:5432 \
-  -v knowbase_pgdata:/var/lib/postgresql/data \
-  pgvector/pgvector:pg16
-
-# 跑测试需要一个独立测试库
-docker exec knowbase-pg psql -U postgres -c "CREATE DATABASE knowbase_test;"
-```
-
-### 2. 安装依赖
+### 2. 安装 Python 依赖
 
 ```bash
 python -m venv .venv
@@ -70,7 +50,7 @@ pip install -e ".[dev]"
 复制 `.env.example` 为 `.env`，填入模型服务的密钥（`EMBEDDING_*` 与 `LLM_*`）：
 
 ```ini
-DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:5432/knowbase
+DATABASE_URL=postgresql+psycopg://postgres:postgres@127.0.0.1:5432/knowbase
 STORAGE_DIR=./data/storage
 EMBEDDING_API_KEY=sk-xxx
 EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
@@ -84,14 +64,27 @@ LLM_MODEL=deepseek-ai/DeepSeek-V4-Flash
 > 任何 **OpenAI 兼容** 的 embedding / chat 服务都可以：换供应商只需改这三项配置，代码不变。
 > ⚠️ embedding 模型决定向量维度——换模型需一次维度迁移（见 `alembic/versions/` 中的示例迁移）。
 
-### 4. 建表并启动
+### 4. 从命令行启动
 
-```bash
-alembic upgrade head
-uvicorn app.main:app --reload      # 界面: http://127.0.0.1:8000/ui/  ·  API 文档: /docs
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 ```
 
-演示时使用 `uvicorn app.main:app --workers 1`，避免修改文件触发开发热重载。当前按**单 worker**运行：兼容会话和后台入库任务均在进程内，不能直接通过增加 worker 获得可靠的跨进程会话与任务恢复。停止语义、连接池设置、旧文档重建说明见[运行与维护](docs/operations.md)。
+启动器会通过 `wsl.exe` 启动独立 Docker Engine，以 Compose 创建或复用 `knowbase-pg` 和 `knowbase_pgdata`，等待 PostgreSQL 健康检查，执行 `alembic upgrade head`，再以单 worker 启动 API。健康检查通过后自动打开 <http://127.0.0.1:8000/ui/>。
+
+运行期间保留 PowerShell 窗口；按 `Ctrl+C` 停止 API。若也要释放 PostgreSQL 与 WSL2 占用，随后执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop-knowbase-database.ps1
+```
+
+启动脚本包含单实例 WSL 保活进程，避免 WSL2 默认空闲超时让后台 Docker 与数据库一起停止。当前 API 仍按**单 worker**运行：兼容会话和后台入库任务均在进程内，不能直接通过增加 worker 获得可靠的跨进程会话与任务恢复。停止语义、连接池设置、备份恢复和维护命令见[运行与维护](docs/operations.md)。
+
+如果仍希望双击启动，可以安装桌面快捷方式；它只调用上面的 PowerShell 启动脚本，不会打开 Docker Desktop：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-shortcut.ps1
+```
 
 打开 <http://127.0.0.1:8000/ui/> 即可使用界面：**知识库**（新建/删除）→ **文档**（上传 .md、查看处理状态、重传）→ **问答**（选库提问、点引用 `[n]` 看原文）→ **工作流**（跨文档综合任务）→ **关联图**（查看文档语义关系并调整阈值）。
 
@@ -103,7 +96,7 @@ uvicorn app.main:app --reload      # 界面: http://127.0.0.1:8000/ui/  ·  API 
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\load-calculus-demo.ps1
 ```
 
-加载器会先完整构建临时知识库，所有文档均进入 `ready` 后才替换同名旧演示库。它不会修改其它知识库，并会输出四档关联图的节点和边数。使用项目示例模型 `BAAI/bge-m3` 对当前语料重新计算的结果为：阈值 0.60 / 0.68 / 0.72 / 0.76 分别显示 23 / 17 / 10 / 1 条边。演示问题、工作流任务和操作顺序见[高等数学演示指南](docs/demo.md)。
+加载器会先自动启动 WSL 数据库，再完整构建临时知识库；所有文档均进入 `ready` 后才替换同名旧演示库。它不会修改其它知识库，并会输出四档关联图的节点和边数。使用项目示例模型 `BAAI/bge-m3` 对当前语料重新计算的结果为：阈值 0.60 / 0.68 / 0.72 / 0.76 分别显示 23 / 18 / 10 / 1 条边。演示问题、工作流任务和操作顺序见[高等数学演示指南](docs/demo.md)。
 
 ### 6. 试一条完整链路
 

@@ -3,30 +3,64 @@
 | 字段 | 内容 |
 |---|---|
 | 状态 | 已确认（关键修复、并发回归与数据环境隔离已实施） |
-| 版本 | v0.2 |
+| 版本 | v0.3 |
 | 日期 | 2026-09-14 |
 | 上游 | `design/03-data-model.md` · `design/04-retrieval.md` · `design/05-agent-workflow.md` |
-| 关联 | 本轮 A1–A2、B1–B4、C1–C7 修复 |
+| 关联 | A1–A2、B1–B4、C1–C7 修复 · WSL2 命令行运行环境 |
 
 本文区分代码已经保证的行为、部署边界与后续建议。性能缺陷能解释请求等待，不足以证明某次浏览器或桌面 GUI 卡死的原因；确认实际原因仍需要对应请求的日志与耗时。
 
 ## 1. 当前运行边界
 
-### Windows 桌面快捷方式
+### WSL2 独立 Docker Engine 与命令行启动
 
-仓库提供 `scripts/install-desktop-shortcut.ps1`，运行一次后会在当前用户桌面生成 **KnowBase** 快捷方式。快捷方式调用 `scripts/start-knowbase.ps1`，自动定位并启动 Docker Desktop、创建或复用 `knowbase-pg`、等待 PostgreSQL、执行 Alembic 迁移，再以单 worker 启动 API；健康检查通过后才打开浏览器。首次拉取 `pgvector/pgvector:pg16` 镜像可能需要几分钟。
+KnowBase 不依赖 Docker Desktop。PostgreSQL 与 pgvector 运行在 Ubuntu WSL2 内的独立 Docker Engine 中，Windows PowerShell 通过 `wsl.exe` 调用它；API 继续使用项目的 Windows `.venv`，通过 WSL localhost 转发连接 `127.0.0.1:5432`。
 
-启动窗口是服务的运行窗口，关闭窗口或按 `Ctrl+C` 会停止 API；数据库容器和 Docker Desktop 保持运行，以便下次快速启动。重复点击快捷方式时，若 `/health` 已返回正常，脚本只打开界面，不再启动第二个服务；若 8000 端口被其它程序占用，则保留错误信息，而不静默改用另一个地址。
-
-Windows 25H2 build 26200 上，Docker Desktop 可能在非正常退出后遗留无法访问的 `AF_UNIX` socket，报错路径通常依次为 `%LOCALAPPDATA%\Docker\run\*.sock` 和 `%LOCALAPPDATA%\docker-secrets-engine\engine.sock`。这属于 Docker Desktop/Windows 运行时问题，与 KnowBase 数据库无关；不要为此点击会删除容器、镜像和数据卷的 **Reset to factory defaults**。Docker 官方反馈仓库记录了相同复现与“改名父目录后重建”的规避方式：[#554](https://github.com/docker/desktop-feedback/issues/554)、[#531](https://github.com/docker/desktop-feedback/issues/531)。
-
-仓库中的恢复脚本会先关闭 Docker 和 WSL，再把这两个临时目录加时间戳改名保留，随后创建空目录。它不会删除 Docker 数据；运行时需要接受一次 UAC 管理员提示：
+首次配置运行下面的安装器。它要求 Ubuntu WSL2 已启用 [`systemd`](https://learn.microsoft.com/windows/wsl/systemd)，按 [Docker Engine Ubuntu 安装说明](https://docs.docker.com/engine/install/ubuntu/)从官方 apt 仓库安装 Engine、containerd、Buildx 和 Compose 插件，启用 `docker.service`，并把 WSL 默认用户加入 `docker` 用户组。Docker 官方说明该用户组拥有接近 root 的控制权限，详见[安装后配置](https://docs.docker.com/engine/install/linux-postinstall/)。
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\repair-docker-runtime.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-wsl-docker-engine.ps1
 ```
 
-若内核仍拒绝立即改名，脚本会登记为 Windows 下次启动前执行的改名并提示需要重启。重启一次后再双击桌面 **KnowBase**。不要在 Docker 正常运行时手工删除这些 socket，也不要删除脚本保留的 `*.recovery-*` 目录；其中的损坏重解析点可能仍被 Windows 拒绝访问。
+日常从项目根目录启动：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
+```
+
+启动器读取 `compose.yaml`，创建或复用 `knowbase-pg` 与 WSL 命名卷 `knowbase_pgdata`，等待数据库健康检查，执行 Alembic 迁移，再以单 worker 启动 API；`/health` 正常后才打开浏览器。首次拉取 `pgvector/pgvector:pg16` 镜像可能需要几分钟。重复启动时，如果 API 已经正常运行，脚本只打开界面；如果 8000 端口被其它程序占用，则明确报错。
+
+WSL2 的 [`vmIdleTimeout`](https://learn.microsoft.com/windows/wsl/wsl-config) 默认会在虚拟机空闲后停止它。仅有 `systemd`、Docker 与容器服务时，这台机器仍可能被判定为空闲，因此启动模块用 `flock` 建立一个无窗口、单实例的 `sleep infinity` 保活进程。它只负责维持 Ubuntu 运行，不处理请求，也不持有数据库连接。按 `Ctrl+C` 会停止 Windows API，数据库和保活进程继续运行；如需一并释放资源，停止 API 后执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop-knowbase-database.ps1
+```
+
+也可以安装桌面 **KnowBase** 快捷方式。快捷方式只是 PowerShell 启动命令的入口，不会打开或调用 Docker Desktop：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-shortcut.ps1
+```
+
+常用只读维护命令如下。`docker logs -f` 持续占用当前终端，按 `Ctrl+C` 退出日志查看，不会停止数据库。
+
+```powershell
+wsl.exe -d Ubuntu -- docker ps
+wsl.exe -d Ubuntu -- docker logs --tail 100 knowbase-pg
+wsl.exe -d Ubuntu -- docker logs -f knowbase-pg
+wsl.exe -d Ubuntu -- docker volume inspect knowbase_pgdata
+```
+
+数据库使用密码认证，默认本机开发账号为 `postgres` / `postgres`；Compose 在 WSL 虚拟机接口发布 5432，再通过 [WSL localhost 转发](https://learn.microsoft.com/windows/wsl/networking)提供给 Windows。`DATABASE_URL` 必须与之匹配。若以后改密码，需要同时重建数据库卷或在 PostgreSQL 中修改角色密码，并同步更新 `.env`。
+
+从 `pg_dump -Fc` 生成的快照恢复日常数据库和原文目录时，先停止 API，再运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\restore-knowbase-backup.ps1 `
+  -BackupDirectory .\data\backups\<备份目录>
+```
+
+恢复器验证 `PGDMP` 文件头，先把快照完整恢复到临时数据库，成功后才短暂切换为 `knowbase`；损坏快照不会先清空当前数据库。原文恢复前，现有 `data/storage` 会复制到带时间戳的 `data/backups/before-restore-*`，随后按快照重建，避免残留旧文件。删除前脚本会核对绝对路径必须精确位于项目 `data` 目录下。这是有意覆盖日常数据的操作，PowerShell 会显示确认提示；测试和评估数据库不从这份快照恢复。
 
 ### 单 worker 与后台任务
 

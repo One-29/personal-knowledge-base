@@ -10,7 +10,7 @@
 
 ## 1. 加载或恢复演示库
 
-先确保 Docker Desktop 和 `knowbase-pg` 正常运行，并在 `.env` 中配置 Embedding。随后从项目根目录执行：
+先在 `.env` 中配置 Embedding，再从项目根目录执行；脚本会自动启动 Ubuntu WSL2 内的独立 Docker Engine 和 `knowbase-pg`：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\load-calculus-demo.ps1
@@ -53,7 +53,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\load-calculus-demo
 | 下拉选项 | 最低相似度 | 节点 | 边 | 观察重点 |
 |---|---:|---:|---:|---|
 | 宽松 | 0.60 | 8 | 23 | 8 个节点全部连通，接近完全图（23/28 条可能边） |
-| 标准 | 0.68 | 8 | 17 | 8 个节点仍全部连通，主题分组开始清晰 |
+| 标准 | 0.68 | 8 | 18 | 8 个节点仍全部连通，主题分组开始清晰 |
 | 清晰 | 0.72 | 8 | 10 | 前 7 篇形成连通分量，常微分方程成为孤立节点 |
 | 核心关系 | 0.76 | 8 | 1 | 仅保留最强的“函数与极限—连续性”连接 |
 
