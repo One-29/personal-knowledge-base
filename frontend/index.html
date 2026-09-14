@@ -3,133 +3,322 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>KnowBase · 个人知识库问答</title>
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#173f3d">
+  <title>KnowBase · 个人知识库</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="masthead">
-    <div class="mark">
-      <h1>KnowBase</h1>
-      <p>在你自己的笔记里提问。每个回答都标着出处，点一下就能回到原文核对。</p>
-    </div>
-    <nav class="views">
-      <button data-view="ask" class="on">问答</button>
-      <button data-view="trace">工作流</button>
-      <button data-view="map">关联图</button>
-      <button data-view="docs">文档</button>
-      <button data-view="kbs">知识库</button>
-    </nav>
-  </header>
-
-  <main>
-    <!-- 问答 -->
-    <section id="view-ask" class="view on">
-      <div id="ask-flow" class="flow"></div>
-      <div class="dock">
-        <form id="ask-form" class="askbar">
-          <input id="ask-input" placeholder="例如：TCP 为什么需要三次握手？" autocomplete="off">
-          <button type="submit" id="ask-send">提问</button>
-          <button type="button" id="ask-stop" class="stop hidden">停止</button>
-        </form>
-        <div class="underbar">
-          <label>知识库
-            <select id="ask-kb"></select>
-          </label>
-          <label>会话
-            <select id="ask-conv"></select>
-          </label>
-          <button id="ask-new" class="link">新会话</button>
-          <button id="ask-drop" class="link">删除当前会话</button>
-          <span id="ask-saved" class="note"></span>
+  <div class="app-shell" id="app-shell">
+    <aside class="sidebar" aria-label="应用导航">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">K</span>
+        <div>
+          <strong>KnowBase</strong>
+          <span>个人知识库</span>
         </div>
       </div>
-    </section>
 
-    <!-- 工作流 -->
-    <section id="view-trace" class="view">
-      <p class="intro">综合任务会自动拆成几个子问题，逐个查库，并说明哪一步没有材料。可以和问答同时进行，互不影响。</p>
-      <div id="trace-flow" class="flow"></div>
-      <div class="dock">
-        <form id="trace-form" class="askbar">
-          <input id="trace-input" placeholder="例如：总结我在 TCP 上记过哪些知识点，逐条给出出处" autocomplete="off">
-          <select id="trace-kb"></select>
-          <button type="submit" id="trace-send">执行</button>
-          <button type="button" id="trace-stop" class="stop hidden">停止</button>
-        </form>
+      <nav class="views" aria-label="主要功能">
+        <button type="button" data-view="ask" class="on" aria-current="page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-5.2 4v-4.8A2.5 2.5 0 0 1 4 13.5z"/></svg>
+          <span><b>知识问答</b><small>检索并核对答案</small></span>
+          <i id="nav-ask-busy" class="nav-busy hidden" aria-label="问答运行中"></i>
+        </button>
+        <button type="button" data-view="trace">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v4h4M5.5 8A7.5 7.5 0 1 1 4.7 15M9 12h6m-3-3v6"/></svg>
+          <span><b>综合工作流</b><small>拆解跨文档任务</small></span>
+          <i id="nav-trace-busy" class="nav-busy hidden" aria-label="工作流运行中"></i>
+        </button>
+        <button type="button" data-view="map">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="7" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="15" cy="18" r="2.5"/><path d="m8.5 6.8 7-.6M7.4 9.2l6.2 6.6M17.3 8.4l-1.6 7"/></svg>
+          <span><b>知识关联图</b><small>发现文档间关系</small></span>
+        </button>
+        <button type="button" data-view="docs">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6"/></svg>
+          <span><b>文档管理</b><small>导入与维护资料</small></span>
+        </button>
+        <button type="button" data-view="kbs">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5C4 4.7 4.7 4 5.5 4H11l2 2h5.5c.8 0 1.5.7 1.5 1.5v10c0 .8-.7 1.5-1.5 1.5h-13c-.8 0-1.5-.7-1.5-1.5z"/></svg>
+          <span><b>知识库</b><small>组织不同主题</small></span>
+        </button>
+      </nav>
+
+      <div class="sidebar-status">
+        <div class="service-line">
+          <span id="service-dot" class="service-dot checking" aria-hidden="true"></span>
+          <span>本机服务</span>
+          <strong id="service-status">检查中</strong>
+        </div>
+        <div class="activity-board" aria-live="polite" aria-label="后台任务状态">
+          <div id="activity-ask" class="activity-row" data-status="idle">
+            <span>问答</span><strong>空闲</strong>
+          </div>
+          <div id="activity-trace" class="activity-row" data-status="idle">
+            <span>工作流</span><strong>空闲</strong>
+          </div>
+        </div>
+        <p>两项任务可同时运行，切换页面不会中断。</p>
       </div>
-    </section>
+    </aside>
 
-    <!-- 关联图 -->
-    <section id="view-map" class="view">
-      <p class="intro">每篇笔记是一个节点，连线表示两篇笔记在语义上互相靠近的程度。悬停查看标题，拖动可调整布局。</p>
-      <div class="underbar">
-        <label>知识库
-          <select id="map-kb"></select>
-        </label>
-        <label>连边阈值
-          <select id="map-threshold">
-            <option value="0.60">宽松 0.60</option>
-            <option value="0.68" selected>标准 0.68</option>
-            <option value="0.72">清晰 0.72</option>
-            <option value="0.76">核心关系 0.76</option>
-          </select>
-        </label>
-        <button id="map-reload" class="link">重新计算</button>
-        <span id="map-stat" class="note"></span>
-      </div>
-      <div class="map-wrap">
-        <canvas id="map-canvas" width="900" height="560"></canvas>
-        <p id="map-hover" class="map-hover"></p>
-      </div>
-      <p id="map-empty" class="empty hidden"></p>
-    </section>
+    <div class="workspace">
+      <header class="workspace-head">
+        <div>
+          <span id="view-kicker" class="view-kicker">ASK YOUR LIBRARY</span>
+          <h1 id="view-title">知识问答</h1>
+          <p id="view-description">从自己的资料中获得有出处、可核对的回答。</p>
+        </div>
+        <button type="button" id="margin-open" class="evidence-button" aria-expanded="true" aria-controls="margin">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM9 4v16M12 9h4M12 13h4"/></svg>
+          原文核对
+          <span id="margin-badge" class="evidence-count">0</span>
+        </button>
+      </header>
 
-    <!-- 文档 -->
-    <section id="view-docs" class="view">
-      <div class="underbar">
-        <label>知识库
-          <select id="docs-kb"></select>
-        </label>
-        <label class="pick">
-          <input type="file" id="docs-file" accept=".md,.txt">
-          <span class="link">上传 .md / .txt</span>
-        </label>
-        <button id="docs-refresh" class="link">刷新清单</button>
-      </div>
-      <table class="ledger" id="docs-table">
-        <thead>
-          <tr>
-            <th>文档</th><th>状态</th><th>块</th><th>字数</th><th>更新</th><th></th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-      <p id="docs-empty" class="empty">这个知识库还是空的。上传一篇 Markdown 笔记，它会被切块并建立索引。</p>
-    </section>
+      <main id="main-content">
+        <section id="view-ask" class="view on" aria-labelledby="view-title">
+          <div id="ask-welcome" class="welcome-panel">
+            <div class="welcome-copy">
+              <span class="section-label">可溯源问答</span>
+              <h2>把问题交给你的知识库</h2>
+              <p>KnowBase 会检索笔记、组织答案并标出引用。点击回答中的编号，即可在右侧核对原文。</p>
+            </div>
+            <div class="prompt-list" aria-label="示例问题">
+              <button type="button" class="prompt-chip" data-prompt="函数极限存在需要满足哪些条件？">
+                <span>01</span>函数极限存在需要满足哪些条件？
+              </button>
+              <button type="button" class="prompt-chip" data-prompt="导数和微分之间有什么联系？">
+                <span>02</span>导数和微分之间有什么联系？
+              </button>
+              <button type="button" class="prompt-chip" data-prompt="定积分的换元法应该如何使用？">
+                <span>03</span>定积分的换元法应该如何使用？
+              </button>
+            </div>
+          </div>
+          <div id="ask-flow" class="flow" aria-live="polite"></div>
 
-    <!-- 知识库 -->
-    <section id="view-kbs" class="view">
-      <form id="kb-form" class="askbar">
-        <input id="kb-name" placeholder="知识库名称，例如：计算机网络" maxlength="100" required>
-        <input id="kb-desc" placeholder="一句话说明（可选）" maxlength="500">
-        <button type="submit">新建</button>
-      </form>
-      <ul id="kb-list" class="shelf"></ul>
-    </section>
-  </main>
+          <div class="composer-dock">
+            <form id="ask-form" class="composer">
+              <label class="sr-only" for="ask-input">输入问题</label>
+              <textarea id="ask-input" rows="1" maxlength="1000" placeholder="输入你想从笔记中查找的问题…" autocomplete="off"></textarea>
+              <div class="composer-submit">
+                <button type="button" id="ask-stop" class="stop hidden">停止等待</button>
+                <button type="submit" id="ask-send" class="primary-action">
+                  <span>提问</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-4 14-3-6zM12 13l7-8"/></svg>
+                </button>
+              </div>
+            </form>
+            <div class="composer-options">
+              <label class="field-inline" for="ask-kb">
+                <span>检索范围</span>
+                <select id="ask-kb" aria-label="问答知识库"></select>
+              </label>
+              <span class="option-divider" aria-hidden="true"></span>
+              <label class="field-inline" for="ask-conv">
+                <span>当前会话</span>
+                <select id="ask-conv" aria-label="问答会话"></select>
+              </label>
+              <button type="button" id="ask-new" class="text-action">新建会话</button>
+              <button type="button" id="ask-drop" class="text-action danger-subtle">删除会话</button>
+              <span id="ask-saved" class="saved-note" role="status"></span>
+              <span class="key-hint"><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd> + <kbd>Enter</kbd> 换行</span>
+            </div>
+          </div>
+        </section>
 
-  <!-- 页边注：核对原文的常驻位置（可钉住多条、宽度可拖） -->
-  <div class="resizer" id="margin-resizer" title="拖动调整宽度"></div>
-  <aside class="margin" id="margin" aria-live="polite">
-    <div class="margin-head">
-      <h2>原文核对</h2>
-      <button id="margin-clear" class="link">清空</button>
+        <section id="view-trace" class="view" aria-labelledby="view-title">
+          <div id="trace-welcome" class="workflow-intro">
+            <div class="workflow-intro-copy">
+              <span class="section-label">MULTI-STEP RESEARCH</span>
+              <h2>一个任务，分步查清</h2>
+              <p>适合总结、比较和跨文档归纳。任务完成后会展示每个子问题的检索语句、结果状态与引用。</p>
+            </div>
+            <ol class="workflow-preview" aria-label="工作流执行过程">
+              <li><span>1</span><div><b>规划任务</b><small>将综合目标拆成可检索的步骤</small></div></li>
+              <li><span>2</span><div><b>逐步查库</b><small>每一步独立检索并判断材料是否充分</small></div></li>
+              <li><span>3</span><div><b>汇总结论</b><small>合并分步结果并统一引用编号</small></div></li>
+            </ol>
+          </div>
+          <div id="trace-flow" class="flow workflow-flow" aria-live="polite"></div>
+
+          <div class="composer-dock">
+            <form id="trace-form" class="composer">
+              <label class="sr-only" for="trace-input">输入综合任务</label>
+              <textarea id="trace-input" rows="1" maxlength="500" placeholder="例如：比较数列极限与函数极限的判定方法，并逐条给出出处…" autocomplete="off"></textarea>
+              <div class="composer-submit">
+                <button type="button" id="trace-stop" class="stop hidden">停止等待</button>
+                <button type="submit" id="trace-send" class="primary-action">
+                  <span>执行工作流</span>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-4 14-3-6zM12 13l7-8"/></svg>
+                </button>
+              </div>
+            </form>
+            <div class="composer-options">
+              <label class="field-inline" for="trace-kb">
+                <span>检索范围</span>
+                <select id="trace-kb" aria-label="工作流知识库"></select>
+              </label>
+              <span class="parallel-note"><i></i>可与普通问答同时运行</span>
+              <span class="key-hint"><kbd>Enter</kbd> 执行 · <kbd>Shift</kbd> + <kbd>Enter</kbd> 换行</span>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-map" class="view wide-view" aria-labelledby="view-title">
+          <div class="toolbar-panel">
+            <label class="control-field" for="map-kb">
+              <span>知识库</span>
+              <select id="map-kb"></select>
+            </label>
+            <label class="control-field" for="map-threshold">
+              <span>连边阈值</span>
+              <select id="map-threshold">
+                <option value="0.60">宽松 · 0.60</option>
+                <option value="0.68" selected>标准 · 0.68</option>
+                <option value="0.72">清晰 · 0.72</option>
+                <option value="0.76">核心关系 · 0.76</option>
+              </select>
+            </label>
+            <button type="button" id="map-reload" class="secondary-action">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8V4l-2 2a7 7 0 1 0 1.3 9M19 4h-4"/></svg>
+              重新计算
+            </button>
+            <div class="map-summary" id="map-stat" role="status">选择知识库后查看关联</div>
+          </div>
+
+          <div class="map-stage">
+            <div class="map-stage-head">
+              <div>
+                <h2>文档语义关系</h2>
+                <p>节点大小代表文档块数，连线越清晰代表关联越强。</p>
+              </div>
+              <div class="map-legend" aria-label="图例">
+                <span><i class="legend-node"></i>文档</span>
+                <span><i class="legend-edge"></i>语义关联</span>
+              </div>
+            </div>
+            <div class="map-canvas-wrap">
+              <canvas id="map-canvas" width="1000" height="620" aria-label="知识库文档关联图"></canvas>
+              <div id="map-loading" class="map-loading hidden" role="status"><span class="spinner"></span>正在计算文档关系…</div>
+              <p id="map-hover" class="map-hover" aria-live="polite"></p>
+            </div>
+            <p id="map-empty" class="empty-state compact hidden"></p>
+          </div>
+        </section>
+
+        <section id="view-docs" class="view wide-view" aria-labelledby="view-title">
+          <div class="stats-grid" aria-label="文档概况">
+            <div><span>文档总数</span><strong id="docs-total">—</strong></div>
+            <div><span>可以检索</span><strong id="docs-ready">—</strong></div>
+            <div><span>处理中</span><strong id="docs-processing">—</strong></div>
+            <div><span>需留意</span><strong id="docs-failed">—</strong></div>
+          </div>
+
+          <div class="toolbar-panel docs-toolbar">
+            <label class="control-field" for="docs-kb">
+              <span>知识库</span>
+              <select id="docs-kb"></select>
+            </label>
+            <label class="search-field" for="docs-search">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+              <input id="docs-search" type="search" placeholder="按标题查找文档">
+            </label>
+            <label class="control-field" for="docs-status-filter">
+              <span>状态</span>
+              <select id="docs-status-filter">
+                <option value="">全部状态</option>
+                <option value="ready">可以检索</option>
+                <option value="pending">等待处理</option>
+                <option value="processing">处理中</option>
+                <option value="failed">处理失败</option>
+              </select>
+            </label>
+            <button type="button" id="docs-refresh" class="icon-action" title="刷新文档列表" aria-label="刷新文档列表">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8V4l-2 2a7 7 0 1 0 1.3 9M19 4h-4"/></svg>
+            </button>
+            <label class="upload-action" id="docs-upload-label">
+              <input type="file" id="docs-file" accept=".md,.txt">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M5 14v5h14v-5"/></svg>
+              <span>上传文档</span>
+            </label>
+          </div>
+
+          <div id="docs-loading" class="loading-panel hidden" role="status">
+            <span class="spinner"></span><span>正在读取文档列表…</span>
+          </div>
+          <div class="table-shell" id="docs-table-shell">
+            <table class="ledger" id="docs-table">
+              <thead>
+                <tr>
+                  <th>文档</th><th>处理状态</th><th>分块</th><th>字符</th><th>最近更新</th><th><span class="sr-only">操作</span></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div id="docs-empty" class="empty-state hidden">
+            <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M12 7h17l7 7v27H12zM29 7v8h7M18 23h12M18 29h12"/></svg>
+            <h2>这个知识库还没有文档</h2>
+            <p>上传 UTF-8 编码的 Markdown 或纯文本文件，系统会自动切块并建立索引。</p>
+            <button type="button" id="docs-empty-upload" class="secondary-action">选择第一个文档</button>
+          </div>
+        </section>
+
+        <section id="view-kbs" class="view wide-view" aria-labelledby="view-title">
+          <div class="kb-layout">
+            <div class="kb-create-panel">
+              <span class="section-label">NEW LIBRARY</span>
+              <h2>新建知识库</h2>
+              <p>按课程、项目或长期主题分开管理资料。问答时可以限定一个库，也可以检索全部知识库。</p>
+              <form id="kb-form">
+                <label for="kb-name">名称</label>
+                <input id="kb-name" placeholder="例如：高等数学" maxlength="100" required>
+                <label for="kb-desc">说明 <span>选填</span></label>
+                <textarea id="kb-desc" placeholder="这个知识库主要保存什么内容？" maxlength="500" rows="3"></textarea>
+                <button type="submit" class="primary-action">创建知识库</button>
+              </form>
+            </div>
+            <div class="kb-collection">
+              <div class="collection-head">
+                <div><span class="section-label">YOUR LIBRARIES</span><h2>已有知识库</h2></div>
+                <span id="kb-count" class="count-label">0 个</span>
+              </div>
+              <ul id="kb-list" class="shelf" aria-live="polite"></ul>
+            </div>
+          </div>
+        </section>
+      </main>
     </div>
-    <p id="margin-hint" class="hint">点回答里的引用编号，原文会加到这里——可以同时钉住多条，方便互相对照。</p>
-    <div id="margin-list" class="margin-list"></div>
-  </aside>
 
-  <div id="toast" class="toast hidden" role="status"></div>
+    <div class="resizer" id="margin-resizer" title="拖动调整核对区宽度" aria-hidden="true"></div>
+    <aside class="margin" id="margin" aria-live="polite" aria-label="原文核对区">
+      <div class="margin-head">
+        <div>
+          <span class="section-label">SOURCE CHECK</span>
+          <h2>原文核对</h2>
+          <p><span id="margin-count">0</span> 条材料已打开</p>
+        </div>
+        <div class="margin-actions">
+          <button type="button" id="margin-clear" class="text-action">清空</button>
+          <button type="button" id="margin-close" class="icon-action" aria-label="收起原文核对区" title="收起原文核对区">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="margin-hint" class="margin-empty">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M9 7h30v34H9zM15 14h18M15 21h18M15 28h11"/><circle cx="34" cy="33" r="7"/><path d="m39 38 4 4"/></svg>
+        <h3>在这里核对答案出处</h3>
+        <p>点击回答里的引用编号，相关原文会固定在这里。你可以同时打开多条材料进行对照。</p>
+      </div>
+      <div id="margin-list" class="margin-list"></div>
+    </aside>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+  <div id="sr-status" class="sr-only" aria-live="polite"></div>
   <script src="app.js"></script>
 </body>
 </html>
