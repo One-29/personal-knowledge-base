@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     # 数据库连接串（psycopg3 方言）
-    database_url: str = "postgresql+psycopg://postgres@127.0.0.1:5432/knowbase"
+    database_url: str = "postgresql+psycopg://postgres:postgres@127.0.0.1:5432/knowbase"
     db_pool_size: int = Field(default=5, ge=1)
     db_max_overflow: int = Field(default=10, ge=0)
     db_pool_recycle: int = Field(default=1800, gt=0)
