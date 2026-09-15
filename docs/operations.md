@@ -28,7 +28,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-wsl-docker
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 ```
 
-启动器读取 `compose.yaml`，创建或复用 `knowbase-pg` 与 WSL 命名卷 `knowbase_pgdata`，等待数据库健康检查，执行 Alembic 迁移，再以单 worker 启动 API；`/health` 正常后才打开浏览器。首次拉取 `pgvector/pgvector:pg16` 镜像可能需要几分钟。重复启动时，如果 API 已经正常运行，脚本只打开界面；如果 8000 端口被其它程序占用，则明确报错。
+启动器读取 `compose.yaml`，创建或复用 `knowbase-pg` 与 WSL 命名卷 `knowbase_pgdata`，等待数据库健康检查，执行 Alembic 迁移，再以单 worker 启动 API；`/ready` 确认 API 与数据库均可用后才打开浏览器。`/health` 只检查 API 进程存活，不访问数据库。首次拉取 `pgvector/pgvector:pg16` 镜像可能需要几分钟。重复启动时，如果 API 已经正常运行，脚本只打开界面；如果 8000 端口被其它程序占用，则明确报错。
 
 WSL2 的 [`vmIdleTimeout`](https://learn.microsoft.com/windows/wsl/wsl-config) 默认会在虚拟机空闲后停止它。仅有 `systemd`、Docker 与容器服务时，这台机器仍可能被判定为空闲，因此启动模块用 `flock` 建立一个无窗口、单实例的 `sleep infinity` 保活进程。它只负责维持 Ubuntu 运行，不处理请求，也不持有数据库连接。按 `Ctrl+C` 会停止 Windows API，数据库和保活进程继续运行；如需一并释放资源，停止 API 后执行：
 
