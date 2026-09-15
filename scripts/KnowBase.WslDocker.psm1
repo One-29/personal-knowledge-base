@@ -90,26 +90,65 @@ function Start-KnowBaseWslKeepAlive {
 
     $wslExe = Get-KnowBaseWslExecutable
     $lockPath = "/tmp/knowbase-wsl-keepalive.lock"
-    $argumentString = "-d $Distribution -- flock -n $lockPath sleep infinity"
-    Start-Process `
+    $lockConflictExitCode = 75
+    $readyPath = "/tmp/knowbase-wsl-keepalive-$([Guid]::NewGuid().ToString('N')).ready"
+
+    # The holder must be the only process that tries to acquire the lock while it
+    # is starting. Probing the lock from PowerShell can win the race on a cold WSL
+    # boot, causing the non-blocking holder to exit before it ever becomes ready.
+    # Instead, the command writes a unique marker only after flock owns the lock.
+    $holderCommand = ": > '$readyPath'; exec sleep infinity"
+    $argumentString = '-d {0} -- flock -n -E {1} {2} sh -c "{3}"' -f `
+        $Distribution, $lockConflictExitCode, $lockPath, $holderCommand
+    $keepAliveProcess = Start-Process `
         -FilePath $wslExe `
         -ArgumentList $argumentString `
-        -WindowStyle Hidden | Out-Null
+        -WindowStyle Hidden `
+        -PassThru
 
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
-    do {
-        & $wslExe -d $Distribution -- flock -n $lockPath true *> $null
-        $probeExitCode = $LASTEXITCODE
-        if ($probeExitCode -eq 1) {
-            return
-        }
-        if ($probeExitCode -ne 0) {
-            throw "Could not verify the WSL keepalive process (exit code $probeExitCode)."
-        }
-        Start-Sleep -Milliseconds 250
-    } while ([DateTime]::UtcNow -lt $deadline)
+    try {
+        do {
+            & $wslExe -d $Distribution -- test -f $readyPath *> $null
+            $readyProbeExitCode = $LASTEXITCODE
 
-    throw "The WSL keepalive process did not acquire its lock within 15 seconds."
+            $keepAliveProcess.Refresh()
+            if ($readyProbeExitCode -eq 0) {
+                if ($keepAliveProcess.HasExited) {
+                    throw "The WSL keepalive process exited after acquiring its lock (exit code $($keepAliveProcess.ExitCode))."
+                }
+                return
+            }
+            if ($readyProbeExitCode -ne 1) {
+                throw "Could not verify the WSL keepalive process (exit code $readyProbeExitCode)."
+            }
+
+            if ($keepAliveProcess.HasExited) {
+                if ($keepAliveProcess.ExitCode -eq $lockConflictExitCode) {
+                    # Another launcher already owns the lock, so its keepalive is
+                    # the single active instance and this launch can continue.
+                    return
+                }
+                throw "The WSL keepalive process exited before becoming ready (exit code $($keepAliveProcess.ExitCode))."
+            }
+
+            Start-Sleep -Milliseconds 250
+        } while ([DateTime]::UtcNow -lt $deadline)
+
+        throw "The WSL keepalive process did not become ready within 15 seconds."
+    }
+    finally {
+        # The marker is unique to this launch, so removing it cannot affect a
+        # concurrent launcher or the lock held by the long-running process.
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "SilentlyContinue"
+            & $wslExe -d $Distribution -- rm -f $readyPath *> $null
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+    }
 }
 
 function Start-KnowBaseDockerEngine {
