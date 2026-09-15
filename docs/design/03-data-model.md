@@ -1,12 +1,12 @@
-# 03-数据模型（v0.2 草案）
+# 03-数据模型（v0.3）
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 草案（本层决策 DM1–DM6 已拍板） |
-| 版本 | v0.2 |
-| 日期 | 2026-09-06 |
+| 状态 | 已实现 |
+| 版本 | v0.3 |
+| 日期 | 2026-09-15 |
 | 上游 | `01-requirements.md`（PRD v0.4，决策 D1–D7）· `02-modules.md`（v0.3，模块边界） |
-| 变更 | v0.2：DM1–DM6 拍板并入 §6 决策记录 |
+| 变更 | v0.3：原文候选版本、任务版本核对与 1024 维现状；v0.2：DM1–DM6 拍板 |
 | 关联 | M1/M2 子 Issue（建仓后建立） |
 
 > 本文回答：需求落成哪几张表、字段与约束怎么定、存储与索引选型、如何映射到 SQLAlchemy。
@@ -27,7 +27,7 @@
 
 1. **表服务于已拍板的语义，不为"将来可能用"建表**：会话持久化（V1.0）不预建表，演进时增量加。
 2. **用户输入永不直接进文件路径**：原文文件名一律用 `doc_id`（防路径注入与重名），用户文件名只存 `title` 字段。
-3. **导入绝不破坏可用性**：重传处理期间旧块保持可检索，成功才替换（细节见 §4 状态机）。
+3. **导入绝不破坏可用性**：重传写入不可变候选原文，处理期间旧原文和旧块保持匹配，成功才在数据库事务中统一切换（细节见 §4 状态机）。
 
 ## 2. ER 图
 
@@ -53,6 +53,10 @@ erDiagram
         varchar title "上传文件名 同库唯一"
         varchar file_path "相对存储根的原文路径 D6"
         char content_hash "sha256 重传幂等判定"
+        integer ingest_version "候选登记时递增"
+        varchar pending_file_path "待处理的不可变候选原文"
+        char pending_content_hash "候选原文 sha256"
+        integer pending_char_count "候选原文字符数"
         varchar status "pending/processing/ready/failed"
         varchar last_error_code "失败分类码"
         text last_error_message
@@ -77,7 +81,7 @@ erDiagram
 
 ## 3. 表设计（DDL 草案）
 
-> 以下为可执行草稿：`embedding` 维度 1536 已定（04 §8 DR2，text-embedding-3-small）；
+> 当前 `embedding` 维度为 1024（04 §8 DR2，BAAI/bge-m3）；
 > HNSW 向量索引（cosine）随首个迁移版本与列一同落库。
 
 ```sql
@@ -95,8 +99,12 @@ CREATE TABLE documents (
     id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     kb_id         bigint NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
     title         varchar(255) NOT NULL,          -- 上传文件名（仅存元数据，不进路径）
-    file_path     varchar(500) NOT NULL,          -- 相对存储根路径: {kb_id}/{doc_id}.md
-    content_hash  char(64) NOT NULL,              -- sha256(原文)：重传内容未变则跳过重建
+    file_path     varchar(500) NOT NULL,          -- 当前可用原文；必须与现有 chunks 匹配
+    content_hash  varchar(64) NOT NULL,           -- 当前可用原文 sha256
+    ingest_version integer NOT NULL DEFAULT 1,    -- 候选登记的单调版本，旧任务提交前核对
+    pending_file_path varchar(500),               -- 待处理的不可变候选原文
+    pending_content_hash varchar(64),              -- 候选原文 sha256
+    pending_char_count integer,                    -- 候选原文字符数
     status        varchar(16) NOT NULL DEFAULT 'pending'
                   CHECK (status IN ('pending','processing','ready','failed')),
     last_error_code    varchar(32),               -- UNSUPPORTED_FORMAT/EMPTY_CONTENT/TOO_LARGE/PARSE_FAILED/EMBED_FAILED
@@ -119,7 +127,7 @@ CREATE TABLE chunks (
     content     text NOT NULL,
     char_start  integer NOT NULL,                 -- 原文内字符区间 [start,end)：溯源跳转高亮用
     char_end    integer NOT NULL,
-    embedding   vector(1536) NOT NULL,            -- 维度已定：1536（04 §8 DR2）
+    embedding   vector(1024) NOT NULL,            -- 当前默认 BAAI/bge-m3（04 §8 DR2）
     created_at  timestamptz NOT NULL DEFAULT now(),
     UNIQUE (doc_id, chunk_index)
 );
@@ -132,7 +140,9 @@ CREATE INDEX idx_chunks_doc ON chunks (doc_id);
 ```text
 storage/                      # 根路径可配置（如 ./data/storage）
 └── {kb_id}/
-    └── {doc_id}.md           # 文件名 = doc_id，不信任用户文件名（§1.2 原则 2）
+    ├── {doc_id}.md           # 迁移前的活动原文仍可读取
+    └── {doc_id}/
+        └── v{version}-{hash}.md  # 新上传的不可变原文版本
 ```
 
 删除语义配合：删文档 = 事务删行（chunks 随 FK 级联）+ 删单个原文文件；删库 = 事务删 `documents`/`chunks` + 删整个 `{kb_id}/` 目录。**数据库级联与文件删除不同事务**——文件删除失败只记日志（成为无引用孤儿文件，无数据一致性影响），编排细节归 M1（02 §3）。
@@ -140,7 +150,7 @@ storage/                      # 根路径可配置（如 ./data/storage）
 ## 4. 文档状态机
 
 > 图注：pending=已登记待处理；failed 的语义是「当前无任何可用内容」——
-> 重传失败时若旧块仍有效则回滚为 ready 并记录 last_error（导入绝不破坏可用性，§1.2 原则 3）。
+> 重传失败时若旧块仍有效则回滚为 ready 并记录 last_error；候选原文不会提前替换活动原文。
 
 ```mermaid
 stateDiagram-v2
@@ -153,8 +163,9 @@ stateDiagram-v2
     ready --> ready: 重传 内容未变(sha256 命中 幂等跳过)
     note right of processing
         重传期间旧块保持可检索
-        成功事务: 删旧块+插新块
-        失败: 旧块保留 回滚 ready
+        成功事务: 删旧块+插新块+切换 file_path
+        失败: 旧原文和旧块保留 回滚 ready
+        新版本到达: 旧任务放弃结果
     end note
 ```
 
@@ -197,6 +208,10 @@ class Document(Base):
     title: Mapped[str] = mapped_column(String(255))
     file_path: Mapped[str] = mapped_column(String(500))
     content_hash: Mapped[str] = mapped_column(String(64))
+    ingest_version: Mapped[int] = mapped_column(default=1, server_default="1")
+    pending_file_path: Mapped[str | None] = mapped_column(String(500))
+    pending_content_hash: Mapped[str | None] = mapped_column(String(64))
+    pending_char_count: Mapped[int | None]
     status: Mapped[str] = mapped_column(String(16), default="pending",
         server_default="pending")
     last_error_code: Mapped[str | None] = mapped_column(String(32))
@@ -224,15 +239,15 @@ class Chunk(Base):
 | DM1 | 主键 `bigint IDENTITY` | UUID：分布式/防枚举，URL 冗长 | 单用户自托管无分布式需求；自增可读、索引紧凑 |
 | DM2 | 向量存储 pgvector（HNSW/cosine） | 独立向量库（Qdrant/Chroma）：多一套部署与同步；FAISS 文件：无事务 | 单库单事务：向量与元数据一致备份；部署只多一个扩展 |
 | DM3 | chunks 冗余 `kb_id` | 不冗余：检索每次 join documents | 高频的按库过滤免 join；删除由 FK 级联兜底。代价：V1.0 支持跨库移动文档时需级联更新冗余列（已记录演进条件） |
-| DM4 | 重传语义 = `title` 文件名 + `UNIQUE(kb_id,title)` + sha256 | 独立版本表：正确但 MVP 过重 | 同库同名即重传对象（US-M1-04）；哈希命中内容未变则幂等跳过 |
-| DM5 | 导入失败保旧：无旧块→failed；有旧块→回滚 ready + `last_error` | 先删后建：失败即丢内容 | 导入绝不破坏可用性（§1.2 原则 3） |
+| DM4 | 重传语义 = `UNIQUE(kb_id,title)` + sha256 + 文档内单调 `ingest_version` | 独立版本表：保留完整历史，但当前产品只需要活动版和单个候选版 | 同库同名即重传对象；版本与候选路径共同阻止旧任务覆盖新内容 |
+| DM5 | 导入失败保旧：不可变候选原文处理成功后才切换；无旧块→failed，有旧块→ready + `last_error` | 直接覆盖活动文件：失败时旧块偏移与新原文错位 | 原文、字符偏移和块始终属于同一版本 |
 | DM6 | 状态承载 `varchar` + CHECK | PG 原生 enum：演进枚举值需迁移 | 改枚举值免数据库迁移；SQLAlchemy 侧同字段字符串语义简单 |
 
 ## 7. 移交 04 的待定清单（不影响本层表结构的主体）
 
 | 待定项 | 影响 |
 |---|---|
-| ~~Embedding 模型与维度 N~~ | **已定**：1536 / text-embedding-3-small（04 §8 DR2）；HNSW 索引语句随首个迁移落库 |
+| ~~Embedding 模型与维度 N~~ | **当前默认**：1024 / BAAI/bge-m3（04 §8 DR2）；更换模型需要迁移与全库重建 |
 | 关键词检索承载 | 已定 pg_trgm（04 DR4）→ **无需新增 tsvector 列**；若未来升级 zhparser 再做迁移 |
 | 检索阈值 / top-k | 纯参数，无新列 |
 | 切分策略粒度 | 决定 chunk 实际大小分布，无新列 |

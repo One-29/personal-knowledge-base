@@ -74,8 +74,16 @@ def list_documents(
     stmt = stmt.order_by(desc(Document.created_at), desc(Document.id))
     return list(db.scalars(stmt).all())
 
-def get_document(db: Session, doc_id: int) -> Document | None:
-    return db.get(Document, doc_id)
+def get_document(
+    db: Session,
+    doc_id: int,
+    *,
+    for_update: bool = False,
+) -> Document | None:
+    stmt = select(Document).where(Document.id == doc_id)
+    if for_update:
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
+    return db.scalars(stmt).first()
 
 
 def get_document_by_title(db: Session, kb_id: int, title: str) -> Document | None:

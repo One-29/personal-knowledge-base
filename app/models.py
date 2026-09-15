@@ -46,6 +46,15 @@ class Document(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    ingest_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
+    pending_file_path: Mapped[str | None] = mapped_column(String(500))
+    pending_content_hash: Mapped[str | None] = mapped_column(String(64))
+    pending_char_count: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(
         String(16),
         nullable=False,
@@ -112,7 +121,7 @@ class Chunk(Base):
     """表 chunks：检索原子单元 + 溯源锚点（M2 产物，03 §3）。
 
     冗余 kb_id（DM3）：检索按库过滤免 join documents。
-    embedding 维度与模型唯一性由 04 DR2 约束（默认 text-embedding-3-small / 1536）。
+    embedding 维度与模型唯一性由 04 DR2 约束（默认 BAAI/bge-m3 / 1024）。
     """
 
     __tablename__ = "chunks"
