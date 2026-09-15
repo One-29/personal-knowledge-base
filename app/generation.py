@@ -103,8 +103,22 @@ class OpenAICompatibleLLM:
         except httpx.HTTPError as exc:
             raise LLMError(f"LLM 请求失败: {exc}") from None
 
-        payload = response.json()
-        return payload["choices"][0]["message"]["content"]
+        try:
+            payload = response.json()
+        except ValueError:
+            raise LLMError("LLM 服务返回的内容不是有效 JSON") from None
+        if not isinstance(payload, dict):
+            raise LLMError("LLM 服务响应格式无效")
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise LLMError("LLM 服务响应缺少 choices")
+        first = choices[0]
+        if not isinstance(first, dict) or not isinstance(first.get("message"), dict):
+            raise LLMError("LLM 服务响应缺少 message")
+        content = first["message"].get("content")
+        if not isinstance(content, str):
+            raise LLMError("LLM 服务响应缺少文本 content")
+        return content
 
 
 def get_llm_provider() -> LLMProvider:

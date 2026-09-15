@@ -66,6 +66,7 @@ flowchart LR
 
 - **当前默认**：SiliconFlow 的 OpenAI 兼容 embedding（`BAAI/bge-m3`，1024 维，中文能力强）。
 - **供应商切换**：provider 接口保持 OpenAI 兼容；切换模型时必须同步配置并执行一次向量维度迁移。
+- **请求边界**：入库按 `EMBEDDING_BATCH_SIZE` 分批；单批遇到限流、5xx 或传输故障时指数退避重试，已成功批次不重复请求。HTTP 200 仍需校验 JSON 结构、数量、index、数值有效性和向量维度。
 - **实现边界**：embedding 调用归 M2（入库）与 M3（查询向量化共用同一 provider 服务），模型不一致会导致向量空间错位——**全项目 embedding 模型必须唯一**（写入 DR2 边界规则）。
 
 ## 4. 混合检索与合并（问答侧）

@@ -7,6 +7,7 @@ from sqlalchemy.pool import QueuePool
 
 from app import ask, generation, ingest, storage
 from app.core.config import settings
+from app.embedding import EmbeddingError
 from app.generation import LLMError
 from app.models import Document
 from app.retrieval import RetrievedChunk
@@ -152,6 +153,26 @@ def test_llm_unavailable_refuses(db, client, no_l1_threshold):
     result = ask.answer_question(db, "三次握手？", kb, llm=_FakeLLM(error=True))
     assert result.refused is True
     assert result.refusal_reason == ask.REFUSAL_LLM_UNAVAILABLE
+
+
+def test_embedding_unavailable_refuses(db, client, monkeypatch):
+    """查询向量服务异常 → 明确拒答，不把领域异常泄漏成 HTTP 500。"""
+    kb = client.post("/api/v1/kbs", json={"name": "向量服务异常"}).json()["id"]
+
+    class UnavailableProvider:
+        def embed_texts(self, _texts):
+            raise EmbeddingError("malformed provider response")
+
+    monkeypatch.setattr(
+        ask.embedding,
+        "get_embedding_provider",
+        lambda: UnavailableProvider(),
+    )
+    result = ask.answer_question(db, "测试问题", kb, llm=_FakeLLM(reply="不应调用"))
+
+    assert result.refused is True
+    assert result.refusal_reason == ask.REFUSAL_EMBEDDING_UNAVAILABLE
+    assert result.citations == []
 
 
 def test_unknown_kb_raises_lookup_error(db, client):

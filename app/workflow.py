@@ -160,7 +160,20 @@ def run_workflow(
             )
             continue
 
-        if answer.refused:
+        if answer.refusal_reason in {
+            ask_service.REFUSAL_LLM_UNAVAILABLE,
+            ask_service.REFUSAL_EMBEDDING_UNAVAILABLE,
+        }:
+            steps.append(
+                WorkflowStepData(
+                    index=index,
+                    goal=plan.goal,
+                    query=plan.query,
+                    status=STEP_ERROR,
+                    note=answer.content,
+                )
+            )
+        elif answer.refused:
             steps.append(
                 WorkflowStepData(
                     index=index, goal=plan.goal, query=plan.query,
