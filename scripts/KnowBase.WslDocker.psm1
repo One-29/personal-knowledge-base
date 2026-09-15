@@ -67,18 +67,30 @@ function ConvertTo-KnowBaseWslPath {
     )
 
     $resolvedPath = (Resolve-Path -LiteralPath $WindowsPath).Path
+
+    # Windows PowerShell 5.1 decodes WSL's UTF-8 stdout with the active console
+    # code page. Converting the whole path would therefore turn "实践项目" into
+    # mojibake. Ask WSL only for the ASCII drive mount, then append the original
+    # Unicode tail without sending it through native stdout.
+    $driveRoot = [System.IO.Path]::GetPathRoot($resolvedPath)
+    if ([string]::IsNullOrEmpty($driveRoot) -or $driveRoot.Length -ne 3 -or $driveRoot[1] -ne ":" -or $driveRoot[2] -ne [char]92) {
+        throw "Only paths on a Windows drive are supported: '$resolvedPath'."
+    }
     $output = @(Invoke-KnowBaseWsl `
         -Distribution $Distribution `
-        -ArgumentList @("wslpath", "-a", "-u", $resolvedPath) `
+        -ArgumentList @("wslpath", "-a", "-u", $driveRoot) `
         -PassThru `
         -Quiet `
-        -FailureMessage "Could not convert the Windows path for WSL")
-    $path = ($output | ForEach-Object { $_.ToString() }) -join "`n"
-    $path = $path.Trim()
-    if ([string]::IsNullOrWhiteSpace($path)) {
-        throw "WSL returned an empty path for '$resolvedPath'."
+        -FailureMessage "Could not resolve the Windows drive mount in WSL")
+    $wslDriveRoot = (($output | ForEach-Object { $_.ToString() }) -join "").Trim()
+    if ([string]::IsNullOrWhiteSpace($wslDriveRoot)) {
+        throw "WSL returned an empty mount path for '$driveRoot'."
     }
-    return $path
+    $relativePath = $resolvedPath.Substring($driveRoot.Length).Replace([char]92, [char]47)
+    if ([string]::IsNullOrEmpty($relativePath)) {
+        return $wslDriveRoot.TrimEnd("/")
+    }
+    return "$($wslDriveRoot.TrimEnd("/"))/$relativePath"
 }
 
 function Start-KnowBaseWslKeepAlive {

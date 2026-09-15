@@ -33,7 +33,7 @@ Invoke-KnowBaseCompose `
     -FailureMessage "Could not stop the KnowBase database container"
 
 $wslExe = (Get-Command wsl.exe -ErrorAction Stop).Source
-& $wslExe --terminate $WslDistribution
+& $wslExe --terminate $WslDistribution *> $null
 if ($LASTEXITCODE -ne 0) {
     throw "The container stopped, but WSL distribution '$WslDistribution' could not be terminated."
 }
