@@ -33,7 +33,7 @@ def test_upload_io_does_not_block_event_loop(monkeypatch, path, lookup):
 
     entered, release, completed = Event(), Event(), Event()
 
-    def slow_lookup(*args):
+    def slow_lookup(*args, **kwargs):
         entered.set()
         release.wait(3)
         completed.set()
@@ -100,6 +100,18 @@ def test_upload_422_unsupported_format(client):
     assert _upload(client, kb_id, ("a.pdf", b"%PDF-1.4", "application/pdf")).status_code == 422
 
 
+def test_upload_422_non_utf8_content(client):
+    """扩展名合法但正文不是 UTF-8 时明确拒绝。"""
+    kb_id = _create_kb(client)
+    response = _upload(
+        client,
+        kb_id,
+        ("legacy.txt", b"\xff\xfe\x00\x00", "text/plain"),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "文件编码需为 UTF-8"
+
+
 def test_upload_400_empty_content(client):
     """空内容（仅空白）→ 400。"""
     kb_id = _create_kb(client)
@@ -153,6 +165,53 @@ def test_reupload_changed_content_resets_status(client):
     assert body["content_changed"] is True
     assert body["document"]["status"] == "pending"
     assert body["document"]["char_count"] == len("# TCP\n拥塞控制")
+
+
+def test_reupload_switches_source_only_after_new_chunks_are_ready(client, db):
+    """重建期间引用仍读取旧原文，成功提交新块时才切换原文版本。"""
+    from app import ingest, storage
+    from app.models import Document
+
+    kb_id = _create_kb(client)
+    doc_id = _upload(client, kb_id).json()["document"]["id"]
+    doc = db.get(Document, doc_id)
+    ingest.process_document(
+        doc_id,
+        db,
+        expected_version=doc.ingest_version,
+        candidate_path=doc.pending_file_path,
+    )
+    db.refresh(doc)
+    old_path = doc.file_path
+    old_content = storage.read(old_path)
+
+    new_content = "# TCP\n拥塞控制使用慢启动、拥塞避免与快速恢复。"
+    response = client.post(
+        f"/api/v1/documents/{doc_id}/reupload",
+        files={"file": ("tcp.md", new_content, "text/markdown")},
+    )
+    assert response.status_code == 200
+    db.refresh(doc)
+    pending_path = doc.pending_file_path
+    pending_version = doc.ingest_version
+
+    assert storage.read(doc.file_path) == old_content
+    assert client.get(f"/api/v1/documents/{doc_id}/content").json()["content"] == old_content
+    assert storage.read(pending_path) == new_content
+
+    ingest.process_document(
+        doc_id,
+        db,
+        expected_version=pending_version,
+        candidate_path=pending_path,
+    )
+    db.refresh(doc)
+
+    assert doc.status == "ready"
+    assert doc.pending_file_path is None
+    assert doc.file_path == pending_path
+    assert storage.read(doc.file_path) == new_content
+    assert not (storage.settings.storage_dir / old_path).exists()
 
 
 def test_delete_document_204_then_404(client):

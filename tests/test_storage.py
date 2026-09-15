@@ -4,6 +4,8 @@
 settings.storage_dir 读写，互不干扰。
 """
 
+import pytest
+
 from app import storage
 from app.core.config import settings
 
@@ -43,3 +45,29 @@ def test_delete_kb_dir_removes_whole_tree():
     storage.delete_kb_dir(7)
     assert not (settings.storage_dir / "7").exists()
     storage.delete_kb_dir(7)          # 幂等：目录已不存在也不报错
+
+
+def test_versioned_save_is_atomic_when_replace_fails(monkeypatch):
+    """原子替换失败不能截断已经存在的同版本文件，也不能遗留临时文件。"""
+    rel = storage.save_version(8, 3, 2, "a" * 64, b"old")
+
+    def fail_replace(*_args):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(storage.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="replace failed"):
+        storage.save_version(8, 3, 2, "a" * 64, b"new")
+
+    directory = (settings.storage_dir / rel).parent
+    assert (settings.storage_dir / rel).read_bytes() == b"old"
+    assert list(directory.glob("*.tmp")) == []
+
+
+def test_delete_document_files_removes_legacy_and_versions():
+    """删文档同时清理旧式路径与全部不可变版本文件。"""
+    storage.save(9, 4, b"legacy")
+    storage.save_version(9, 4, 2, "b" * 64, b"candidate")
+
+    storage.delete_document_files(9, 4)
+
+    assert not (settings.storage_dir / "9").exists()

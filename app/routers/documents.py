@@ -47,7 +47,11 @@ def _doc_out(doc: Document) -> DocumentOut:
         kb_id=doc.kb_id,
         title=doc.title,
         status=doc.status,
-        char_count=doc.char_count,
+        char_count=(
+            doc.pending_char_count
+            if doc.pending_char_count is not None
+            else doc.char_count
+        ),
         chunk_count=doc.chunk_count,
         last_error_code=doc.last_error_code,
         last_error_message=doc.last_error_message,
@@ -55,6 +59,45 @@ def _doc_out(doc: Document) -> DocumentOut:
         created_at=doc.created_at,
         updated_at=doc.updated_at,
     )
+
+
+def _schedule_ingest(background_tasks: BackgroundTasks, doc: Document) -> None:
+    """把候选文件和版本固定到任务参数，旧任务据此识别自己是否已过期。"""
+    candidate_path = doc.pending_file_path or doc.file_path
+    background_tasks.add_task(
+        _run_ingest_task,
+        doc.id,
+        expected_version=doc.ingest_version,
+        candidate_path=candidate_path,
+    )
+
+
+def _run_ingest_task(
+    doc_id: int,
+    *,
+    expected_version: int,
+    candidate_path: str,
+) -> None:
+    """后台任务入口；独立会话由入库模块创建。"""
+    ingest.process_document(
+        doc_id,
+        expected_version=expected_version,
+        candidate_path=candidate_path,
+    )
+
+
+def _clear_pending(doc: Document) -> None:
+    doc.pending_file_path = None
+    doc.pending_content_hash = None
+    doc.pending_char_count = None
+
+
+def _safe_delete(rel_path: str) -> None:
+    """候选登记完成后的文件清理失败只记录日志。"""
+    try:
+        storage.delete(rel_path)
+    except OSError:
+        logger.warning("清理候选原文失败: path=%s", rel_path, exc_info=True)
 
 
 def _validate_upload(file: UploadFile) -> tuple[str, bytes, str]:
@@ -87,7 +130,8 @@ def upload_document(
     """上传文档：校验 → 登记（flush 取 id）→ 写原文 → 提交 → 异步触发入库管线。
 
     顺序说明：先 flush 让数据库分配 doc_id（事务未提交），再按
-    {kb_id}/{doc_id}.md 写文件；写文件失败则 rollback，无需清理已提交数据。
+    {kb_id}/{doc_id}/v{version}-{hash}.md 写入不可变候选文件；写文件失败则
+    rollback，数据库提交失败则清理候选文件。
     登记提交后经 BackgroundTasks 触发 M2 处理（D3/D4），响应立即返回 pending 状态。
     """
     if crud.get_kb(db, kb_id) is None:
@@ -96,24 +140,37 @@ def upload_document(
     if crud.get_document_by_title(db, kb_id, title) is not None:
         raise HTTPException(status_code=409, detail="同库同名文档已存在，请使用重传接口")
 
+    content_hash = hashlib.sha256(content).hexdigest()
     doc = Document(
         kb_id=kb_id,
         title=title,
         file_path="",                                   # 占位，写文件后回填相对路径
-        content_hash=hashlib.sha256(content).hexdigest(),
+        content_hash=content_hash,
         char_count=len(text),
+        ingest_version=1,
     )
     db.add(doc)
     db.flush()                                          # 分配 doc_id（事务未提交）
     try:
-        doc.file_path = storage.save(kb_id, doc.id, content)
+        candidate_path = storage.save_version(
+            kb_id, doc.id, doc.ingest_version, content_hash, content
+        )
+        doc.file_path = candidate_path
+        doc.pending_file_path = candidate_path
+        doc.pending_content_hash = content_hash
+        doc.pending_char_count = len(text)
     except OSError:
         db.rollback()
         logger.exception("原文写入失败: kb_id=%s title=%s", kb_id, title)
         raise HTTPException(status_code=500, detail="原文写入失败") from None
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        _safe_delete(candidate_path)
+        raise
     db.refresh(doc)
-    background_tasks.add_task(ingest.process_document, doc.id)
+    _schedule_ingest(background_tasks, doc)
     return UploadResult(document=_doc_out(doc), content_changed=True)
 
 
@@ -126,29 +183,78 @@ def reupload_document(
 ):
     """重传覆盖：同文档换内容；sha256 未变则幂等跳过（US-M1-04）。
 
-    内容变更后状态回到 pending，经 BackgroundTasks 触发 M2 全量重建；
-    重建失败时按 DM5 保留旧内容并记录 last_error（由 M2 写入）。
+    内容变更后写入不可变候选文件并回到 pending，经 BackgroundTasks 触发 M2；
+    成功时原文与块一起切换，失败时按 DM5 保留匹配的旧原文和旧块。
     """
-    doc = crud.get_document(db, doc_id)
+    _, content, text = _validate_upload(file)
+    doc = crud.get_document(db, doc_id, for_update=True)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
-    _, content, text = _validate_upload(file)
     new_hash = hashlib.sha256(content).hexdigest()
+
+    if new_hash == doc.pending_content_hash:
+        result = UploadResult(document=_doc_out(doc), content_changed=False)
+        if doc.status in {DocStatus.PENDING.value, DocStatus.PROCESSING.value}:
+            _schedule_ingest(background_tasks, doc)
+        db.rollback()
+        return result
+
     if new_hash == doc.content_hash:
+        if doc.pending_file_path:
+            abandoned_path = doc.pending_file_path
+            doc.ingest_version += 1
+            _clear_pending(doc)
+            doc.status = (
+                DocStatus.READY.value if doc.chunk_count > 0 else DocStatus.FAILED.value
+            )
+            doc.last_error_code = None
+            doc.last_error_message = None
+            db.commit()
+            db.refresh(doc)
+            if abandoned_path != doc.file_path:
+                _safe_delete(abandoned_path)
+            return UploadResult(document=_doc_out(doc), content_changed=True)
+
+        if doc.status == DocStatus.FAILED.value:
+            doc.ingest_version += 1
+            doc.pending_file_path = doc.file_path
+            doc.pending_content_hash = doc.content_hash
+            doc.pending_char_count = doc.char_count
+            doc.status = DocStatus.PENDING.value
+            doc.last_error_code = None
+            doc.last_error_message = None
+            db.commit()
+            db.refresh(doc)
+            _schedule_ingest(background_tasks, doc)
         return UploadResult(document=_doc_out(doc), content_changed=False)
+
+    next_version = doc.ingest_version + 1
     try:
-        storage.save(doc.kb_id, doc.id, content)        # 覆盖写原文
+        candidate_path = storage.save_version(
+            doc.kb_id, doc.id, next_version, new_hash, content
+        )
     except OSError:
         logger.exception("原文覆盖写入失败: doc_id=%s", doc_id)
         raise HTTPException(status_code=500, detail="原文写入失败") from None
-    doc.content_hash = new_hash
-    doc.char_count = len(text)
+
+    abandoned_path = doc.pending_file_path
+    doc.ingest_version = next_version
+    doc.pending_file_path = candidate_path
+    doc.pending_content_hash = new_hash
+    doc.pending_char_count = len(text)
     doc.status = DocStatus.PENDING.value                # 内容变更 → 待重建（M2 驱动）
     doc.last_error_code = None
     doc.last_error_message = None
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        _safe_delete(candidate_path)
+        raise
     db.refresh(doc)
-    background_tasks.add_task(ingest.process_document, doc.id)
+    if abandoned_path and abandoned_path not in {doc.file_path, candidate_path}:
+        _safe_delete(abandoned_path)
+    _schedule_ingest(background_tasks, doc)
     return UploadResult(document=_doc_out(doc), content_changed=True)
 
 
@@ -200,8 +306,7 @@ def delete_document(doc_id: int, db: Session = Depends(get_db)):
     doc = crud.get_document(db, doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
-    rel_path = doc.file_path
+    kb_id = doc.kb_id
     crud.delete_document(db, doc_id)
-    if not storage.delete(rel_path):
-        logger.warning("原文文件删除失败或已不存在: %s", rel_path)
+    storage.delete_document_files(kb_id, doc_id)
     return Response(status_code=204)

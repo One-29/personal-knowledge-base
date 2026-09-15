@@ -4,6 +4,7 @@
 统一使用假 embedding provider——不打真实 API（conftest 的 _fake_embedding）。
 """
 
+import hashlib
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -55,6 +56,20 @@ def _create_doc(db, kb_id: int, title: str = "tcp.md") -> Document:
     db.commit()
     db.refresh(doc)
     return doc
+
+
+def _stage_candidate(db, doc: Document, text: str) -> tuple[int, str]:
+    content = text.encode("utf-8")
+    content_hash = hashlib.sha256(content).hexdigest()
+    version = doc.ingest_version + 1
+    path = storage.save_version(doc.kb_id, doc.id, version, content_hash, content)
+    doc.ingest_version = version
+    doc.pending_file_path = path
+    doc.pending_content_hash = content_hash
+    doc.pending_char_count = len(text)
+    doc.status = "pending"
+    db.commit()
+    return version, path
 
 
 def test_process_document_creates_chunks(db, client):
@@ -127,6 +142,132 @@ def test_failure_keeps_old_chunks_and_ready(db, client):
     assert db.scalar(select(func.count()).select_from(Chunk).where(Chunk.doc_id == doc.id)) > 0
 
 
+def test_failed_reupload_keeps_matching_old_source_and_chunks(db, client, monkeypatch):
+    """候选向量化失败时，活动原文和旧块必须仍属于同一个旧版本。"""
+    kb_id = client.post("/api/v1/kbs", json={"name": "版本失败测试"}).json()["id"]
+    doc = _create_doc(db, kb_id)
+    ingest.process_document(doc.id, db)
+    db.refresh(doc)
+    old_path = doc.file_path
+    old_hash = doc.content_hash
+    old_chunks = db.execute(
+        select(Chunk.id, Chunk.content, Chunk.char_start, Chunk.char_end)
+        .where(Chunk.doc_id == doc.id)
+        .order_by(Chunk.chunk_index)
+    ).all()
+    version, candidate_path = _stage_candidate(db, doc, "# 新内容\n这次向量化会失败。")
+
+    provider = Mock()
+    provider.embed_texts.side_effect = EmbeddingError("provider unavailable")
+    monkeypatch.setattr(ingest.embedding, "get_embedding_provider", lambda: provider)
+    ingest.process_document(
+        doc.id,
+        db,
+        expected_version=version,
+        candidate_path=candidate_path,
+    )
+    db.refresh(doc)
+
+    assert doc.status == "ready"
+    assert doc.file_path == old_path
+    assert doc.content_hash == old_hash
+    assert doc.pending_file_path is None
+    assert doc.last_error_code == ingest.ERROR_EMBED_FAILED
+    assert db.execute(
+        select(Chunk.id, Chunk.content, Chunk.char_start, Chunk.char_end)
+        .where(Chunk.doc_id == doc.id)
+        .order_by(Chunk.chunk_index)
+    ).all() == old_chunks
+    assert (settings.storage_dir / old_path).is_file()
+    assert not (settings.storage_dir / candidate_path).exists()
+
+
+def test_failed_candidate_without_old_chunks_does_not_leave_orphan_file(
+    db, client, monkeypatch
+):
+    """尚无旧块时重传失败，保留活动原文并清理未被引用的候选文件。"""
+    kb_id = client.post("/api/v1/kbs", json={"name": "空索引失败测试"}).json()["id"]
+    doc = _create_doc(db, kb_id)
+    active_path = doc.file_path
+    version, candidate_path = _stage_candidate(db, doc, "# 新候选\n这次不会入库。")
+
+    provider = Mock()
+    provider.embed_texts.side_effect = EmbeddingError("provider unavailable")
+    monkeypatch.setattr(ingest.embedding, "get_embedding_provider", lambda: provider)
+    ingest.process_document(
+        doc.id,
+        db,
+        expected_version=version,
+        candidate_path=candidate_path,
+    )
+    db.refresh(doc)
+
+    assert doc.status == "failed"
+    assert doc.file_path == active_path
+    assert doc.pending_file_path is None
+    assert (settings.storage_dir / active_path).is_file()
+    assert not (settings.storage_dir / candidate_path).exists()
+
+
+def test_older_task_cannot_overwrite_newer_candidate(db, client, monkeypatch):
+    """新重传在向量化期间到达时，旧任务结果必须被丢弃。"""
+    kb_id = client.post("/api/v1/kbs", json={"name": "版本竞态测试"}).json()["id"]
+    doc = _create_doc(db, kb_id)
+    ingest.process_document(doc.id, db)
+    old_chunks = db.execute(
+        select(Chunk.id, Chunk.content).where(Chunk.doc_id == doc.id).order_by(Chunk.chunk_index)
+    ).all()
+    first_version, first_path = _stage_candidate(db, doc, "# 候选 A\n旧任务不得提交。")
+    base_provider = ingest.embedding.get_embedding_provider()
+    newer: dict[str, int | str] = {}
+
+    class SupersedingProvider:
+        def embed_texts(self, texts):
+            second_version, second_path = _stage_candidate(
+                db, doc, "# 候选 B\n这是最终应该生效的版本。"
+            )
+            newer.update(version=second_version, path=second_path)
+            return base_provider.embed_texts(texts)
+
+    monkeypatch.setattr(
+        ingest.embedding,
+        "get_embedding_provider",
+        lambda: SupersedingProvider(),
+    )
+    ingest.process_document(
+        doc.id,
+        db,
+        expected_version=first_version,
+        candidate_path=first_path,
+    )
+    db.refresh(doc)
+
+    assert doc.status == "pending"
+    assert doc.ingest_version == newer["version"]
+    assert doc.pending_file_path == newer["path"]
+    assert db.execute(
+        select(Chunk.id, Chunk.content).where(Chunk.doc_id == doc.id).order_by(Chunk.chunk_index)
+    ).all() == old_chunks
+    assert not (settings.storage_dir / first_path).exists()
+    assert (settings.storage_dir / str(newer["path"])).is_file()
+
+    monkeypatch.setattr(
+        ingest.embedding,
+        "get_embedding_provider",
+        lambda: base_provider,
+    )
+    ingest.process_document(
+        doc.id,
+        db,
+        expected_version=int(newer["version"]),
+        candidate_path=str(newer["path"]),
+    )
+    db.refresh(doc)
+    assert doc.status == "ready"
+    assert doc.pending_file_path is None
+    assert doc.file_path == newer["path"]
+
+
 @pytest.mark.parametrize("has_old_chunks", [False, True])
 @pytest.mark.parametrize("failure_kind", ["provider", "sql"])
 def test_unexpected_failure_restores_document_status_and_old_chunks(
@@ -172,7 +313,17 @@ def test_unexpected_failure_restores_document_status_and_old_chunks(
 
 def test_failed_status_recovery_logs_both_errors_without_claiming_success(monkeypatch, caplog):
     """数据库持续不可用时记录原始处理异常和恢复异常，不伪称状态已落库。"""
-    doc = SimpleNamespace(status="pending", file_path="missing.md")
+    doc = SimpleNamespace(
+        id=17,
+        status="pending",
+        file_path="missing.md",
+        content_hash="hash",
+        char_count=1,
+        ingest_version=1,
+        pending_file_path=None,
+        pending_content_hash=None,
+        pending_char_count=None,
+    )
     db = Mock()
     monkeypatch.setattr(
         ingest.crud, "get_document", Mock(side_effect=[doc, RuntimeError("database unavailable")])

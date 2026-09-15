@@ -68,13 +68,16 @@ def db(_prepare_schema) -> Iterator[Session]:
 
 
 @pytest.fixture()
-def client(db: Session) -> Iterator[TestClient]:
-    """TestClient：把 get_db 依赖替换为测试事务会话。"""
+def client(db: Session, monkeypatch) -> Iterator[TestClient]:
+    """TestClient 使用测试事务，并阻止后台任务连接日常数据库。"""
 
     def _override_get_db():
         yield db
 
+    from app.routers import documents
+
     app.dependency_overrides[get_db] = _override_get_db
+    monkeypatch.setattr(documents, "_run_ingest_task", lambda *args, **kwargs: None)
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
