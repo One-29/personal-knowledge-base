@@ -191,3 +191,25 @@ def test_citation_endpoint_returns_span(client, db, fake_llm, no_l1_threshold):
 def test_citation_endpoint_404_for_missing_chunk(client):
     """引用不存在（块已被重传替换）→ 404。"""
     assert client.get("/api/v1/citations/999999").status_code == 404
+
+
+def test_answer_keeps_citation_snapshot_after_source_is_deleted(
+    client, db, fake_llm, no_l1_threshold
+):
+    """历史回答保留引用快照，原块删除后前端仍有可核对的原文。"""
+    kb_id = client.post("/api/v1/kbs", json={"name": "历史引用"}).json()["id"]
+    doc = _add_doc(db, kb_id, "tcp.md", DOC_TCP)
+    fake_llm("三次握手确认双方收发能力 [1]。")
+
+    answer = client.post(
+        "/api/v1/ask", json={"question": "三次握手的作用？", "kb_id": kb_id}
+    ).json()
+    citation = answer["citations"][0]
+
+    assert client.delete(f"/api/v1/documents/{doc.id}").status_code == 204
+    assert client.get(f"/api/v1/citations/{citation['chunk_id']}").status_code == 404
+    assert citation["doc_id"] == doc.id
+    assert citation["doc_title"] == "tcp.md"
+    assert citation["chunk_text"] == DOC_TCP
+    assert citation["char_start"] == 0
+    assert citation["char_end"] == len(DOC_TCP)

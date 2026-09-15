@@ -428,7 +428,23 @@ function removeMarginItem(key, chunkId = null) {
   updateEvidenceState();
 }
 
-async function pinToMargin(chunkId, displayIndex = null) {
+function citationSnapshotDetail(citation) {
+  if (!citation || typeof citation.chunk_text !== "string") return null;
+  const charStart = Number(citation.char_start);
+  const charEnd = Number(citation.char_end);
+  if (!Number.isInteger(charStart) || !Number.isInteger(charEnd) || charStart < 0 || charEnd < charStart) {
+    return null;
+  }
+  return {
+    doc_id: Number(citation.doc_id),
+    doc_title: String(citation.doc_title || "原文标题未知"),
+    chunk_text: citation.chunk_text,
+    char_start: charStart,
+    char_end: charEnd,
+  };
+}
+
+async function pinToMargin(chunkId, displayIndex = null, citation = null) {
   const key = `chunk-${chunkId}`;
   try {
     setEvidenceOpen(true);
@@ -442,7 +458,20 @@ async function pinToMargin(chunkId, displayIndex = null) {
       return;
     }
 
-    const detail = await api(`/citations/${chunkId}`);
+    let detail;
+    let isHistoricalSnapshot = false;
+    try {
+      detail = await api(`/citations/${chunkId}`);
+    } catch (error) {
+      const snapshot = error instanceof ApiError && error.status === 404
+        ? citationSnapshotDetail(citation) : null;
+      if (!snapshot) throw error;
+      detail = snapshot;
+      isHistoricalSnapshot = true;
+    }
+    const rangeLabel = isHistoricalSnapshot
+      ? `回答时引用快照 · 原文当前已更新或删除 · 原字符位置 ${detail.char_start}–${detail.char_end}`
+      : `字符位置 ${detail.char_start}–${detail.char_end}`;
     const item = document.createElement("article");
     item.className = "margin-item margin-item-enter";
     item.dataset.chunk = String(chunkId);
@@ -451,7 +480,7 @@ async function pinToMargin(chunkId, displayIndex = null) {
         <div class="item-source">
           ${displayIndex ? `<span class="item-index">[${esc(displayIndex)}]</span>` : ""}
           <p class="item-src">${esc(detail.doc_title)}</p>
-          <span class="item-range">字符位置 ${detail.char_start}–${detail.char_end}</span>
+          <span class="item-range">${esc(rangeLabel)}</span>
         </div>
         <button type="button" class="text-action" data-unpin>移除</button>
       </div>
@@ -462,6 +491,7 @@ async function pinToMargin(chunkId, displayIndex = null) {
     updateEvidenceState();
     item.scrollIntoView({ behavior: "smooth", block: "nearest" });
     markActiveCite(chunkId);
+    if (isHistoricalSnapshot) notify("当前原文已更新或删除，已显示回答时保存的引用快照");
   } catch (error) {
     notify(friendlyError(error, "读取引用"), true);
   }
@@ -545,13 +575,18 @@ document.getElementById("margin-close").addEventListener("click", () => setEvide
 })();
 
 function bindCitations(scope, citations) {
+  const citationList = Array.isArray(citations) ? citations : [];
   scope.querySelectorAll(".cite, .source-pill").forEach((el) => {
     const open = () => {
-      if (el.dataset.chunk) return pinToMargin(Number(el.dataset.chunk), el.dataset.index || null);
-      const hit = (citations || []).find((c) => String(c.index) === el.dataset.index);
+      const hit = el.dataset.chunk
+        ? citationList.find((c) => String(c.chunk_id) === el.dataset.chunk)
+        : citationList.find((c) => String(c.index) === el.dataset.index);
+      if (el.dataset.chunk) {
+        return pinToMargin(Number(el.dataset.chunk), el.dataset.index || null, hit || null);
+      }
       if (hit) {
         el.dataset.chunk = String(hit.chunk_id);
-        pinToMargin(hit.chunk_id, hit.index);
+        pinToMargin(hit.chunk_id, hit.index, hit);
       }
       else notify("这条编号不在本次引用列表中", true);
     };
