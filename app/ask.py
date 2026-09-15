@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from . import crud, embedding, generation, retrieval, session
 from .core.config import settings
+from .embedding import EmbeddingError
 from .generation import LLMError, LLMProvider
 from .models import Document
 from .session import Turn as SessionTurn
@@ -44,6 +45,7 @@ REFUSAL_LOW_RELEVANCE = "low_relevance"       # 最高相似度低于阈值 τ /
 REFUSAL_INVALID_CITATION = "invalid_citation"  # 引用越界（幻觉引用）
 REFUSAL_NO_CITATION = "no_citation"           # 有实质内容却零引用（不可溯源）
 REFUSAL_LLM_UNAVAILABLE = "llm_unavailable"   # 生成服务不可用
+REFUSAL_EMBEDDING_UNAVAILABLE = "embedding_unavailable"  # 查询向量服务不可用
 
 REFUSAL_MESSAGES = {
     REFUSAL_EMPTY_KB: "知识库里还没有相关内容，无法回答这个问题。可以先导入相关笔记再试。",
@@ -51,6 +53,7 @@ REFUSAL_MESSAGES = {
     REFUSAL_INVALID_CITATION: "生成的回答引用了不存在的来源，为保证可信性已拒绝这次回答。",
     REFUSAL_NO_CITATION: "生成的回答没有标注任何来源，无法核对，为保证可信性已拒绝这次回答。",
     REFUSAL_LLM_UNAVAILABLE: "回答生成服务暂时不可用，请稍后重试。",
+    REFUSAL_EMBEDDING_UNAVAILABLE: "知识库检索服务暂时不可用，请稍后重试。",
 }
 
 # 模型自述"资料不足"的常见说法（此时归入低相关度拒答，文案更贴切）
@@ -114,7 +117,16 @@ def answer_question(
         except LLMError as exc:
             logger.warning("追问改写失败，退化为原问题检索: %s", exc)
 
-    query_vector = _embed_query(search_query)
+    try:
+        query_vector = _embed_query(search_query)
+    except EmbeddingError as exc:
+        logger.warning("查询向量化失败: %s", exc)
+        return _finish(
+            store,
+            session_id,
+            _refuse(question, REFUSAL_EMBEDDING_UNAVAILABLE),
+            search_query,
+        )
     # 本服务使用只读会话：把候选与标题都复制成普通数据后结束事务。
     # 生成阶段不再访问 ORM，避免长时间等待模型时占用连接池。
     try:

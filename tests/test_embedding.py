@@ -17,10 +17,14 @@ from app.generation import LLMError, OpenAICompatibleLLM
 from app.main import app
 
 
-def _provider(client: httpx.Client) -> OpenAICompatibleEmbedding:
+def _provider(
+    client: httpx.Client,
+    **kwargs,
+) -> OpenAICompatibleEmbedding:
+    kwargs.setdefault("max_retries", 0)
     return OpenAICompatibleEmbedding(
         api_key="test-key", base_url="https://example.test/v1",
-        model="text-embedding-3-small", client=client,
+        model="text-embedding-3-small", client=client, **kwargs,
     )
 
 
@@ -48,6 +52,103 @@ def test_parses_and_orders_embeddings():
         assert _provider(client).embed_texts(["第一段", "第二段"]) == [
             [1.0, 1.0], [2.0, 2.0],
         ]
+
+
+def test_large_input_is_batched_and_order_is_preserved():
+    """大文档拆成固定批次，每批 index 独立排序后仍保持全局输入顺序。"""
+    batches = []
+
+    def respond(request):
+        inputs = json.loads(request.content)["input"]
+        batches.append(inputs)
+        return httpx.Response(200, json={"data": [
+            {"index": index, "embedding": [float(text.removeprefix("段"))]}
+            for index, text in reversed(list(enumerate(inputs)))
+        ]})
+
+    texts = [f"段{index}" for index in range(5)]
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        vectors = _provider(client, batch_size=2).embed_texts(texts)
+
+    assert batches == [["段0", "段1"], ["段2", "段3"], ["段4"]]
+    assert vectors == [[0.0], [1.0], [2.0], [3.0], [4.0]]
+
+
+def test_transient_failure_retries_only_current_batch():
+    """中间批次限流时按退避重试该批次，已成功批次不重复计费。"""
+    requests = []
+    delays = []
+
+    def respond(request):
+        inputs = json.loads(request.content)["input"]
+        requests.append(inputs)
+        if inputs == ["c", "d"] and requests.count(inputs) == 1:
+            return httpx.Response(429, text="rate limited")
+        return httpx.Response(200, json={"data": [
+            {"index": index, "embedding": [float(ord(text))]}
+            for index, text in enumerate(inputs)
+        ]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        vectors = _provider(
+            client,
+            batch_size=2,
+            max_retries=2,
+            retry_base_seconds=0.25,
+            sleeper=delays.append,
+        ).embed_texts(["a", "b", "c", "d"])
+
+    assert requests == [["a", "b"], ["c", "d"], ["c", "d"]]
+    assert delays == [0.25]
+    assert vectors == [[97.0], [98.0], [99.0], [100.0]]
+
+
+@pytest.mark.parametrize(
+    "kind,response",
+    [
+        ("embedding", httpx.Response(200, text="not-json")),
+        ("embedding", httpx.Response(200, json={})),
+        ("llm", httpx.Response(200, text="not-json")),
+        ("llm", httpx.Response(200, json={})),
+        ("llm", httpx.Response(200, json={"choices": [{"message": {}}]})),
+    ],
+)
+def test_provider_translates_malformed_success_response(kind, response):
+    """HTTP 200 也必须满足协议结构，异常响应统一转为领域错误。"""
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _request: response)
+    ) as client:
+        if kind == "embedding":
+            with pytest.raises(EmbeddingError):
+                _provider(client).embed_texts(["x"])
+        else:
+            provider = OpenAICompatibleLLM(
+                "test-key", "https://example.test/v1", "test-model", client=client,
+            )
+            with pytest.raises(LLMError):
+                provider.complete("system", "question")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"data":[{"index":0,"embedding":[1.0,1e999]}]}',
+        b'{"data":[{"index":0,"embedding":[1.0]}]}',
+    ],
+)
+def test_embedding_rejects_invalid_or_wrong_dimension_vectors(body):
+    """查询向量进入数据库前即拒绝非有限数值和维度不匹配。"""
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                content=body,
+                headers={"content-type": "application/json"},
+            )
+        )
+    ) as client:
+        with pytest.raises(EmbeddingError):
+            _provider(client, dimension=2).embed_texts(["x"])
 
 
 @pytest.mark.parametrize("kind", ["embedding", "llm"])

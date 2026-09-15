@@ -41,14 +41,17 @@ class Settings(BaseSettings):
     embedding_api_key: str | None = None
     embedding_base_url: str = "https://api.siliconflow.cn/v1"
     embedding_model: str = "BAAI/bge-m3"
-    embedding_dimension: int = 1024
-    embedding_timeout_seconds: float = 30.0
+    embedding_dimension: int = Field(default=1024, ge=1)
+    embedding_timeout_seconds: float = Field(default=30.0, gt=0)
+    embedding_batch_size: int = Field(default=32, ge=1)
+    embedding_max_retries: int = Field(default=2, ge=0)
+    embedding_retry_base_seconds: float = Field(default=0.5, ge=0)
 
     # LLM 通道（M3 生成层）：OpenAI 兼容协议，供应商可配
     llm_api_key: str | None = None
     llm_base_url: str = "https://api.siliconflow.cn/v1"
-    llm_model: str = "Qwen/Qwen2.5-7B-Instruct"
-    llm_timeout_seconds: float = 60.0
+    llm_model: str = "deepseek-ai/DeepSeek-V4-Flash"
+    llm_timeout_seconds: float = Field(default=60.0, gt=0)
 
     # 拒答阈值（04 §6 DR6）：候选块最高向量相似度低于 τ → 拒答
     # τ=0.45 由 06 评估校准（2026-09-10）：库内 0.544~0.797 vs 库外 0.353/0.395，

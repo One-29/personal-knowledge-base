@@ -204,6 +204,34 @@ def test_step_error_rolls_back_poisoned_session_before_following_steps(monkeypat
     assert db.rollbacks == 1
 
 
+@pytest.mark.parametrize("reason", ["embedding_unavailable", "llm_unavailable"])
+def test_provider_outage_is_reported_as_step_error(monkeypatch, reason):
+    """模型基础设施故障属于步骤错误，不能误报为知识库资料不足。"""
+    from app.ask import AnswerData
+
+    class Session:
+        def rollback(self):
+            pass
+
+    monkeypatch.setattr(workflow.ask_service, "validate_kb", lambda *args: None)
+    monkeypatch.setattr(
+        workflow.ask_service,
+        "answer_question",
+        lambda *args, **kwargs: AnswerData(
+            question="q",
+            content="模型服务暂时不可用",
+            refused=True,
+            refusal_reason=reason,
+        ),
+    )
+    plan = '[{"goal":"检查服务","query":"q"}]'
+
+    result = workflow.run_workflow(Session(), "任务", None, llm=_ScriptedLLM([plan]))
+
+    assert result.steps[0].status == "error"
+    assert result.steps[0].note == "模型服务暂时不可用"
+
+
 def test_run_workflow_api_contract(client, db, no_l1_threshold, monkeypatch):
     """端点契约：200 + steps/answer/citations 结构。"""
     from app import generation
