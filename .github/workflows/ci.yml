@@ -67,14 +67,22 @@ jobs:
             throw "PowerShell syntax validation failed."
           }
 
-      - name: Create test database
+      - name: Create isolated test databases
         run: |
           python - <<'PY'
           import psycopg
           with psycopg.connect("postgresql://postgres@127.0.0.1:5432/knowbase", autocommit=True) as conn:
               conn.execute("CREATE DATABASE knowbase_test")
-          print("knowbase_test created")
+              conn.execute("CREATE DATABASE knowbase_migration_test")
+          print("isolated databases created")
           PY
+
+      - name: Validate migrations from an empty database
+        run: |
+          python -m alembic upgrade head
+          python -m alembic check
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres@127.0.0.1:5432/knowbase_migration_test
 
       - name: Run tests
         run: pytest -q

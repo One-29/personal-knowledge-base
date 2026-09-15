@@ -6,8 +6,9 @@
    （`join_transaction_mode="create_savepoint"`），测试结束整体 rollback，
    数据零残留、测试之间互不干扰。
 
-注意：建表用 models 元数据（快），测试库结构与迁移的一致性由 alembic 保证
-（CI 阶段改为对测试库执行 `alembic upgrade head`）。
+注意：pytest 建表使用 models 元数据（快）；CI 另用空的
+`knowbase_migration_test` 执行 `alembic upgrade head` 与 `alembic check`，
+验证完整迁移链和当前模型一致。
 """
 
 import hashlib

@@ -125,7 +125,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask \
 | 向量与检索 | pgvector 0.8（HNSW / cosine）· pg_trgm（GIN） | 单库同事务，向量与元数据一致备份 |
 | Embedding | OpenAI 兼容 API（默认 `BAAI/bge-m3`，1024 维） | 全项目模型唯一 |
 | 生成 | OpenAI 兼容 Chat API（默认 `deepseek-ai/DeepSeek-V4-Flash`） | 供应商可配 |
-| 测试 / CI | pytest · GitHub Actions（pgvector service container） | 测试不依赖真实密钥 |
+| 测试 / CI | pytest · GitHub Actions（pgvector service container） | 测试不依赖真实密钥；空库迁移与模型结构一致性单独校验 |
 
 ## 📡 API 概览
 
@@ -203,7 +203,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1
 | pytest 数据库集成测试 | `knowbase_test` | `data/test-storage-*` | 否 |
 | 检索与拒答评估 | `knowbase_eval` | `data/eval-storage` | 否 |
 
-数据库集成测试会重建独立的 `knowbase_test` 表结构。没有 PostgreSQL 时可先运行 `pytest -q tests/test_chunking.py tests/test_embedding.py`；这部分通过不能替代事务恢复、查询与 API 的数据库集成验证。
+数据库集成测试会重建独立的 `knowbase_test` 表结构；CI 还会在空的 `knowbase_migration_test` 中执行 `alembic upgrade head` 和 `alembic check`，避免模型元数据测试掩盖迁移文件错误。没有 PostgreSQL 时可先运行 `pytest -q tests/test_chunking.py tests/test_embedding.py`；这部分通过不能替代事务恢复、查询与 API 的数据库集成验证。
 
 `run-eval.ps1` 会幂等创建 `knowbase_eval`、执行迁移，并只在子进程内覆盖数据库和原文目录。`eval.run_eval` 也有强制保护：配置与实际连接都必须指向 `knowbase_eval`，原文目录必须精确为项目内的 `data/eval-storage`，否则会在任何业务查询和删除前拒绝执行。评估语料会先在临时库中全部处理为 `ready`，再替换旧评估库，避免用半成品语料输出误导性的低分。完整评估真实调用 Embedding 和 LLM；`-Retrieval` 只运行检索评估，不调用回答模型。
 
