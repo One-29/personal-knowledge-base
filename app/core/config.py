@@ -39,9 +39,9 @@ class Settings(BaseSettings):
     # Embedding 通道（04 §3 DR2）：OpenAI 兼容协议，供应商可配；
     # 全项目模型唯一——换模型需全库重向量化 + 一次维度迁移。
     embedding_api_key: str | None = None
-    embedding_base_url: str = "https://api.openai.com/v1"
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimension: int = 1536
+    embedding_base_url: str = "https://api.siliconflow.cn/v1"
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_dimension: int = 1024
     embedding_timeout_seconds: float = 30.0
 
     # LLM 通道（M3 生成层）：OpenAI 兼容协议，供应商可配
