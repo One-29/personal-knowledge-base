@@ -6,18 +6,23 @@
 """
 
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings  # noqa: F401  （供后续装配读取配置）
+from app.db import engine
 from app.http_client import close_http_client
 from app.routers import ask, documents, graph, kbs, workflow
 
 API_PREFIX = "/api/v1"
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -47,8 +52,30 @@ app.include_router(graph.router, prefix=API_PREFIX)
 
 @app.get("/health")
 def health() -> dict:
-    """存活探针：容器化/CI 用。"""
+    """存活探针：只表示 API 进程能响应，不访问外部依赖。"""
     return {"status": "ok"}
+
+
+def database_is_ready() -> bool:
+    """用独立短连接检查数据库；失败不向客户端暴露连接信息。"""
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        return True
+    except SQLAlchemyError:
+        logger.warning("数据库就绪检查失败", exc_info=True)
+        return False
+
+
+@app.get("/ready")
+def ready():
+    """就绪探针：API 与数据库都可用时才返回 200。"""
+    if not database_is_ready():
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "database": "unavailable"},
+        )
+    return {"status": "ok", "database": "ok"}
 
 
 @app.get("/", include_in_schema=False)

@@ -59,3 +59,23 @@ def test_health_endpoint():
     """存活探针（CI/容器用）。"""
     with TestClient(app) as client:
         assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_readiness_endpoint_reports_database_state(monkeypatch):
+    """就绪探针区分数据库可用与不可用，且不影响存活探针。"""
+    from app import main
+
+    with TestClient(app) as client:
+        monkeypatch.setattr(main, "database_is_ready", lambda: True)
+        response = client.get("/ready")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok", "database": "ok"}
+
+        monkeypatch.setattr(main, "database_is_ready", lambda: False)
+        response = client.get("/ready")
+        assert response.status_code == 503
+        assert response.json() == {
+            "status": "unavailable",
+            "database": "unavailable",
+        }
+        assert client.get("/health").json() == {"status": "ok"}

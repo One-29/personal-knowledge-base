@@ -1485,8 +1485,8 @@ async function checkService() {
   dot.className = "service-dot checking";
   label.textContent = "检查中";
   try {
-    const response = await fetch("/health", { cache: "no-store" });
-    if (!response.ok) throw new Error("health check failed");
+    const response = await fetch("/ready", { cache: "no-store" });
+    if (!response.ok) throw new Error("readiness check failed");
     dot.className = "service-dot";
     label.textContent = "已连接";
   } catch (_) {

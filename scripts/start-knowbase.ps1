@@ -21,12 +21,12 @@ function Write-Stage {
     Write-Host "[KnowBase] $Message" -ForegroundColor Cyan
 }
 
-function Test-KnowBaseHealth {
-    param([Parameter(Mandatory = $true)][string]$HealthUrl)
+function Test-KnowBaseReady {
+    param([Parameter(Mandatory = $true)][string]$ReadyUrl)
 
     try {
-        $health = Invoke-RestMethod -Uri $HealthUrl -Method Get -TimeoutSec 2
-        return $health.status -eq "ok"
+        $readiness = Invoke-RestMethod -Uri $ReadyUrl -Method Get -TimeoutSec 2
+        return $readiness.status -eq "ok" -and $readiness.database -eq "ok"
     }
     catch {
         return $false
@@ -39,7 +39,7 @@ function Start-KnowBase {
 
     $pythonExe = Join-Path $projectRoot ".venv\Scripts\python.exe"
     $envFile = Join-Path $projectRoot ".env"
-    $healthUrl = "http://127.0.0.1:$Port/health"
+    $readyUrl = "http://127.0.0.1:$Port/ready"
     $appUrl = "http://127.0.0.1:$Port/ui/"
     $dockerModule = Join-Path $PSScriptRoot "KnowBase.WslDocker.psm1"
 
@@ -61,7 +61,7 @@ function Start-KnowBase {
         -Distribution $WslDistribution `
         -StartupTimeoutSeconds $DockerStartupTimeoutSeconds
 
-    if (Test-KnowBaseHealth -HealthUrl $healthUrl) {
+    if (Test-KnowBaseReady -ReadyUrl $readyUrl) {
         Write-Stage "KnowBase is already running at $appUrl"
         if (-not $NoBrowser) {
             Start-Process -FilePath $appUrl
@@ -84,7 +84,7 @@ function Start-KnowBase {
         $browserHelper = Join-Path $PSScriptRoot "open-when-ready.ps1"
         $windowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
         $browserArguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Url "{1}" -HealthUrl "{2}"' -f `
-            $browserHelper, $appUrl, $healthUrl
+            $browserHelper, $appUrl, $readyUrl
         Start-Process `
             -FilePath $windowsPowerShell `
             -ArgumentList $browserArguments `

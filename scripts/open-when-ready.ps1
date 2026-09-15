@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [string]$Url = "http://127.0.0.1:8000/ui/",
-    [string]$HealthUrl = "http://127.0.0.1:8000/health",
+    [string]$HealthUrl = "http://127.0.0.1:8000/ready",
     [ValidateRange(1, 600)]
     [int]$TimeoutSeconds = 90
 )
@@ -15,8 +15,8 @@ $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
 
 while ([DateTime]::UtcNow -lt $deadline) {
     try {
-        $health = Invoke-RestMethod -Uri $HealthUrl -Method Get -TimeoutSec 2
-        if ($health.status -eq "ok") {
+        $readiness = Invoke-RestMethod -Uri $HealthUrl -Method Get -TimeoutSec 2
+        if ($readiness.status -eq "ok" -and $readiness.database -eq "ok") {
             Start-Process -FilePath $Url
             exit 0
         }
