@@ -1,0 +1,1529 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-20T15:38:57.594577+00:00",
+  "mode": "retrieval",
+  "dataset_version": 2,
+  "embedding_model": "BAAI/bge-m3",
+  "embedding_dimension": 1024,
+  "query_vector_count": 60,
+  "configured_refusal_threshold": 0.5,
+  "top_k": 8,
+  "library_count": 5,
+  "document_count": 20,
+  "item_count": 60,
+  "retrieval": {
+    "total": 50,
+    "hits": 50,
+    "recall_at_k": 1.0,
+    "mrr": 0.9866666666666667,
+    "by_library": {
+      "calculus": {
+        "total": 10,
+        "hits": 10,
+        "recall_at_k": 1.0,
+        "mrr": 0.9333333333333333
+      },
+      "databases": {
+        "total": 10,
+        "hits": 10,
+        "recall_at_k": 1.0,
+        "mrr": 1.0
+      },
+      "networks": {
+        "total": 10,
+        "hits": 10,
+        "recall_at_k": 1.0,
+        "mrr": 1.0
+      },
+      "operating-systems": {
+        "total": 10,
+        "hits": 10,
+        "recall_at_k": 1.0,
+        "mrr": 1.0
+      },
+      "python": {
+        "total": 10,
+        "hits": 10,
+        "recall_at_k": 1.0,
+        "mrr": 1.0
+      }
+    },
+    "by_difficulty": {
+      "basic": {
+        "total": 15,
+        "hits": 15,
+        "recall_at_k": 1.0,
+        "mrr": 1.0
+      },
+      "hard": {
+        "total": 10,
+        "hits": 10,
+        "recall_at_k": 1.0,
+        "mrr": 1.0
+      },
+      "regular": {
+        "total": 20,
+        "hits": 20,
+        "recall_at_k": 1.0,
+        "mrr": 0.9666666666666666
+      },
+      "smoke": {
+        "total": 5,
+        "hits": 5,
+        "recall_at_k": 1.0,
+        "mrr": 1.0
+      }
+    }
+  },
+  "refusal": null,
+  "thresholds": [
+    {
+      "threshold": 0.15,
+      "out_of_kb_total": 10,
+      "out_of_kb_refused": 0,
+      "out_of_kb_refusal_rate": 0.0,
+      "in_kb_total": 50,
+      "in_kb_refused": 0,
+      "in_kb_false_refusal_rate": 0.0,
+      "refusal_reasons": {},
+      "by_library": {
+        "calculus": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "databases": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "networks": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "operating-systems": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "python": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      },
+      "by_difficulty": {
+        "basic": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 15,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "hard": {
+          "out_of_kb_total": 10,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "regular": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 20,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "smoke": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 5,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      }
+    },
+    {
+      "threshold": 0.2,
+      "out_of_kb_total": 10,
+      "out_of_kb_refused": 0,
+      "out_of_kb_refusal_rate": 0.0,
+      "in_kb_total": 50,
+      "in_kb_refused": 0,
+      "in_kb_false_refusal_rate": 0.0,
+      "refusal_reasons": {},
+      "by_library": {
+        "calculus": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "databases": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "networks": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "operating-systems": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "python": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      },
+      "by_difficulty": {
+        "basic": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 15,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "hard": {
+          "out_of_kb_total": 10,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "regular": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 20,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "smoke": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 5,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      }
+    },
+    {
+      "threshold": 0.25,
+      "out_of_kb_total": 10,
+      "out_of_kb_refused": 0,
+      "out_of_kb_refusal_rate": 0.0,
+      "in_kb_total": 50,
+      "in_kb_refused": 0,
+      "in_kb_false_refusal_rate": 0.0,
+      "refusal_reasons": {},
+      "by_library": {
+        "calculus": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "databases": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "networks": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "operating-systems": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "python": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      },
+      "by_difficulty": {
+        "basic": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 15,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "hard": {
+          "out_of_kb_total": 10,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "regular": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 20,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "smoke": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 5,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      }
+    },
+    {
+      "threshold": 0.3,
+      "out_of_kb_total": 10,
+      "out_of_kb_refused": 0,
+      "out_of_kb_refusal_rate": 0.0,
+      "in_kb_total": 50,
+      "in_kb_refused": 0,
+      "in_kb_false_refusal_rate": 0.0,
+      "refusal_reasons": {},
+      "by_library": {
+        "calculus": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "databases": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "networks": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "operating-systems": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "python": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      },
+      "by_difficulty": {
+        "basic": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 15,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "hard": {
+          "out_of_kb_total": 10,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "regular": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 20,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "smoke": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 5,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      }
+    },
+    {
+      "threshold": 0.35,
+      "out_of_kb_total": 10,
+      "out_of_kb_refused": 1,
+      "out_of_kb_refusal_rate": 0.1,
+      "in_kb_total": 50,
+      "in_kb_refused": 0,
+      "in_kb_false_refusal_rate": 0.0,
+      "refusal_reasons": {
+        "low_relevance(l1)": 1
+      },
+      "by_library": {
+        "calculus": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 1,
+          "out_of_kb_refusal_rate": 0.5,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 1
+          }
+        },
+        "databases": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "networks": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "operating-systems": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "python": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      },
+      "by_difficulty": {
+        "basic": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 15,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "hard": {
+          "out_of_kb_total": 10,
+          "out_of_kb_refused": 1,
+          "out_of_kb_refusal_rate": 0.1,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 1
+          }
+        },
+        "regular": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 20,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "smoke": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 5,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      }
+    },
+    {
+      "threshold": 0.4,
+      "out_of_kb_total": 10,
+      "out_of_kb_refused": 2,
+      "out_of_kb_refusal_rate": 0.2,
+      "in_kb_total": 50,
+      "in_kb_refused": 0,
+      "in_kb_false_refusal_rate": 0.0,
+      "refusal_reasons": {
+        "low_relevance(l1)": 2
+      },
+      "by_library": {
+        "calculus": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 1,
+          "out_of_kb_refusal_rate": 0.5,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 1
+          }
+        },
+        "databases": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "networks": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "operating-systems": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 1,
+          "out_of_kb_refusal_rate": 0.5,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 1
+          }
+        },
+        "python": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      },
+      "by_difficulty": {
+        "basic": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 15,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "hard": {
+          "out_of_kb_total": 10,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 0.2,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 2
+          }
+        },
+        "regular": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 20,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "smoke": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 5,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      }
+    },
+    {
+      "threshold": 0.45,
+      "out_of_kb_total": 10,
+      "out_of_kb_refused": 6,
+      "out_of_kb_refusal_rate": 0.6,
+      "in_kb_total": 50,
+      "in_kb_refused": 0,
+      "in_kb_false_refusal_rate": 0.0,
+      "refusal_reasons": {
+        "low_relevance(l1)": 6
+      },
+      "by_library": {
+        "calculus": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 2
+          }
+        },
+        "databases": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 1,
+          "out_of_kb_refusal_rate": 0.5,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 1
+          }
+        },
+        "networks": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 1,
+          "out_of_kb_refusal_rate": 0.5,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 1
+          }
+        },
+        "operating-systems": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 1,
+          "out_of_kb_refusal_rate": 0.5,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 1
+          }
+        },
+        "python": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 1,
+          "out_of_kb_refusal_rate": 0.5,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 1
+          }
+        }
+      },
+      "by_difficulty": {
+        "basic": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 15,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "hard": {
+          "out_of_kb_total": 10,
+          "out_of_kb_refused": 6,
+          "out_of_kb_refusal_rate": 0.6,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 6
+          }
+        },
+        "regular": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 20,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "smoke": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 5,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      }
+    },
+    {
+      "threshold": 0.5,
+      "out_of_kb_total": 10,
+      "out_of_kb_refused": 10,
+      "out_of_kb_refusal_rate": 1.0,
+      "in_kb_total": 50,
+      "in_kb_refused": 0,
+      "in_kb_false_refusal_rate": 0.0,
+      "refusal_reasons": {
+        "low_relevance(l1)": 10
+      },
+      "by_library": {
+        "calculus": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 2
+          }
+        },
+        "databases": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 2
+          }
+        },
+        "networks": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 2
+          }
+        },
+        "operating-systems": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 2
+          }
+        },
+        "python": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 2
+          }
+        }
+      },
+      "by_difficulty": {
+        "basic": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 15,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "hard": {
+          "out_of_kb_total": 10,
+          "out_of_kb_refused": 10,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 10
+          }
+        },
+        "regular": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 20,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "smoke": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 5,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      }
+    },
+    {
+      "threshold": 0.55,
+      "out_of_kb_total": 10,
+      "out_of_kb_refused": 10,
+      "out_of_kb_refusal_rate": 1.0,
+      "in_kb_total": 50,
+      "in_kb_refused": 1,
+      "in_kb_false_refusal_rate": 0.02,
+      "refusal_reasons": {
+        "low_relevance(l1)": 11
+      },
+      "by_library": {
+        "calculus": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 1,
+          "in_kb_false_refusal_rate": 0.1,
+          "refusal_reasons": {
+            "low_relevance(l1)": 3
+          }
+        },
+        "databases": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 2
+          }
+        },
+        "networks": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 2
+          }
+        },
+        "operating-systems": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 2
+          }
+        },
+        "python": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 2
+          }
+        }
+      },
+      "by_difficulty": {
+        "basic": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 15,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        },
+        "hard": {
+          "out_of_kb_total": 10,
+          "out_of_kb_refused": 10,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 10
+          }
+        },
+        "regular": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 20,
+          "in_kb_refused": 1,
+          "in_kb_false_refusal_rate": 0.05,
+          "refusal_reasons": {
+            "low_relevance(l1)": 1
+          }
+        },
+        "smoke": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 5,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      }
+    },
+    {
+      "threshold": 0.6,
+      "out_of_kb_total": 10,
+      "out_of_kb_refused": 10,
+      "out_of_kb_refusal_rate": 1.0,
+      "in_kb_total": 50,
+      "in_kb_refused": 5,
+      "in_kb_false_refusal_rate": 0.1,
+      "refusal_reasons": {
+        "low_relevance(l1)": 15
+      },
+      "by_library": {
+        "calculus": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 2,
+          "in_kb_false_refusal_rate": 0.2,
+          "refusal_reasons": {
+            "low_relevance(l1)": 4
+          }
+        },
+        "databases": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 1,
+          "in_kb_false_refusal_rate": 0.1,
+          "refusal_reasons": {
+            "low_relevance(l1)": 3
+          }
+        },
+        "networks": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {
+            "low_relevance(l1)": 2
+          }
+        },
+        "operating-systems": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 1,
+          "in_kb_false_refusal_rate": 0.1,
+          "refusal_reasons": {
+            "low_relevance(l1)": 3
+          }
+        },
+        "python": {
+          "out_of_kb_total": 2,
+          "out_of_kb_refused": 2,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 1,
+          "in_kb_false_refusal_rate": 0.1,
+          "refusal_reasons": {
+            "low_relevance(l1)": 3
+          }
+        }
+      },
+      "by_difficulty": {
+        "basic": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 15,
+          "in_kb_refused": 1,
+          "in_kb_false_refusal_rate": 0.06666666666666667,
+          "refusal_reasons": {
+            "low_relevance(l1)": 1
+          }
+        },
+        "hard": {
+          "out_of_kb_total": 10,
+          "out_of_kb_refused": 10,
+          "out_of_kb_refusal_rate": 1.0,
+          "in_kb_total": 10,
+          "in_kb_refused": 1,
+          "in_kb_false_refusal_rate": 0.1,
+          "refusal_reasons": {
+            "low_relevance(l1)": 11
+          }
+        },
+        "regular": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 20,
+          "in_kb_refused": 3,
+          "in_kb_false_refusal_rate": 0.15,
+          "refusal_reasons": {
+            "low_relevance(l1)": 3
+          }
+        },
+        "smoke": {
+          "out_of_kb_total": 0,
+          "out_of_kb_refused": 0,
+          "out_of_kb_refusal_rate": 0.0,
+          "in_kb_total": 5,
+          "in_kb_refused": 0,
+          "in_kb_false_refusal_rate": 0.0,
+          "refusal_reasons": {}
+        }
+      }
+    }
+  ],
+  "similarities": [
+    {
+      "library": "calculus",
+      "difficulty": "smoke",
+      "in_kb": true,
+      "question": "数列收敛到 A 的 ε-N 定义是什么？",
+      "max_vector_similarity": 0.6802399539661511
+    },
+    {
+      "library": "calculus",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "怎样判断一个间断点属于第一类间断点？",
+      "max_vector_similarity": 0.6850815790794447
+    },
+    {
+      "library": "calculus",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "函数连续是否一定可导？可导与连续有什么关系？",
+      "max_vector_similarity": 0.7792702317237854
+    },
+    {
+      "library": "calculus",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "第一类换元积分法的依据是什么？",
+      "max_vector_similarity": 0.6395596265792847
+    },
+    {
+      "library": "calculus",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "罗尔定理需要满足哪些条件？",
+      "max_vector_similarity": 0.6594010788023796
+    },
+    {
+      "library": "calculus",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "定积分怎样由黎曼和定义？",
+      "max_vector_similarity": 0.7428559064865112
+    },
+    {
+      "library": "calculus",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "用圆环法计算旋转体体积时，截面积如何表示？",
+      "max_vector_similarity": 0.7757126324091149
+    },
+    {
+      "library": "calculus",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "分离变量时为什么要先检查被除因子为零的情况？",
+      "max_vector_similarity": 0.5426621598798683
+    },
+    {
+      "library": "calculus",
+      "difficulty": "hard",
+      "in_kb": true,
+      "question": "等价无穷小替换在哪类表达式中通常成立，在哪类表达式中可能失效？",
+      "max_vector_similarity": 0.6664632956065724
+    },
+    {
+      "library": "calculus",
+      "difficulty": "hard",
+      "in_kb": true,
+      "question": "使用洛必达法则前必须先确认哪些前提？",
+      "max_vector_similarity": 0.5789258135005357
+    },
+    {
+      "library": "calculus",
+      "difficulty": "hard",
+      "in_kb": false,
+      "question": "Python 的 GIL 为什么不能让 CPU 密集线程线性加速？",
+      "max_vector_similarity": 0.44773772670401857
+    },
+    {
+      "library": "calculus",
+      "difficulty": "hard",
+      "in_kb": false,
+      "question": "TCP 三次握手的三个报文分别是什么？",
+      "max_vector_similarity": 0.33195656538009644
+    },
+    {
+      "library": "networks",
+      "difficulty": "smoke",
+      "in_kb": true,
+      "question": "TCP 三次握手依次发送什么？",
+      "max_vector_similarity": 0.7911307326970191
+    },
+    {
+      "library": "networks",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "TCP 为什么需要第三次 ACK？",
+      "max_vector_similarity": 0.769103467464447
+    },
+    {
+      "library": "networks",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "TCP 连接为什么通常需要四次挥手？",
+      "max_vector_similarity": 0.7487879844687026
+    },
+    {
+      "library": "networks",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "HTTP 304 状态码告诉客户端做什么？",
+      "max_vector_similarity": 0.6950512528419495
+    },
+    {
+      "library": "networks",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "Cache-Control 中 no-store 与 no-cache 有什么区别？",
+      "max_vector_similarity": 0.6015653489154205
+    },
+    {
+      "library": "networks",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "HTTP 方法的幂等性是什么意思？",
+      "max_vector_similarity": 0.6213642543960954
+    },
+    {
+      "library": "networks",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "没有缓存时，递归 DNS 解析大致会查询哪些服务器？",
+      "max_vector_similarity": 0.7305854123481875
+    },
+    {
+      "library": "networks",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "路由器为什么采用最长前缀匹配？",
+      "max_vector_similarity": 0.7348195156347476
+    },
+    {
+      "library": "networks",
+      "difficulty": "hard",
+      "in_kb": true,
+      "question": "HTTP/2 已经多路复用，为什么仍可能发生队头阻塞？",
+      "max_vector_similarity": 0.7457474914638706
+    },
+    {
+      "library": "networks",
+      "difficulty": "hard",
+      "in_kb": true,
+      "question": "traceroute 如何利用 TTL 和 ICMP 推断网络路径？",
+      "max_vector_similarity": 0.7279908874032169
+    },
+    {
+      "library": "networks",
+      "difficulty": "hard",
+      "in_kb": false,
+      "question": "复合函数求导的链式法则怎样使用？",
+      "max_vector_similarity": 0.4064176380634337
+    },
+    {
+      "library": "networks",
+      "difficulty": "hard",
+      "in_kb": false,
+      "question": "数据库事务的四种隔离级别分别是什么？",
+      "max_vector_similarity": 0.4928921020425522
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "smoke",
+      "in_kb": true,
+      "question": "时间片轮转调度的基本做法和优点是什么？",
+      "max_vector_similarity": 0.6917851361100362
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "优先级调度怎样缓解低优先级进程饥饿？",
+      "max_vector_similarity": 0.7509462385805716
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "死锁产生的四个必要条件包括哪些？",
+      "max_vector_similarity": 0.7178899049758911
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "虚拟地址怎样通过页表转换为物理地址？",
+      "max_vector_similarity": 0.6767922639846802
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "TLB 未命中时处理器通常要做什么？",
+      "max_vector_similarity": 0.6565922890062517
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "淘汰脏页和干净页时的处理有什么不同？",
+      "max_vector_similarity": 0.5972496093139192
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "类 Unix 文件系统中，文件名与 inode 是什么关系？",
+      "max_vector_similarity": 0.7215665910760704
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "删除一个硬链接后，文件数据何时才可回收？",
+      "max_vector_similarity": 0.6002176284530648
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "hard",
+      "in_kb": true,
+      "question": "FIFO 页面置换为什么可能出现增加页框却增加缺页的现象？",
+      "max_vector_similarity": 0.6685268678037133
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "hard",
+      "in_kb": true,
+      "question": "为什么保证新建文件名持久化时还需要 fsync 父目录？",
+      "max_vector_similarity": 0.6644129953138247
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "hard",
+      "in_kb": false,
+      "question": "HTTP 协商缓存中的 ETag 和 304 如何配合？",
+      "max_vector_similarity": 0.4630430958841394
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "hard",
+      "in_kb": false,
+      "question": "定积分的几何意义与微积分基本定理是什么？",
+      "max_vector_similarity": 0.37654635273305115
+    },
+    {
+      "library": "python",
+      "difficulty": "smoke",
+      "in_kb": true,
+      "question": "Python 装饰器是什么？",
+      "max_vector_similarity": 0.7510740384779587
+    },
+    {
+      "library": "python",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "闭包里修改外层函数变量为什么需要 nonlocal？",
+      "max_vector_similarity": 0.8072038888931274
+    },
+    {
+      "library": "python",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "生成器为什么适合处理大数据流？",
+      "max_vector_similarity": 0.5979981901647861
+    },
+    {
+      "library": "python",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "Python 中 is 与 == 分别比较什么？",
+      "max_vector_similarity": 0.6116175833826605
+    },
+    {
+      "library": "python",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "浅拷贝为什么不能隔离嵌套可变对象？",
+      "max_vector_similarity": 0.7044107351670355
+    },
+    {
+      "library": "python",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "对象要作为字典键，需要满足什么哈希约束？",
+      "max_vector_similarity": 0.7084416958225283
+    },
+    {
+      "library": "python",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "为什么 Python 线程适合 I/O 密集任务却不适合加速纯 Python CPU 密集计算？",
+      "max_vector_similarity": 0.6955880704171628
+    },
+    {
+      "library": "python",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "协程中直接执行同步阻塞调用会产生什么后果？",
+      "max_vector_similarity": 0.6238033175468445
+    },
+    {
+      "library": "python",
+      "difficulty": "hard",
+      "in_kb": true,
+      "question": "asyncio 任务被取消后，协程应怎样清理并传播取消？",
+      "max_vector_similarity": 0.7539408802986145
+    },
+    {
+      "library": "python",
+      "difficulty": "hard",
+      "in_kb": true,
+      "question": "上下文管理器通过哪些方法保证 with 语句退出时执行清理？",
+      "max_vector_similarity": 0.6323809623718262
+    },
+    {
+      "library": "python",
+      "difficulty": "hard",
+      "in_kb": false,
+      "question": "递归 DNS 解析器如何找到权威域名服务器？",
+      "max_vector_similarity": 0.4164165382509394
+    },
+    {
+      "library": "python",
+      "difficulty": "hard",
+      "in_kb": false,
+      "question": "B-tree 组合索引的最左前缀原则是什么？",
+      "max_vector_similarity": 0.45279962892529213
+    },
+    {
+      "library": "databases",
+      "difficulty": "smoke",
+      "in_kb": true,
+      "question": "事务的 ACID 中原子性是什么，语句失败后会话为什么要 rollback？",
+      "max_vector_similarity": 0.7032257318496704
+    },
+    {
+      "library": "databases",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "什么是脏读？",
+      "max_vector_similarity": 0.6680855551932613
+    },
+    {
+      "library": "databases",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "PostgreSQL 的读已提交隔离级别让查询看到什么快照？",
+      "max_vector_similarity": 0.754137396812439
+    },
+    {
+      "library": "databases",
+      "difficulty": "basic",
+      "in_kb": true,
+      "question": "B-tree 组合索引通常怎样支持最左前缀查询？",
+      "max_vector_similarity": 0.7293783748890958
+    },
+    {
+      "library": "databases",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "为什么高选择性条件更适合索引，而命中大部分行时可能全表扫描？",
+      "max_vector_similarity": 0.8033352616431085
+    },
+    {
+      "library": "databases",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "分析查询计划时为什么要比较 estimated rows 与 actual rows？",
+      "max_vector_similarity": 0.7436773333741837
+    },
+    {
+      "library": "databases",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "第三范式主要消除哪一种函数依赖？",
+      "max_vector_similarity": 0.695222496986394
+    },
+    {
+      "library": "databases",
+      "difficulty": "regular",
+      "in_kb": true,
+      "question": "使用代理键后，为什么仍要保留真实业务唯一约束？",
+      "max_vector_similarity": 0.5768949733313902
+    },
+    {
+      "library": "databases",
+      "difficulty": "hard",
+      "in_kb": true,
+      "question": "pg_trgm 查询怎样改写才能让 GIN 索引先缩小候选集？",
+      "max_vector_similarity": 0.6858717799186707
+    },
+    {
+      "library": "databases",
+      "difficulty": "hard",
+      "in_kb": true,
+      "question": "BCNF 分解为什么可能需要在更强规范化和依赖保持之间取舍？",
+      "max_vector_similarity": 0.6828905344009399
+    },
+    {
+      "library": "databases",
+      "difficulty": "hard",
+      "in_kb": false,
+      "question": "FIFO 与 LRU 页面置换算法有什么差别？",
+      "max_vector_similarity": 0.4450081123414076
+    },
+    {
+      "library": "databases",
+      "difficulty": "hard",
+      "in_kb": false,
+      "question": "Python 装饰器如何保留被装饰函数的元数据？",
+      "max_vector_similarity": 0.49116501264780776
+    }
+  ]
+}

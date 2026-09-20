@@ -102,9 +102,10 @@ TTL 由 `SESSION_TTL_SECONDS` 配置；到期记录在访问存储时清理，�
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Retrieval
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Retrieval -TopK 8 -ReportPath eval\baselines\postgresql-bge-m3-v2.json
 ```
 
-脚本会创建或复用 `knowbase_eval`，在该数据库执行迁移，并只为评估子进程设置数据库和存储目录。`eval.run_eval` 会先校验配置，再用只读查询核对 Session 实际连接的数据库：两者都必须精确指向 `knowbase_eval`，原文目录必须精确为项目内的 `data/eval-storage`；任何条件不满足都会在业务查询和删除前拒绝执行。评估语料先写入临时库，全部文档进入 `ready` 后才在一个事务中替换正式评估库；中途失败会保留上一次完整评估库。直接在日常配置下运行 `python -m eval.run_eval` 会拒绝执行。
+脚本会创建或复用 `knowbase_eval`，在该数据库执行迁移，并只为评估子进程设置数据库和存储目录。`eval.run_eval` 会先校验配置，再用只读查询核对 Session 实际连接的数据库：两者都必须精确指向 `knowbase_eval`，原文目录必须精确为项目内的 `data/eval-storage`；任何条件不满足都会在业务查询和删除前拒绝执行。五个评估语料库先分别写入候选库；只有全部文档进入 `ready` 后，才在一个事务中统一替换正式评估库。中途失败会清理候选并保留上一次完整的五库基线。直接在日常配置下运行 `python -m eval.run_eval` 会拒绝执行。
 
 高等数学演示库通过以下命令幂等加载：
 
@@ -190,7 +191,7 @@ python -c "from app.ingest import process_document; process_document(int(input('
 | 1 | 记录请求 id、模型/检索分阶段耗时、文档 id 与工作流步骤；给模型链路设置总耗时预算 | 让「卡住」可定位到模型、数据库或前端；验证超时错误能说明阶段，并观测多个页面同时操作时列表仍能响应 |
 | 完成 | 重传采用不可变候选原文与单调版本，处理成功后统一切换 | Embedding 失败继续使用匹配的旧原文和旧块；处理中再次重传时，较早任务的结果与错误均不会覆盖新版本 |
 | 1 | 增加显式重新索引入口与索引版本记录 | B1 等切分算法修复不能自动修好旧块；记录切块版本、Embedding 模型/维度与重建时间，以便只处理受影响文档 |
-| 2 | 扩大真实中文多库评估集 | 本轮已让 MRR 把未命中计为 0，并同时校验来源和关键词；下一步用短术语、长行、同名文档跨库与库外问题校准阈值，早期 3 篇/12 条样本不足以代表真实多库 |
+| 2 | 继续扩大真实中文多库评估集 | v2 已扩到 5 库/20 文档/60 条分层样本，并据此把 τ 校准为 0.50；下一步扩到至少 10 库/100 条，增加同义改写、短术语、同名概念与更强对抗问题 |
 | 完成 | 给大文档 Embedding 分批并校验供应商响应 | 默认每批 32 块；限流、5xx 与传输故障只重试当前批次。HTTP 200 的 JSON 结构、数量、index、数值有效性和维度均在 provider 边界校验；测试覆盖中途批次失败与退避重试 |
 | 2 | 给入库任务增加可恢复的任务记录 | 同文档版本检查已经阻止旧任务覆盖新内容；当前单进程后台任务仍不能跨重启续接，验收还需包含处理过程中重启与自动恢复 |
 | 3 | 验证干净安装与构建产物 | CI 已在独立空库执行 `alembic upgrade head` 与 `alembic check`，并让默认 embedding 配置与当前 `vector(1024)` 迁移一致；后续仍需构建 wheel 并在无源码目录的干净环境验证前端、迁移与启动脚本是否齐全 |

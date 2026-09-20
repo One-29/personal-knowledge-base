@@ -1,75 +1,514 @@
 {
-  "description": "KnowBase 检索质量评估集：问题 + 期望命中来源与内容特征。in_kb=false 表示库外问题（应拒答）。",
-  "version": 1,
+  "version": 2,
+  "description": "KnowBase 多知识库分层评估基线：覆盖冒烟、基础、常规与困难问题，并包含每库独立的库外拒答样本。",
+  "libraries": [
+    {
+      "key": "calculus",
+      "name": "评估·高等数学",
+      "notes_dir": "notes/calculus"
+    },
+    {
+      "key": "networks",
+      "name": "评估·计算机网络",
+      "notes_dir": "notes/networks"
+    },
+    {
+      "key": "operating-systems",
+      "name": "评估·操作系统",
+      "notes_dir": "notes/operating-systems"
+    },
+    {
+      "key": "python",
+      "name": "评估·Python",
+      "notes_dir": "notes/python"
+    },
+    {
+      "key": "databases",
+      "name": "评估·数据库",
+      "notes_dir": "notes/databases"
+    }
+  ],
   "items": [
     {
-      "question": "TCP 为什么需要三次握手？",
-      "expected_doc": "tcp.md",
-      "expected_keywords": ["确认双方的发送与接收能力", "为什么不是两次"],
+      "library": "calculus",
+      "difficulty": "smoke",
+      "question": "数列收敛到 A 的 ε-N 定义是什么？",
+      "expected_doc": "01-函数与极限.md",
+      "expected_keywords": ["任意正数 ε", "正整数 N"],
       "in_kb": true
     },
     {
-      "question": "TCP 挥手为什么是四次？",
-      "expected_doc": "tcp.md",
-      "expected_keywords": ["全双工", "FIN"],
+      "library": "calculus",
+      "difficulty": "basic",
+      "question": "怎样判断一个间断点属于第一类间断点？",
+      "expected_doc": "02-连续性与间断点.md",
+      "expected_keywords": ["左右极限都存在且有限", "第一类"],
       "in_kb": true
     },
     {
-      "question": "为什么两次握手不够？",
-      "expected_doc": "tcp.md",
-      "expected_keywords": ["接收能力", "第三次 ACK"],
+      "library": "calculus",
+      "difficulty": "basic",
+      "question": "函数连续是否一定可导？可导与连续有什么关系？",
+      "expected_doc": "03-导数与微分.md",
+      "expected_keywords": ["可导能够推出", "反过来不成立"],
       "in_kb": true
     },
     {
-      "question": "SYN 和 ACK 分别是什么含义？",
-      "expected_doc": "tcp.md",
-      "expected_keywords": ["SYN", "ACK"],
+      "library": "calculus",
+      "difficulty": "basic",
+      "question": "第一类换元积分法的依据是什么？",
+      "expected_doc": "05-不定积分.md",
+      "expected_keywords": ["第一类换元法", "链式求导法则的逆用"],
       "in_kb": true
     },
     {
-      "question": "时间片轮转调度有什么优缺点？",
-      "expected_doc": "os.md",
-      "expected_keywords": ["时间片", "公平"],
+      "library": "calculus",
+      "difficulty": "regular",
+      "question": "罗尔定理需要满足哪些条件？",
+      "expected_doc": "04-中值定理与导数应用.md",
+      "expected_keywords": ["[a,b] 连续", "f(a)=f(b)"],
       "in_kb": true
     },
     {
-      "question": "优先级调度会导致什么问题，怎么解决？",
-      "expected_doc": "os.md",
-      "expected_keywords": ["饥饿", "老化"],
+      "library": "calculus",
+      "difficulty": "regular",
+      "question": "定积分怎样由黎曼和定义？",
+      "expected_doc": "06-定积分与微积分基本定理.md",
+      "expected_keywords": ["黎曼和", "分割的最大长度趋于零"],
       "in_kb": true
     },
     {
-      "question": "死锁的四个必要条件是什么？",
-      "expected_doc": "os.md",
-      "expected_keywords": ["互斥", "循环等待"],
+      "library": "calculus",
+      "difficulty": "regular",
+      "question": "用圆环法计算旋转体体积时，截面积如何表示？",
+      "expected_doc": "07-定积分的几何与物理应用.md",
+      "expected_keywords": ["圆环", "R(x)²-r(x)²"],
       "in_kb": true
     },
     {
-      "question": "Python 装饰器的作用是什么？",
-      "expected_doc": "python.md",
-      "expected_keywords": ["装饰器", "增强行为"],
+      "library": "calculus",
+      "difficulty": "regular",
+      "question": "分离变量时为什么要先检查被除因子为零的情况？",
+      "expected_doc": "08-常微分方程初步.md",
+      "expected_keywords": ["除以 h(y) 前", "常数解"],
       "in_kb": true
     },
     {
-      "question": "闭包里修改外部变量要注意什么？",
-      "expected_doc": "python.md",
-      "expected_keywords": ["nonlocal"],
+      "library": "calculus",
+      "difficulty": "hard",
+      "question": "等价无穷小替换在哪类表达式中通常成立，在哪类表达式中可能失效？",
+      "expected_doc": "01-函数与极限.md",
+      "expected_keywords": ["乘积或商", "加减式"],
       "in_kb": true
     },
     {
-      "question": "生成器为什么省内存？",
-      "expected_doc": "python.md",
-      "expected_keywords": ["惰性求值", "yield"],
+      "library": "calculus",
+      "difficulty": "hard",
+      "question": "使用洛必达法则前必须先确认哪些前提？",
+      "expected_doc": "04-中值定理与导数应用.md",
+      "expected_keywords": ["同时趋于零", "未定式类型"],
       "in_kb": true
     },
     {
-      "question": "量子计算的 Shor 算法原理是什么？",
+      "library": "calculus",
+      "difficulty": "hard",
+      "question": "Python 的 GIL 为什么不能让 CPU 密集线程线性加速？",
       "expected_doc": null,
       "expected_keywords": [],
       "in_kb": false
     },
     {
-      "question": "如何申请成都的落户补贴？",
+      "library": "calculus",
+      "difficulty": "hard",
+      "question": "TCP 三次握手的三个报文分别是什么？",
+      "expected_doc": null,
+      "expected_keywords": [],
+      "in_kb": false
+    },
+
+    {
+      "library": "networks",
+      "difficulty": "smoke",
+      "question": "TCP 三次握手依次发送什么？",
+      "expected_doc": "01-tcp.md",
+      "expected_keywords": ["SYN+ACK", "客户端再回 ACK"],
+      "in_kb": true
+    },
+    {
+      "library": "networks",
+      "difficulty": "basic",
+      "question": "TCP 为什么需要第三次 ACK？",
+      "expected_doc": "01-tcp.md",
+      "expected_keywords": ["客户端的接收能力", "第三次 ACK"],
+      "in_kb": true
+    },
+    {
+      "library": "networks",
+      "difficulty": "basic",
+      "question": "TCP 连接为什么通常需要四次挥手？",
+      "expected_doc": "01-tcp.md",
+      "expected_keywords": ["TCP 是全双工", "分别关闭"],
+      "in_kb": true
+    },
+    {
+      "library": "networks",
+      "difficulty": "basic",
+      "question": "HTTP 304 状态码告诉客户端做什么？",
+      "expected_doc": "02-HTTP缓存与状态码.md",
+      "expected_keywords": ["304 Not Modified", "本地副本"],
+      "in_kb": true
+    },
+    {
+      "library": "networks",
+      "difficulty": "regular",
+      "question": "Cache-Control 中 no-store 与 no-cache 有什么区别？",
+      "expected_doc": "02-HTTP缓存与状态码.md",
+      "expected_keywords": ["no-store", "no-cache"],
+      "in_kb": true
+    },
+    {
+      "library": "networks",
+      "difficulty": "regular",
+      "question": "HTTP 方法的幂等性是什么意思？",
+      "expected_doc": "02-HTTP缓存与状态码.md",
+      "expected_keywords": ["幂等指", "最终状态"],
+      "in_kb": true
+    },
+    {
+      "library": "networks",
+      "difficulty": "regular",
+      "question": "没有缓存时，递归 DNS 解析大致会查询哪些服务器？",
+      "expected_doc": "03-DNS与路由基础.md",
+      "expected_keywords": ["递归解析器", "权威域名服务器"],
+      "in_kb": true
+    },
+    {
+      "library": "networks",
+      "difficulty": "regular",
+      "question": "路由器为什么采用最长前缀匹配？",
+      "expected_doc": "03-DNS与路由基础.md",
+      "expected_keywords": ["最长前缀匹配", "前缀越长越具体"],
+      "in_kb": true
+    },
+    {
+      "library": "networks",
+      "difficulty": "hard",
+      "question": "HTTP/2 已经多路复用，为什么仍可能发生队头阻塞？",
+      "expected_doc": "02-HTTP缓存与状态码.md",
+      "expected_keywords": ["多路复用", "连接层面的队头阻塞"],
+      "in_kb": true
+    },
+    {
+      "library": "networks",
+      "difficulty": "hard",
+      "question": "traceroute 如何利用 TTL 和 ICMP 推断网络路径？",
+      "expected_doc": "03-DNS与路由基础.md",
+      "expected_keywords": ["逐步提高 TTL", "ICMP 超时消息"],
+      "in_kb": true
+    },
+    {
+      "library": "networks",
+      "difficulty": "hard",
+      "question": "复合函数求导的链式法则怎样使用？",
+      "expected_doc": null,
+      "expected_keywords": [],
+      "in_kb": false
+    },
+    {
+      "library": "networks",
+      "difficulty": "hard",
+      "question": "数据库事务的四种隔离级别分别是什么？",
+      "expected_doc": null,
+      "expected_keywords": [],
+      "in_kb": false
+    },
+
+    {
+      "library": "operating-systems",
+      "difficulty": "smoke",
+      "question": "时间片轮转调度的基本做法和优点是什么？",
+      "expected_doc": "01-进程调度与死锁.md",
+      "expected_keywords": ["固定长度的时间片", "公平"],
+      "in_kb": true
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "basic",
+      "question": "优先级调度怎样缓解低优先级进程饥饿？",
+      "expected_doc": "01-进程调度与死锁.md",
+      "expected_keywords": ["饥饿现象", "老化"],
+      "in_kb": true
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "basic",
+      "question": "死锁产生的四个必要条件包括哪些？",
+      "expected_doc": "01-进程调度与死锁.md",
+      "expected_keywords": ["互斥", "循环等待"],
+      "in_kb": true
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "basic",
+      "question": "虚拟地址怎样通过页表转换为物理地址？",
+      "expected_doc": "02-虚拟内存与页面置换.md",
+      "expected_keywords": ["页表", "物理页框号"],
+      "in_kb": true
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "regular",
+      "question": "TLB 未命中时处理器通常要做什么？",
+      "expected_doc": "02-虚拟内存与页面置换.md",
+      "expected_keywords": ["TLB 命中", "页表遍历"],
+      "in_kb": true
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "regular",
+      "question": "淘汰脏页和干净页时的处理有什么不同？",
+      "expected_doc": "02-虚拟内存与页面置换.md",
+      "expected_keywords": ["脏页", "写回"],
+      "in_kb": true
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "regular",
+      "question": "类 Unix 文件系统中，文件名与 inode 是什么关系？",
+      "expected_doc": "03-文件系统与IO.md",
+      "expected_keywords": ["inode 本身通常不保存文件名", "名称到 inode 号"],
+      "in_kb": true
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "regular",
+      "question": "删除一个硬链接后，文件数据何时才可回收？",
+      "expected_doc": "03-文件系统与IO.md",
+      "expected_keywords": ["链接计数归零", "数据才可回收"],
+      "in_kb": true
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "hard",
+      "question": "FIFO 页面置换为什么可能出现增加页框却增加缺页的现象？",
+      "expected_doc": "02-虚拟内存与页面置换.md",
+      "expected_keywords": ["Belady 异常", "FIFO"],
+      "in_kb": true
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "hard",
+      "question": "为什么保证新建文件名持久化时还需要 fsync 父目录？",
+      "expected_doc": "03-文件系统与IO.md",
+      "expected_keywords": ["同步其父目录", "新文件名"],
+      "in_kb": true
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "hard",
+      "question": "HTTP 协商缓存中的 ETag 和 304 如何配合？",
+      "expected_doc": null,
+      "expected_keywords": [],
+      "in_kb": false
+    },
+    {
+      "library": "operating-systems",
+      "difficulty": "hard",
+      "question": "定积分的几何意义与微积分基本定理是什么？",
+      "expected_doc": null,
+      "expected_keywords": [],
+      "in_kb": false
+    },
+
+    {
+      "library": "python",
+      "difficulty": "smoke",
+      "question": "Python 装饰器是什么？",
+      "expected_doc": "01-函数装饰器与生成器.md",
+      "expected_keywords": ["接收函数并返回新函数", "增强行为"],
+      "in_kb": true
+    },
+    {
+      "library": "python",
+      "difficulty": "basic",
+      "question": "闭包里修改外层函数变量为什么需要 nonlocal？",
+      "expected_doc": "01-函数装饰器与生成器.md",
+      "expected_keywords": ["nonlocal", "局部变量"],
+      "in_kb": true
+    },
+    {
+      "library": "python",
+      "difficulty": "basic",
+      "question": "生成器为什么适合处理大数据流？",
+      "expected_doc": "01-函数装饰器与生成器.md",
+      "expected_keywords": ["惰性求值", "一次性占用内存"],
+      "in_kb": true
+    },
+    {
+      "library": "python",
+      "difficulty": "basic",
+      "question": "Python 中 is 与 == 分别比较什么？",
+      "expected_doc": "02-数据模型与容器.md",
+      "expected_keywords": ["比较对象身份", "比较值"],
+      "in_kb": true
+    },
+    {
+      "library": "python",
+      "difficulty": "regular",
+      "question": "浅拷贝为什么不能隔离嵌套可变对象？",
+      "expected_doc": "02-数据模型与容器.md",
+      "expected_keywords": ["浅拷贝", "内部元素仍是原对象引用"],
+      "in_kb": true
+    },
+    {
+      "library": "python",
+      "difficulty": "regular",
+      "question": "对象要作为字典键，需要满足什么哈希约束？",
+      "expected_doc": "02-数据模型与容器.md",
+      "expected_keywords": ["哈希值在生命周期内保持稳定", "相等对象必须具有相同哈希值"],
+      "in_kb": true
+    },
+    {
+      "library": "python",
+      "difficulty": "regular",
+      "question": "为什么 Python 线程适合 I/O 密集任务却不适合加速纯 Python CPU 密集计算？",
+      "expected_doc": "03-并发与异步IO.md",
+      "expected_keywords": ["CPU 密集计算", "阻塞 I/O 会释放 GIL"],
+      "in_kb": true
+    },
+    {
+      "library": "python",
+      "difficulty": "regular",
+      "question": "协程中直接执行同步阻塞调用会产生什么后果？",
+      "expected_doc": "03-并发与异步IO.md",
+      "expected_keywords": ["卡住整个事件循环", "同步阻塞调用"],
+      "in_kb": true
+    },
+    {
+      "library": "python",
+      "difficulty": "hard",
+      "question": "asyncio 任务被取消后，协程应怎样清理并传播取消？",
+      "expected_doc": "03-并发与异步IO.md",
+      "expected_keywords": ["CancelledError", "继续传播取消"],
+      "in_kb": true
+    },
+    {
+      "library": "python",
+      "difficulty": "hard",
+      "question": "上下文管理器通过哪些方法保证 with 语句退出时执行清理？",
+      "expected_doc": "02-数据模型与容器.md",
+      "expected_keywords": ["__enter__", "__exit__"],
+      "in_kb": true
+    },
+    {
+      "library": "python",
+      "difficulty": "hard",
+      "question": "递归 DNS 解析器如何找到权威域名服务器？",
+      "expected_doc": null,
+      "expected_keywords": [],
+      "in_kb": false
+    },
+    {
+      "library": "python",
+      "difficulty": "hard",
+      "question": "B-tree 组合索引的最左前缀原则是什么？",
+      "expected_doc": null,
+      "expected_keywords": [],
+      "in_kb": false
+    },
+
+    {
+      "library": "databases",
+      "difficulty": "smoke",
+      "question": "事务的 ACID 中原子性是什么，语句失败后会话为什么要 rollback？",
+      "expected_doc": "01-事务与隔离级别.md",
+      "expected_keywords": ["原子性", "rollback"],
+      "in_kb": true
+    },
+    {
+      "library": "databases",
+      "difficulty": "basic",
+      "question": "什么是脏读？",
+      "expected_doc": "01-事务与隔离级别.md",
+      "expected_keywords": ["脏读", "尚未提交事务"],
+      "in_kb": true
+    },
+    {
+      "library": "databases",
+      "difficulty": "basic",
+      "question": "PostgreSQL 的读已提交隔离级别让查询看到什么快照？",
+      "expected_doc": "01-事务与隔离级别.md",
+      "expected_keywords": ["读已提交", "每条语句看到"],
+      "in_kb": true
+    },
+    {
+      "library": "databases",
+      "difficulty": "basic",
+      "question": "B-tree 组合索引通常怎样支持最左前缀查询？",
+      "expected_doc": "02-索引与查询计划.md",
+      "expected_keywords": ["组合索引", "最左前缀查询"],
+      "in_kb": true
+    },
+    {
+      "library": "databases",
+      "difficulty": "regular",
+      "question": "为什么高选择性条件更适合索引，而命中大部分行时可能全表扫描？",
+      "expected_doc": "02-索引与查询计划.md",
+      "expected_keywords": ["选择性高", "全表扫描"],
+      "in_kb": true
+    },
+    {
+      "library": "databases",
+      "difficulty": "regular",
+      "question": "分析查询计划时为什么要比较 estimated rows 与 actual rows？",
+      "expected_doc": "02-索引与查询计划.md",
+      "expected_keywords": ["estimated rows", "actual rows"],
+      "in_kb": true
+    },
+    {
+      "library": "databases",
+      "difficulty": "regular",
+      "question": "第三范式主要消除哪一种函数依赖？",
+      "expected_doc": "03-范式与数据建模.md",
+      "expected_keywords": ["传递依赖", "第三范式"],
+      "in_kb": true
+    },
+    {
+      "library": "databases",
+      "difficulty": "regular",
+      "question": "使用代理键后，为什么仍要保留真实业务唯一约束？",
+      "expected_doc": "03-范式与数据建模.md",
+      "expected_keywords": ["代理键", "真实业务唯一约束"],
+      "in_kb": true
+    },
+    {
+      "library": "databases",
+      "difficulty": "hard",
+      "question": "pg_trgm 查询怎样改写才能让 GIN 索引先缩小候选集？",
+      "expected_doc": "02-索引与查询计划.md",
+      "expected_keywords": ["预过滤操作符", "相似度并排序"],
+      "in_kb": true
+    },
+    {
+      "library": "databases",
+      "difficulty": "hard",
+      "question": "BCNF 分解为什么可能需要在更强规范化和依赖保持之间取舍？",
+      "expected_doc": "03-范式与数据建模.md",
+      "expected_keywords": ["BCNF", "依赖保持"],
+      "in_kb": true
+    },
+    {
+      "library": "databases",
+      "difficulty": "hard",
+      "question": "FIFO 与 LRU 页面置换算法有什么差别？",
+      "expected_doc": null,
+      "expected_keywords": [],
+      "in_kb": false
+    },
+    {
+      "library": "databases",
+      "difficulty": "hard",
+      "question": "Python 装饰器如何保留被装饰函数的元数据？",
       "expected_doc": null,
       "expected_keywords": [],
       "in_kb": false
