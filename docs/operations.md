@@ -14,7 +14,7 @@
 
 ### WSL2 独立 Docker Engine 与命令行启动
 
-KnowBase 不依赖 Docker Desktop。PostgreSQL 与 pgvector 运行在 Ubuntu WSL2 内的独立 Docker Engine 中，Windows PowerShell 通过 `wsl.exe` 调用它；API 继续使用项目的 Windows `.venv`，通过 WSL localhost 转发连接 `127.0.0.1:5432`。
+KnowBase 不依赖 Docker Desktop。PostgreSQL 与 pgvector 运行在 Ubuntu WSL2 内的独立 Docker Engine 中，Windows PowerShell 通过 `wsl.exe` 调用它；API 继续使用项目的 Windows `.venv`，通过 WSL localhost 转发连接 `127.0.0.1:5432`。前端源码使用 TypeScript，Node.js 22.12+ 只参与 Vite 构建，应用运行时仍由 FastAPI 统一托管静态产物。
 
 首次配置运行下面的安装器。它要求 Ubuntu WSL2 已启用 [`systemd`](https://learn.microsoft.com/windows/wsl/systemd)，按 [Docker Engine Ubuntu 安装说明](https://docs.docker.com/engine/install/ubuntu/)从官方 apt 仓库安装 Engine、containerd、Buildx 和 Compose 插件，启用 `docker.service`，并把 WSL 默认用户加入 `docker` 用户组。Docker 官方说明该用户组拥有接近 root 的控制权限，详见[安装后配置](https://docs.docker.com/engine/install/linux-postinstall/)。
 
@@ -28,7 +28,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-wsl-docker
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 ```
 
-启动器读取 `compose.yaml`，创建或复用 `knowbase-pg` 与 WSL 命名卷 `knowbase_pgdata`，等待数据库健康检查，执行 Alembic 迁移，再以单 worker 启动 API；`/ready` 确认 API 与数据库均可用后才打开浏览器。`/health` 只检查 API 进程存活，不访问数据库。首次拉取 `pgvector/pgvector:pg16` 镜像可能需要几分钟。重复启动时，如果 API 已经正常运行，脚本只打开界面；如果 8000 端口被其它程序占用，则明确报错。
+启动器先调用 `scripts/build-frontend.ps1`：核对 Node.js 版本，以 `package-lock.json` 的 SHA-256 判断是否需要 `npm ci`，再以源码树指纹判断是否需要 Vite 构建。构建完成后，它读取 `compose.yaml`，创建或复用 `knowbase-pg` 与 WSL 命名卷 `knowbase_pgdata`，等待数据库健康检查，执行 Alembic 迁移，再以单 worker 启动 API；`/ready` 确认 API 与数据库均可用后才打开浏览器。`/health` 只检查 API 进程存活，不访问数据库。首次安装 npm 依赖或拉取 `pgvector/pgvector:pg16` 镜像可能需要几分钟。重复启动时，如果 API 已经正常运行，脚本只打开界面；如果 8000 端口被其它程序占用，则明确报错。
 
 WSL 路径转换只让 `wslpath` 返回 ASCII 的盘符挂载点，再由 PowerShell 拼接未经转码的目录部分，避免 Windows PowerShell 5.1 按本机代码页误解 WSL 的 UTF-8 输出。因此项目目录可以包含空格、中文和常见特殊字符，例如 `E:\ds Harness\实践项目`，也可以位于任意已挂载到 WSL 的本地 Windows 盘符。启动器不支持 `\\server\share` 形式的 UNC 或网络共享路径；从 GitHub 下载或克隆后，请把仓库放在 `C:`、`D:`、`E:` 等本地磁盘上。
 
@@ -66,7 +66,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\restore-knowbase-b
 
 ### 单 worker 与后台任务
 
-开发使用 `uvicorn app.main:app --reload`；演示使用 `uvicorn app.main:app --workers 1`，避免修改文件重启正在运行的服务。
+开发后端前先运行 `scripts/build-frontend.ps1`，再使用 `uvicorn app.main:app --reload`。需要前端热更新时另起 `npm run frontend:dev`，访问 `http://127.0.0.1:5173/ui/`；Vite 只做开发代理，生产与演示仍使用 FastAPI 托管的 `frontend/dist`。演示使用 `uvicorn app.main:app --workers 1`，避免修改文件重启正在运行的服务。
 
 - `session.store` 是进程内对象，不跨 worker 共享。仅携带 `session_id` 的兼容客户端在多 worker 下可能无法取得前一请求的历史。
 - `BackgroundTasks` 在处理请求的进程内执行，没有持久化队列、任务认领或跨进程恢复。进程退出后任务不会由另一 worker 自动接续。

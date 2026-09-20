@@ -21,7 +21,8 @@ from app.http_client import close_http_client
 from app.routers import ask, document_content, documents, graph, kbs, workflow
 
 API_PREFIX = "/api/v1"
-FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+FRONTEND_SOURCE_DIR = Path(__file__).resolve().parent.parent / "frontend"
+FRONTEND_DIR = FRONTEND_SOURCE_DIR / "dist"
 logger = logging.getLogger(__name__)
 
 
@@ -85,7 +86,7 @@ def index() -> RedirectResponse:
     return RedirectResponse(url="/ui/")
 
 
-# 前端为纯静态文件（无构建步骤，02 §3 M5 边界：只渲染后端契约，不做业务判定）。
+# FastAPI 只托管 Vite 的生产构建产物；TypeScript 源码不会暴露给运行时。
 # 目录不存在时跳过挂载（例如只跑 API 的场景），不影响后端功能。
 if FRONTEND_DIR.is_dir():
     app.mount("/ui", StaticFiles(directory=FRONTEND_DIR, html=True), name="ui")

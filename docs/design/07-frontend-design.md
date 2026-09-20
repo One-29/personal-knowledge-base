@@ -1,15 +1,15 @@
-# 07-前端界面设计（v0.5）
+# 07-前端界面设计（v0.6）
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | P0 体验优化已实现 |
-| 版本 | v0.5 |
+| 状态 | P0 体验优化与 TypeScript 架构迁移已实现 |
+| 版本 | v0.6 |
 | 日期 | 2026-09-20 |
 | 上游 | `01-requirements.md`（溯源与拒答）· `02-modules.md`（M5 只渲染契约） |
-| 实现 | `frontend/index.html` · `frontend/style.css` · `frontend/app.js` |
-| 变更 | v0.5：文档与引用按后端字符位置显示原图；v0.4：统一导航、并发状态与文档管理体验 |
+| 实现 | `frontend/index.html` · `frontend/src/` · `vite.config.ts` |
+| 变更 | v0.6：严格 TypeScript、Vite/Vitest、职责拆包与可复现构建；v0.5：文档与引用按后端字符位置显示原图；v0.4：统一导航、并发状态与文档管理体验 |
 
-> KnowBase 的主要任务是“从自己的资料提问，得到带出处的回答，再回到原文核对”。v0.4 在不增加构建步骤和运行依赖的前提下，统一了导航、视觉、请求状态、回答排版、文档管理和空状态。
+> KnowBase 的主要任务是“从自己的资料提问，得到带出处的回答，再回到原文核对”。v0.4 统一了导航、视觉、请求状态、回答排版、文档管理和空状态；v0.6 在保持界面行为和无前端运行时框架的前提下，把单文件 JavaScript 迁移成可类型检查、可测试、可拆包的 TypeScript 架构。
 
 ## 1. 优化目标与必要性
 
@@ -26,7 +26,7 @@ P0 优化聚焦以下结果：
 
 ## 2. 技术栈与架构边界
 
-前端继续使用 **HTML5 + CSS3 + 原生 JavaScript**，由 FastAPI `StaticFiles` 挂载，不引入 Node 构建、前端框架、字体 CDN 或运行时第三方脚本。
+前端使用 **HTML5 + CSS3 + 严格 TypeScript**。Vite 负责开发服务器与生产打包，Vitest 运行不依赖浏览器的模块测试；不引入 React/Vue 等运行时框架、字体 CDN 或运行时第三方脚本。生产环境中 FastAPI 只挂载 `frontend/dist`，不直接暴露 TypeScript 源码。
 
 | 层 | 技术 | 用途 |
 |---|---|---|
@@ -38,10 +38,27 @@ P0 优化聚焦以下结果：
 | 中断 | AbortController | 普通问答与工作流各自中断浏览器等待 |
 | 本地状态 | localStorage | 会话、活动会话、原文栏宽度与展开偏好 |
 | 图形 | Canvas 2D | 零依赖力导向关联图 |
-| 静态验证 | pytest + FastAPI TestClient | 页面与资源可访问、脚本挂载点完整且唯一 |
-| 语法验证 | Node `--check` | CI 检查 `frontend/app.js` 语法 |
+| 类型与构建 | TypeScript strict + Vite | 编译期核对 DOM、API 契约与模块依赖，生成带内容哈希的生产资源 |
+| 单元测试 | Vitest | 会话持久化、非可信本地数据与纯渲染逻辑 |
+| 静态验证 | pytest + FastAPI TestClient | 生产页面与哈希资源可访问、源码挂载点完整且唯一 |
 
 前端只渲染 API 返回的拒答、引用、步骤状态和文档状态，不在浏览器重复实现检索阈值、引用校验或工作流业务规则。
+
+源码边界如下：
+
+| 模块 | 职责 |
+|---|---|
+| `api.ts` / `types.ts` | REST 调用、统一错误与契约类型 |
+| `state.ts` / `conversations.ts` | 短期运行状态与经过运行时校验的本机会话 |
+| `navigation.ts` | 视图元数据、hash 导航和视图生命周期 |
+| `library.ts` | 知识库 CRUD、文档列表、上传、重传与轮询 |
+| `tasks.ts` | 问答/工作流请求编排与会话写回 |
+| `task-runtime.ts` / `task-rendering.ts` | 独立运行状态、输入框行为和契约结果渲染 |
+| `evidence.ts` | 引用、历史快照、完整原文及原图核对 |
+| `graph.ts` | 关联图请求、布局、绘制和交互 |
+| `main.ts` | 初始化与模块装配，不承载业务实现 |
+
+依赖通过 `package-lock.json` 固定。`scripts/build-frontend.ps1` 以锁文件摘要判断是否需要 `npm ci`，再以源码树摘要决定是否需要构建；因此 GitHub 新克隆、包含中文/空格的本机路径与日常重复启动使用同一条入口。Node.js 是构建依赖，构建后浏览器端仍只有标准 HTML/CSS/ES modules。
 
 ## 3. 页面架构
 
@@ -128,7 +145,9 @@ P0 优化聚焦以下结果：
 - `prefers-reduced-motion` 会关闭非必要动画。
 - 手机布局经过 390×844 检查，页面无水平溢出，五个导航入口均保留。
 - 自动化浏览器验证覆盖结构化回答、打开真实引用、问答与工作流同时在途、两项结果分别写回会话，以及移动端原文栏默认收起。
-- pytest 额外核对 JavaScript 使用的每个 `getElementById` 挂载点在 HTML 中存在且唯一。
+- TypeScript 使用 `strict`、`noUncheckedIndexedAccess`、`exactOptionalPropertyTypes` 和 `noUnused*`，CI 不允许带类型错误构建。
+- Vitest 覆盖损坏的 localStorage 数据、会话删除与在途结果竞争、历史轮数上限等纯逻辑边界。
+- pytest 读取 TypeScript 源码，核对每个静态 `byId` 挂载点在 HTML 中存在且唯一；同时通过 FastAPI 请求实际构建出的带哈希 JS/CSS 和图标。
 
 ## 8. 后续边界
 

@@ -42,6 +42,7 @@ function Start-KnowBase {
     $readyUrl = "http://127.0.0.1:$Port/ready"
     $appUrl = "http://127.0.0.1:$Port/ui/"
     $dockerModule = Join-Path $PSScriptRoot "KnowBase.WslDocker.psm1"
+    $frontendBuilder = Join-Path $PSScriptRoot "build-frontend.ps1"
 
     if (-not (Test-Path -LiteralPath $pythonExe -PathType Leaf)) {
         throw "Missing .venv. Run: python -m venv .venv; .\.venv\Scripts\python.exe -m pip install -e '.[dev]'"
@@ -52,8 +53,17 @@ function Start-KnowBase {
     if (-not (Test-Path -LiteralPath $dockerModule -PathType Leaf)) {
         throw "WSL Docker helper module not found: $dockerModule"
     }
+    if (-not (Test-Path -LiteralPath $frontendBuilder -PathType Leaf)) {
+        throw "Frontend build helper not found: $frontendBuilder"
+    }
 
     Import-Module -Name $dockerModule -Force
+
+    Write-Stage "Preparing the TypeScript frontend..."
+    & $frontendBuilder
+    if ($LASTEXITCODE -ne 0) {
+        throw "Frontend preparation failed."
+    }
 
     Write-Stage "Starting PostgreSQL with Docker Engine in WSL '$WslDistribution'..."
     Start-KnowBaseDatabase `

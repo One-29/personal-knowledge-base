@@ -77,7 +77,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    FE[前端单页 M5<br/>frontend/ 原生 JS 零构建] -->|REST| M1[M1 库与文档管理]
+    FE[前端单页 M5<br/>TypeScript + Vite] -->|REST| M1[M1 库与文档管理]
     FE -->|REST| M3[M3 问答·溯源·拒答]
     FE -->|REST| M4[M4 Agent 工作流]
     FE -->|REST| G[M5+ 关联图]
@@ -96,7 +96,7 @@ flowchart LR
 
 ## 6. 界面
 
-前端是单页应用（`frontend/`，HTML5 + CSS Grid/Flexbox + 原生 JavaScript，零构建、零外部 CDN），三栏研究工作台：左栏功能与并发任务状态、中间业务视图、右侧原文核对。五个视图为 **问答**、**工作流**、**关联图**、**文档**、**知识库**。
+前端是单页应用（`frontend/`，HTML5 + CSS Grid/Flexbox + 严格 TypeScript，无运行时框架与外部 CDN），由 Vite 构建后交给 FastAPI 托管。源码按 API、会话、导航、知识库/文档、问答/工作流、关联图和原文核对拆包。三栏研究工作台的左栏显示功能与并发任务状态，中间承载业务视图，右侧用于原文核对。五个视图为 **问答**、**工作流**、**关联图**、**文档**、**知识库**。
 
 普通问答和工作流可各运行一个并同时在途，切换视图后左栏仍显示各自计时状态。桌面端原文栏常驻且可调宽，平板与手机端改为默认收起的按需抽屉。回答内容先进行 HTML 转义，再渲染标题、列表、代码、公式文本与引用，避免执行模型返回的 HTML。设计细节见 `07-frontend-design.md` 与 `08-graph-view.md`。
 
@@ -166,7 +166,7 @@ flowchart LR
 | M4 Agent 多步工作流 | 任务拆解、逐步执行、缺料可见、汇总 | ✅ 完成 |
 | 06 检索质量评估 | 评估集、recall/MRR、τ 校准 | ✅ 完成 |
 | CI/CD | GitHub Actions 自动化测试 | ✅ 完成 |
-| M5 前端 | 库/文档管理、问答与溯源高亮、工作流进度 | ✅ 完成（原生单页，零构建） |
+| M5 前端 | 库/文档管理、问答与溯源高亮、工作流进度 | ✅ 完成（TypeScript 模块化单页，Vite 构建） |
 | V1.0 | PDF/Word 导入、问答历史持久化、增量同步 | 规划 |
 
 ## 12. 文档索引

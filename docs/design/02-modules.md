@@ -78,7 +78,7 @@ flowchart LR
 
 - **属于**：库/文档管理页（含处理状态、图片数与重传入口）；问答页（库选择、引用点击 → 原文及原图核对、拒答呈现）；综合任务页（步骤进度展示）；导入失败提示。
 - **不属于**：任何业务判定（排序/阈值/拒答/溯源拼接都在后端，前端只渲染契约对象）。
-- **边界规则**：只消费 REST 契约；后端 OpenAPI 可独立走通全流程（答辩与联调双通道）。
+- **边界规则**：只消费 REST 契约；后端 OpenAPI 可独立走通全流程（答辩与联调双通道）。TypeScript 源码内部按 `api / state / conversations / navigation / library / tasks / graph / evidence` 拆分，`main.ts` 只负责装配；FastAPI 只托管 Vite 的 `dist` 产物，不读取源码模块。
 
 ## 4. 业务归属速查表
 
