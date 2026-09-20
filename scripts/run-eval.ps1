@@ -5,7 +5,8 @@ param(
     [string]$WslDistribution = "Ubuntu",
     [string]$ContainerName = "knowbase-pg",
     [switch]$Retrieval,
-    [Nullable[int]]$TopK = $null
+    [Nullable[int]]$TopK = $null,
+    [string]$ReportPath = ""
 )
 
 Set-StrictMode -Version Latest
@@ -82,6 +83,9 @@ try {
     }
     if ($null -ne $TopK) {
         $evaluationArguments += @("--top-k", $TopK.ToString())
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ReportPath)) {
+        $evaluationArguments += @("--report", $ReportPath)
     }
 
     Write-Stage "Running the isolated evaluation..."

@@ -1,0 +1,55 @@
+"""多知识库质量评估的稳定公共接口。"""
+
+from .dataset import (
+    DIFFICULTIES,
+    EVAL_SET_PATH,
+    MIN_BASELINE_ITEMS,
+    MIN_BASELINE_LIBRARIES,
+    EvalDataset,
+    EvalDatasetError,
+    EvalDifficulty,
+    EvalItem,
+    EvalLibrary,
+    assert_baseline_scale,
+    load_eval_set,
+    validate_eval_sources,
+)
+from .metrics import RefusalMetrics, RetrievalMetrics, is_hit
+from .runner import (
+    EvalExecutionError,
+    KbScopes,
+    QueryVectorKey,
+    QueryVectors,
+    collect_similarities,
+    embed_eval_questions,
+    evaluate_refusal,
+    evaluate_retrieval,
+    simulate_thresholds,
+)
+
+__all__ = [
+    "DIFFICULTIES",
+    "EVAL_SET_PATH",
+    "MIN_BASELINE_ITEMS",
+    "MIN_BASELINE_LIBRARIES",
+    "EvalDataset",
+    "EvalDatasetError",
+    "EvalDifficulty",
+    "EvalExecutionError",
+    "EvalItem",
+    "EvalLibrary",
+    "KbScopes",
+    "QueryVectorKey",
+    "QueryVectors",
+    "RefusalMetrics",
+    "RetrievalMetrics",
+    "assert_baseline_scale",
+    "collect_similarities",
+    "embed_eval_questions",
+    "evaluate_refusal",
+    "evaluate_retrieval",
+    "is_hit",
+    "load_eval_set",
+    "simulate_thresholds",
+    "validate_eval_sources",
+]

@@ -10,10 +10,10 @@
 
 - M1–M5 与检索评估已完成，CI 绿灯。前端使用严格 TypeScript + Vite，生产构建由 API 挂在 `/ui`。
 - 含图片 Markdown 会保留原始图片字节、出现顺序与字符位置；完整原文和引用侧栏均可查看原图，图片本身不参与 OCR 或向量化。
-- 首次评估（3 篇语料 / 12 条样本）：recall@8 = **1.000**、MRR = **1.000**、库外拒答率 **100%**、库内误拒率 **0%**。
-- 拒答阈值 τ 由评估数据校准：0.35 → **0.45**。
+- v2 检索基线覆盖 5 个库、20 篇文档、60 条分层样本：recall@8 = **1.000（50/50）**、MRR = **0.987**。
+- L1 拒答阈值由 v2 相似度分布重新校准为 **τ=0.50**：10 条库外问题拒答率 100%，50 条库内问题误拒率 0%。
 - 已知边界：当前只支持单 worker——会话与后台入库任务都在进程内存里，加 worker 拿不到可靠的跨进程会话与任务恢复。
-- 上述是小样本结论，不能据此推断真实多库表现；完整口径见 docs/design/00-overview.md。
+- 评估已能比较多库与难度层级，但仍是固定的 60 条基线，不能替代真实用户语料上的持续评估；完整口径见 docs/design/06-evaluation.md。
 
 ## 本地运行
 
@@ -110,7 +110,11 @@ wsl.exe -d Ubuntu -- docker exec knowbase-pg createdb -U postgres knowbase_test
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Retrieval   # 只跑检索
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1              # 完整评估
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Retrieval -TopK 8 -ReportPath eval\baselines\postgresql-bge-m3-v2.json
 ```
+
+归档的真实 BGE-M3 检索结果与阈值扫描见
+`eval/baselines/postgresql-bge-m3-v2.json`；评估脚本只会替换专用评估库。
 
 CI 在 pgvector service container 上跑 pytest，另外执行 TypeScript 严格类型检查、Vitest、Vite 生产构建，并在空库里执行 `alembic upgrade head` 与 `alembic check`，同时校验 Compose、Shell 和 PowerShell 脚本。
 

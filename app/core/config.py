@@ -61,9 +61,9 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=60.0, gt=0)
 
     # 拒答阈值（04 §6 DR6）：候选块最高向量相似度低于 τ → 拒答
-    # τ=0.45 由 06 评估校准（2026-09-10）：库内 0.544~0.797 vs 库外 0.353/0.395，
-    # 取可分区间 (0.395, 0.544] 的中段；初版 0.35 实测处于库外漏拒边缘。
-    refusal_similarity_threshold: float = 0.45
+    # τ=0.50 由 06 的 v2 多库评估校准（2026-09-20）：库内最低约 0.543、
+    # 库外最高约 0.493；取两者之间便于解释的值。
+    refusal_similarity_threshold: float = 0.50
 
     # 会话（决策 D5：进程内存，不落库）；追问改写见 04 DR5
     session_ttl_seconds: float = 1800.0     # 30 分钟无活动即过期
