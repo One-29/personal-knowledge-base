@@ -18,7 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import settings  # noqa: F401  （供后续装配读取配置）
 from app.db import engine
 from app.http_client import close_http_client
-from app.routers import ask, documents, graph, kbs, workflow
+from app.routers import ask, document_content, documents, graph, kbs, workflow
 
 API_PREFIX = "/api/v1"
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
@@ -45,6 +45,7 @@ app = FastAPI(
 app.include_router(kbs.router, prefix=API_PREFIX)
 app.include_router(documents.kb_documents_router, prefix=API_PREFIX)
 app.include_router(documents.documents_router, prefix=API_PREFIX)
+app.include_router(document_content.router, prefix=API_PREFIX)
 app.include_router(ask.router, prefix=API_PREFIX)
 app.include_router(workflow.router, prefix=API_PREFIX)
 app.include_router(graph.router, prefix=API_PREFIX)

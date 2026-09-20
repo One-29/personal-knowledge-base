@@ -9,13 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from .. import ask as ask_service
-from .. import crud
+from .. import crud, document_images, package_storage
 from ..db import get_db
 from ..models import Chunk
 from ..schemas import (
     AnswerOut,
     AskRequest,
     CitationDetailOut,
+    DocumentImageOut,
     citations_out,
 )
 
@@ -47,17 +48,31 @@ def ask_question(payload: AskRequest, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/citations/{chunk_id}", response_model=CitationDetailOut)
+@router.get(
+    "/citations/{chunk_id}",
+    response_model=CitationDetailOut,
+    response_model_exclude_defaults=True,
+)
 def get_citation(chunk_id: int, db: Session = Depends(get_db)):
     """引用溯源：按块 id 取回原文片段与字符区间（前端据此高亮）。"""
     chunk = db.get(Chunk, chunk_id)
     if chunk is None:
         raise HTTPException(status_code=404, detail="引用不存在（块可能已被重传替换）")
     doc = crud.get_document(db, chunk.doc_id)
+    try:
+        images = document_images.images_for_source(
+            chunk.doc_id,
+            doc.file_path if doc else "",
+            char_start=chunk.char_start,
+            char_end=chunk.char_end,
+        ) if doc else []
+    except package_storage.StorageIntegrityError:
+        raise HTTPException(status_code=500, detail="引用图片完整性校验失败") from None
     return CitationDetailOut(
         doc_id=chunk.doc_id,
         doc_title=doc.title if doc else "",
         chunk_text=chunk.content,
         char_start=chunk.char_start,
         char_end=chunk.char_end,
+        images=[DocumentImageOut.model_validate(image) for image in images],
     )

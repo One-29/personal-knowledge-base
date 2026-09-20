@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import crud, embedding, generation, retrieval, session
+from . import crud, document_images, embedding, generation, package_storage, retrieval, session
 from .core.config import settings
 from .embedding import EmbeddingError
 from .generation import LLMError, LLMProvider
@@ -71,6 +71,7 @@ class CitationData:
     chunk_text: str
     char_start: int
     char_end: int
+    images: list[document_images.ImageReferenceData] = field(default_factory=list)
 
 
 @dataclass
@@ -213,24 +214,50 @@ def _build_citations(
     if not cited:
         return []
     doc_ids = {chunk.doc_id for _, chunk in cited}
-    titles = {
-        doc_id: title
-        for doc_id, title in db.execute(
-            select(Document.id, Document.title).where(Document.id.in_(doc_ids))
+    documents = {
+        doc_id: (title, file_path)
+        for doc_id, title, file_path in db.execute(
+            select(Document.id, Document.title, Document.file_path).where(
+                Document.id.in_(doc_ids)
+            )
         ).all()
     }
-    return [
-        CitationData(
+    result: list[CitationData] = []
+    image_cache: dict[tuple[int, str], list[document_images.ImageReferenceData]] = {}
+    for index, chunk in cited:
+        title, source_path = documents.get(chunk.doc_id, ("", ""))
+        try:
+            key = (chunk.doc_id, source_path)
+            if source_path and key not in image_cache:
+                image_cache[key] = document_images.images_for_source(
+                    chunk.doc_id,
+                    source_path,
+                )
+            images = [
+                image
+                for image in image_cache.get(key, [])
+                if image.char_end > chunk.char_start and image.char_start < chunk.char_end
+            ]
+        except (package_storage.StorageIntegrityError, ValueError):
+            image_cache[key] = []
+            logger.warning(
+                "引用图片清单读取失败: doc_id=%s chunk_id=%s",
+                chunk.doc_id,
+                chunk.chunk_id,
+                exc_info=True,
+            )
+            images = []
+        result.append(CitationData(
             index=index,
             chunk_id=chunk.chunk_id,
             doc_id=chunk.doc_id,
-            doc_title=titles.get(chunk.doc_id, ""),
+            doc_title=title,
             chunk_text=chunk.content,
             char_start=chunk.char_start,
             char_end=chunk.char_end,
-        )
-        for index, chunk in cited
-    ]
+            images=images,
+        ))
+    return result
 
 
 def _refuse(question: str, reason: str) -> AnswerData:

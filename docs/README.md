@@ -9,6 +9,7 @@ docs/
 ├── workflow.md            # 开发流程规范：步骤/DoD/内容归属表/简洁原则
 ├── operations.md          # 运行边界、卡住排查、旧文档重建与后续优化建议
 ├── demo.md                # 高等数学演示库：问答/工作流示例与关联图阈值
+├── image-packages.md      # Markdown 本地图片 ZIP：格式、限制、存储和排错
 ├── design/                # 设计文档（按思考顺序编号，向下依赖）
 │   ├── 00-overview.md     # 项目总览：定位/能力/边界/进度（冷读者入口）
 │   ├── 01-requirements.md # 产品需求 PRD：定位/范围/NFR/用户故事/流程/决策（v0.4 已拍板）

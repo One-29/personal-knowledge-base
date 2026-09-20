@@ -44,6 +44,20 @@ def test_ui_serves_assets():
         assert client.get("/ui/favicon.svg").status_code == 200
 
 
+def test_image_package_ui_preserves_occurrence_order_and_uses_original_urls():
+    """含图文档由后端字符位置驱动 DOM；不经 canvas 或客户端重编码。"""
+    html = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+    script = (FRONTEND_DIR / "app.js").read_text(encoding="utf-8")
+    style = (FRONTEND_DIR / "style.css").read_text(encoding="utf-8")
+    assert 'accept=".md,.txt,.zip"' in html
+    assert "function renderSourceWithImages" in script
+    assert "Array.from(String(content" in script  # Unicode code point 与后端 Python 偏移一致
+    assert 'element.src = sourceUrl' in script
+    assert ".todataurl(" not in script.lower()
+    assert ".drawimage(" not in script.lower()
+    assert ".positioned-source .source-image img" in style
+
+
 def test_javascript_mount_ids_exist_once_in_html():
     """脚本依赖的 DOM 挂载点必须存在且唯一，避免页面启动时空引用中断。"""
     html = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")

@@ -836,6 +836,11 @@ kbd { padding: 1px 4px; background: var(--surface-soft); border: 1px solid var(-
 .item-head .text-action { flex: 0 0 auto; color: var(--ink-faint); font-size: 10px; }
 .margin-item blockquote { max-height: 360px; margin: 0; padding: 12px 14px 15px; overflow: auto; color: #34403c; font: 13px/1.78 var(--serif); white-space: pre-wrap; }
 .margin-item.document-preview blockquote { max-height: 60vh; }
+.positioned-source .source-image { margin: 12px 0; padding: 8px; white-space: normal; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+.positioned-source .source-image a { display: block; color: inherit; }
+.positioned-source .source-image img { display: block; width: auto; max-width: 100%; height: auto; max-height: 52vh; margin: 0 auto; object-fit: contain; }
+.positioned-source .source-image figcaption { margin-top: 7px; overflow-wrap: anywhere; color: var(--ink-faint); text-align: center; font: 9px/1.5 var(--mono); }
+.positioned-source .source-image.broken { border-color: #e4b6b6; background: var(--danger-soft); }
 
 /* Notices and accessibility */
 .toast {

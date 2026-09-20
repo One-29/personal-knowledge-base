@@ -45,6 +45,14 @@ def test_headings_start_new_chunks_and_keep_title():
     assert chunks[2].text.startswith("## 四次挥手")
 
 
+def test_leading_whitespace_is_kept_with_first_heading():
+    text = "\n\n# 标题\n正文"
+    chunks = split_markdown(text)
+    assert len(chunks) == 1
+    assert chunks[0].char_start == 0
+    assert chunks[0].text == text
+
+
 def test_offsets_reconstruct_original_text():
     """偏移可切回原文（溯源锚点的核心契约）。"""
     chunks = split_markdown(MD)
@@ -109,6 +117,43 @@ def test_window_overlap_uses_actual_newline_boundary():
     chunks = split_markdown(text, max_chars=300, overlap_chars=80)
     assert chunks[0].char_end == 151
     assert chunks[1].char_start == 71
+
+
+def test_protected_spans_remain_atomic_and_chunks_still_cover_the_source():
+    image_syntax = "![很长的图片说明](images/diagram-with-a-long-name.png)"
+    text = "开头" * 8 + image_syntax + "结尾" * 30
+    start = text.index(image_syntax)
+    end = start + len(image_syntax)
+    chunks = split_markdown(
+        text,
+        max_chars=30,
+        overlap_chars=7,
+        protected_spans=((start, end),),
+    )
+
+    assert any(chunk.char_start <= start and chunk.char_end >= end for chunk in chunks)
+    assert all(
+        boundary not in range(start + 1, end)
+        for chunk in chunks
+        for boundary in (chunk.char_start, chunk.char_end)
+    )
+    covered_end = 0
+    reconstructed = ""
+    for chunk in chunks:
+        assert chunk.char_start <= covered_end
+        assert chunk.char_end > covered_end
+        reconstructed += chunk.text[covered_end - chunk.char_start:]
+        covered_end = chunk.char_end
+    assert reconstructed == text
+
+
+@pytest.mark.parametrize(
+    "protected_spans",
+    [((-1, 2),), ((3, 3),), ((0, 99),), ((0, 3), (2, 5))],
+)
+def test_invalid_protected_spans_raise(protected_spans):
+    with pytest.raises(ValueError, match="protected spans"):
+        split_markdown("abcdef", protected_spans=protected_spans)
 
 
 @pytest.mark.parametrize(

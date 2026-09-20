@@ -2,13 +2,14 @@
 
 [![CI](https://github.com/One-29/personal-knowledge-base/actions/workflows/ci.yml/badge.svg)](https://github.com/One-29/personal-knowledge-base/actions/workflows/ci.yml)
 
-个人知识库问答服务：把 Markdown 笔记喂给它，用自然语言提问，每个回答都标注原文出处；知识库覆盖不了的问题，它明说不知道，不编造。提供文档入库、混合检索、带引用回答与多步工作流所需的服务端与 Web 端边界，不绑定具体 embedding / LLM 供应商，也不支持 PDF、Word 等格式。
+个人知识库问答服务：把 Markdown 笔记喂给它，用自然语言提问，每个回答都标注原文出处；知识库覆盖不了的问题，它明说不知道，不编造。支持纯文本笔记，也支持把 Markdown 与本地 PNG/JPEG/WebP 原图组成 ZIP 导入；不绑定具体 embedding / LLM 供应商，暂不支持 PDF、Word 或图片内容识别。
 
 改代码前请阅读 docs/design/00-overview.md（项目总览与边界）、docs/design/02-modules.md（模块边界与依赖方向）和 docs/README.md（文档与写作规范）。
 
 ## 现状与结论
 
 - M1–M5 与检索评估已完成，CI 绿灯。前端是零构建单页，由 API 挂在 `/ui`。
+- 含图片 Markdown 会保留原始图片字节、出现顺序与字符位置；完整原文和引用侧栏均可查看原图，图片本身不参与 OCR 或向量化。
 - 首次评估（3 篇语料 / 12 条样本）：recall@8 = **1.000**、MRR = **1.000**、库外拒答率 **100%**、库内误拒率 **0%**。
 - 拒答阈值 τ 由评估数据校准：0.35 → **0.45**。
 - 已知边界：当前只支持单 worker——会话与后台入库任务都在进程内存里，加 worker 拿不到可靠的跨进程会话与任务恢复。
@@ -78,6 +79,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask \
 ```
 
 上传登记即返回，切分与向量化在后台执行；提问若覆盖不足会返回 `refused=true`。
+
+含本地图片的笔记需打成 ZIP：包内必须恰有一篇 `.md`，图片使用相对路径引用，支持静态 PNG/JPEG/WebP。系统校验 ZIP 路径、CRC、压缩比、图片格式与尺寸，并原样保存图片；具体目录示例、限制和版本保留策略见 [Markdown 图片包说明](docs/image-packages.md)。
 
 ## 测试
 

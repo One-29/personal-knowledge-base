@@ -3,10 +3,10 @@
 | 字段 | 内容 |
 |---|---|
 | 状态 | 已确认（既有事实汇总） |
-| 版本 | v0.1 |
-| 日期 | 2026-09-17 |
+| 版本 | v0.2 |
+| 日期 | 2026-09-20 |
 | 上游 | `01-requirements.md` |
-| 变更 | 新建：承接原 README 的能力清单、评估摘要、边界与路线图，作为冷读者入口 |
+| 变更 | v0.2：加入 Markdown 本地图片包能力、API 与边界；v0.1：承接原 README 的项目总览 |
 | 关联 | GitHub 总功能 Issue |
 
 > 本文是**项目总览**：给第一次打开仓库的人一份几分钟能读完的全貌，细节一律指向对应设计文档。
@@ -36,6 +36,7 @@
 | 多知识库管理 | 笔记按主题分库，导入与提问均可限定范围 |
 | 异步入库 | 上传登记即返回，切分与向量化在后台执行，状态可见（`pending/processing/ready/failed`） |
 | 安全重传 | 新原文写入不可变候选文件，块与原文成功后在同一事务切换；失败继续使用匹配的旧原文和旧块 |
+| Markdown 本地图片 | 一篇 Markdown 与静态 PNG/JPEG/WebP 可组成 ZIP 导入；保留原图、顺序和字符位置，完整原文与引用均可查看 |
 | 结构感知切分 | 按 Markdown 标题边界切块，块记录原文**字符偏移**作为溯源锚点 |
 | 混合检索 | 向量（pgvector HNSW / cosine）+ 关键词（pg_trgm GIN）双通道召回，RRF 融合排序 |
 | 带引用回答 | 先结论、再用资料里的机制/步骤/条件展开，每个论断标注 `[n]` 并可定位原文 |
@@ -110,6 +111,7 @@ flowchart LR
 | GET / DELETE | `/api/v1/documents/{doc_id}` | 文档详情 / 删除 |
 | POST | `/api/v1/documents/{doc_id}/reupload` | 重传覆盖（sha256 未变则幂等跳过） |
 | GET | `/api/v1/documents/{doc_id}/content` | 原文读取 |
+| GET | `/api/v1/documents/{doc_id}/versions/{version}/images/{ordinal}` | 读取不可变文档版本中的原图 |
 | **POST** | **`/api/v1/ask`** | **问答（带引用；覆盖不足返回 `refused=true`）** |
 | GET | `/api/v1/citations/{chunk_id}` | 引用溯源（原文片段 + 字符区间） |
 | **POST** | **`/api/v1/workflow`** | **多步综合任务（拆步、缺料可见、汇总）** |
@@ -125,6 +127,7 @@ flowchart LR
 | 语言 / 框架 | Python 3.13 · FastAPI · Pydantic v2 | 同步业务路由由线程池执行、请求/响应契约分离 |
 | 数据库 | PostgreSQL 16 · SQLAlchemy 2.x · Alembic | 迁移可重放；测试库独立 |
 | 向量与检索 | pgvector 0.8（HNSW / cosine）· pg_trgm（GIN） | 单库同事务，向量与元数据一致备份 |
+| 文档与图片校验 | Python `zipfile` · Pillow | 限量读取 ZIP，校验路径/CRC/压缩比与静态图片完整性；原图不重编码 |
 | Embedding | OpenAI 兼容 API（默认 `BAAI/bge-m3`，1024 维） | 全项目模型唯一 |
 | 生成 | OpenAI 兼容 Chat API（默认 `deepseek-ai/DeepSeek-V4-Flash`） | 供应商可配 |
 | 测试 / CI | pytest · GitHub Actions（pgvector service container） | 测试不依赖真实密钥 |
@@ -141,7 +144,7 @@ flowchart LR
 | 工作流执行 | MVP 同步执行，无断点恢复；长任务异步化留 V1.0 |
 | 关联图规模 | 参与近邻计算的块最多 400 个，超出时响应里标注 `truncated` |
 | 评估结论 | 3 篇语料 / 12 条样本的小样本结论，不能据此推断真实多库表现 |
-| 文档格式 | 支持 Markdown / txt；PDF、Word 与图片解析留给 V1.0 |
+| 文档格式 | 支持 Markdown / txt，以及“单篇 Markdown + 本地静态图片”的 ZIP；PDF、Word、OCR 与图片语义解析留给后续版本 |
 
 ## 10. 评估结论摘要
 
@@ -176,6 +179,7 @@ flowchart LR
 | `../workflow.md` | 开发流程（S0–S6、DoD、内容归属） |
 | `../operations.md` | 运行边界、卡住排查、旧文档重建与后续优化建议 |
 | `../demo.md` | 高等数学演示库：问答/工作流示例与关联图阈值 |
+| `../image-packages.md` | Markdown 本地图片 ZIP 的目录格式、限制、保留策略与排错 |
 | `01-requirements.md` | 产品需求 PRD（定位/范围/NFR/用户故事/D1–D7） |
 | `02-modules.md` | 模块拆分与业务边界 |
 | `03-data-model.md` | 数据模型（ER / DDL / 状态机 / DM1–DM6） |

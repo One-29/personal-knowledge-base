@@ -157,6 +157,12 @@ python -c "from app.ingest import process_document; process_document(int(input('
 
 重传会先把新内容写入不可变候选文件，活动 `file_path` 和旧块保持不变。向量化完成后，入库事务同时替换块并把活动原文切换到该候选；失败则删除候选并继续使用匹配的旧原文和旧块。每次登记递增 `ingest_version`，任务提交前再次核对版本与候选路径，因此较早任务不能覆盖较新的重传结果。
 
+### Markdown 图片包的维护边界
+
+含本地图片的 Markdown 以 ZIP 上传，详细格式和限额见 [Markdown 本地图片包](image-packages.md)。图片包使用不可变版本目录和清单；原文读取会核对 Markdown 摘要及图片出现位置，原图读取会核对 SHA-256 和字节大小。重传失败时整份候选目录删除，不会留下只切换一半的资源。
+
+历史图片包在成功重传后继续保留，以保证旧回答中保存的原图 URL 可用；删除文档或知识库时才统一清理。若频繁上传大图，应同时监控 `data/storage` 的磁盘占用。当前没有独立的历史版本清理按钮，也不能在不破坏历史图片 URL 的前提下自动按时间淘汰。
+
 ## 4. 关键词与关联图的含义
 
 关键词召回先用 `content % :query` 预过滤，再按 `similarity()` 排序。阈值通过事务局部 `set_config('pg_trgm.similarity_threshold', ..., true)` 设置，事务结束后不污染复用连接；初始 `KEYWORD_SIMILARITY_THRESHOLD=0.1`，应随真实中文笔记评估校准。

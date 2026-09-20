@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from . import chunking, crud, embedding, storage
+from . import chunking, crud, embedding, package_storage, storage
 from .core.config import settings
 from .db import SessionLocal
 from .embedding import EmbeddingError
@@ -95,6 +95,8 @@ def process_document(
 
         try:
             text = storage.read(source_path)
+            package_manifest = package_storage.load_package_manifest(source_path)
+            package_storage.verify_package_source(package_manifest, text)
         except FileNotFoundError:
             _mark_failure(
                 db,
@@ -106,11 +108,26 @@ def process_document(
                 require_pending_candidate=task_is_bound,
             )
             return
+        except package_storage.StorageIntegrityError as exc:
+            _mark_failure(
+                db,
+                doc_id,
+                version,
+                source_path,
+                ERROR_PARSE_FAILED,
+                str(exc),
+                require_pending_candidate=task_is_bound,
+            )
+            return
 
         chunks = chunking.split_markdown(
             text,
             max_chars=settings.chunk_max_chars,
             overlap_chars=settings.chunk_overlap_chars,
+            protected_spans=tuple(
+                (int(item["char_start"]), int(item["char_end"]))
+                for item in (package_manifest or {}).get("occurrences", [])
+            ),
         )
         if not chunks:
             _mark_failure(
@@ -186,7 +203,13 @@ def process_document(
         doc.last_error_message = None
         doc.processed_at = datetime.now(timezone.utc)
         db.commit()
-        if old_source_path and old_source_path != source_path:
+        # 带图片的历史版本保留到文档删除：回答中保存的引用快照仍可打开原图。
+        # 普通文本沿用原清理策略，避免无图片版本不断占用磁盘。
+        if (
+            old_source_path
+            and old_source_path != source_path
+            and not package_storage.is_package_source(old_source_path)
+        ):
             _safe_delete(old_source_path)
         logger.info("文档处理完成: doc_id=%s chunks=%s", doc.id, len(chunks))
     except Exception as exc:
