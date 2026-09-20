@@ -1,14 +1,23 @@
-"""前端静态资源与关键挂载点冒烟测试（M5）。
+"""前端生产构建与关键挂载点冒烟测试（M5）。
 
-前端是纯静态单页（FastAPI 静态挂载），不依赖数据库——用独立 TestClient 验证，
-避免把"页面能否打开"绑在数据库可用性上。
+CI 和本机启动器会先执行 Vite 构建，FastAPI 仅托管 ``frontend/dist``。
+这些测试验证生产资源，而源码契约测试直接读取 TypeScript 模块。
 """
 
 import re
+from urllib.parse import urlparse
 
 from fastapi.testclient import TestClient
 
-from app.main import FRONTEND_DIR, app
+from app.main import FRONTEND_SOURCE_DIR, app
+
+
+def _typescript_source() -> str:
+    return "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((FRONTEND_SOURCE_DIR / "src").rglob("*.ts"))
+        if not path.name.endswith(".test.ts")
+    )
 
 
 def test_root_redirects_to_ui():
@@ -33,37 +42,46 @@ def test_ui_serves_index_page():
         assert 'id="activity-trace"' in resp.text # 工作流独立运行状态
         assert 'id="docs-status-filter"' in resp.text
         assert 'id="margin-open"' in resp.text
-        assert "app.js" in resp.text
+        assert '<script type="module"' in resp.text
 
 
-def test_ui_serves_assets():
-    """静态资源（脚本与样式）可访问。"""
+def test_ui_serves_hashed_assets():
+    """Vite 生成的带哈希脚本、样式和公共图标均可访问。"""
     with TestClient(app) as client:
-        assert client.get("/ui/app.js").status_code == 200
-        assert client.get("/ui/style.css").status_code == 200
+        page = client.get("/ui/")
+        script = re.search(r'<script[^>]+src="([^"]+)"', page.text)
+        stylesheet = re.search(
+            r'<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"', page.text
+        )
+        assert script is not None
+        assert stylesheet is not None
+        assert urlparse(script.group(1)).path.startswith("/ui/assets/")
+        assert urlparse(stylesheet.group(1)).path.startswith("/ui/assets/")
+        assert client.get(script.group(1)).status_code == 200
+        assert client.get(stylesheet.group(1)).status_code == 200
         assert client.get("/ui/favicon.svg").status_code == 200
 
 
 def test_image_package_ui_preserves_occurrence_order_and_uses_original_urls():
     """含图文档由后端字符位置驱动 DOM；不经 canvas 或客户端重编码。"""
-    html = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
-    script = (FRONTEND_DIR / "app.js").read_text(encoding="utf-8")
-    style = (FRONTEND_DIR / "style.css").read_text(encoding="utf-8")
+    html = (FRONTEND_SOURCE_DIR / "index.html").read_text(encoding="utf-8")
+    script = (FRONTEND_SOURCE_DIR / "src" / "evidence.ts").read_text(encoding="utf-8")
+    style = (FRONTEND_SOURCE_DIR / "src" / "styles" / "app.css").read_text(encoding="utf-8")
     assert 'accept=".md,.txt,.zip"' in html
     assert "function renderSourceWithImages" in script
-    assert "Array.from(String(content" in script  # Unicode code point 与后端 Python 偏移一致
+    assert "Array.from(content)" in script  # Unicode code point 与后端 Python 偏移一致
     assert 'element.src = sourceUrl' in script
     assert ".todataurl(" not in script.lower()
     assert ".drawimage(" not in script.lower()
     assert ".positioned-source .source-image img" in style
 
 
-def test_javascript_mount_ids_exist_once_in_html():
+def test_typescript_mount_ids_exist_once_in_html():
     """脚本依赖的 DOM 挂载点必须存在且唯一，避免页面启动时空引用中断。"""
-    html = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
-    script = (FRONTEND_DIR / "app.js").read_text(encoding="utf-8")
+    html = (FRONTEND_SOURCE_DIR / "index.html").read_text(encoding="utf-8")
+    script = _typescript_source()
     html_ids = re.findall(r'\bid="([^"]+)"', html)
-    script_ids = set(re.findall(r'getElementById\("([^"]+)"\)', script))
+    script_ids = set(re.findall(r'byId(?:<[^>]+>)?\("([^"]+)"\)', script))
 
     assert len(html_ids) == len(set(html_ids)), "index.html 包含重复 id"
     assert script_ids <= set(html_ids), f"缺少前端挂载点：{sorted(script_ids - set(html_ids))}"

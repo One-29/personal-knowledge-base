@@ -8,7 +8,7 @@
 
 ## 现状与结论
 
-- M1–M5 与检索评估已完成，CI 绿灯。前端是零构建单页，由 API 挂在 `/ui`。
+- M1–M5 与检索评估已完成，CI 绿灯。前端使用严格 TypeScript + Vite，生产构建由 API 挂在 `/ui`。
 - 含图片 Markdown 会保留原始图片字节、出现顺序与字符位置；完整原文和引用侧栏均可查看原图，图片本身不参与 OCR 或向量化。
 - 首次评估（3 篇语料 / 12 条样本）：recall@8 = **1.000**、MRR = **1.000**、库外拒答率 **100%**、库内误拒率 **0%**。
 - 拒答阈值 τ 由评估数据校准：0.35 → **0.45**。
@@ -17,7 +17,7 @@
 
 ## 本地运行
 
-需要 Python 3.12+、Windows 11 + WSL2（Ubuntu，启用 systemd）、PostgreSQL 16 + pgvector。不需要 Docker Desktop。问答必须配置模型 Key，任何 OpenAI 兼容的 embedding 与 chat 服务都可以。
+需要 Python 3.12+、Node.js 22.12+、Windows 11 + WSL2（Ubuntu，启用 systemd）、PostgreSQL 16 + pgvector。不需要 Docker Desktop。Node.js 只负责构建前端，不作为应用运行时服务；问答必须配置模型 Key，任何 OpenAI 兼容的 embedding 与 chat 服务都可以。
 
 数据库跑在 WSL2 内的独立 Docker Engine 里，第一次使用先装一次：
 
@@ -41,17 +41,18 @@ Copy-Item .env.example .env
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 ```
 
-启动器会启动 WSL 里的 Docker、按 `compose.yaml` 创建或复用 `knowbase-pg` 与卷 `knowbase_pgdata`、等健康检查、执行 `alembic upgrade head`，再以单 worker 启动 API，`/ready` 通过后打开 <http://127.0.0.1:8000/ui/>。首次拉取 `pgvector/pgvector:pg16` 镜像可能需要几分钟。可加 `-Port 9000` 换端口，`-NoBrowser` 不自动开浏览器。
+启动器先核对 Node.js 版本，根据 `package-lock.json` 安装锁定的前端依赖，并仅在源码变化时重建 `frontend/dist`；随后启动 WSL 里的 Docker、按 `compose.yaml` 创建或复用 `knowbase-pg` 与卷 `knowbase_pgdata`、等健康检查、执行 `alembic upgrade head`，再以单 worker 启动 API。`/ready` 通过后打开 <http://127.0.0.1:8000/ui/>。首次安装 npm 依赖或拉取 `pgvector/pgvector:pg16` 镜像需要联网，之后未改变依赖与前端源码时会直接复用。可加 `-Port 9000` 换端口，`-NoBrowser` 不自动开浏览器。
 
 界面五个视图：问答、工作流、关联图、文档、知识库。
 
-单独起 API（前端是静态文件，不需要另外起进程）：
+单独起 API 前先生成前端生产资源；FastAPI 只托管构建产物，不需要额外运行前端进程：
 
 ```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-frontend.ps1
 .\.venv\Scripts\uvicorn.exe app.main:app --host 127.0.0.1 --port 8000
 ```
 
-开发时加 `--reload`。`Ctrl+C` 只停 API，数据库和 WSL 保活进程继续运行；要一并释放：
+开发前端时，先运行 API，再在另一个终端执行 `npm run frontend:dev`，访问 <http://127.0.0.1:5173/ui/>；Vite 会把 `/api`、`/health` 和 `/ready` 代理到 8000 端口。开发后端时可给 uvicorn 加 `--reload`。`Ctrl+C` 只停对应进程，数据库和 WSL 保活进程继续运行；要一并释放：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop-knowbase-database.ps1
@@ -84,17 +85,24 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask \
 
 ## 测试
 
+前端检查包含严格类型检查、Vitest 单元测试和生产构建：
+
+```powershell
+npm ci --no-audit --no-fund
+npm run frontend:check
+```
+
 数据库集成测试需要 PostgreSQL 可用，且 `knowbase_test` 库已存在（conftest 只重建扩展与表，不建库）：
 
 ```powershell
 wsl.exe -d Ubuntu -- docker exec knowbase-pg createdb -U postgres knowbase_test
-pytest -q
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
 测试统一使用假 embedding provider，不调真实模型，也不需要密钥。没有 PostgreSQL 时可以只跑纯单元测试：
 
 ```powershell
-pytest -q tests/test_chunking.py tests/test_embedding.py
+.\.venv\Scripts\python.exe -m pytest -q tests/test_chunking.py tests/test_embedding.py
 ```
 
 评估在独立的 `knowbase_eval` 库上运行，脚本自己建库、自己迁移，只在子进程内覆盖环境变量，不碰日常数据：
@@ -104,7 +112,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Retr
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1              # 完整评估
 ```
 
-CI 在 pgvector service container 上跑 pytest，另外在空库里执行 `alembic upgrade head` 与 `alembic check`，并校验 `compose.yaml`、`scripts/install-wsl-docker-engine.sh` 和 `frontend/app.js` 的语法。
+CI 在 pgvector service container 上跑 pytest，另外执行 TypeScript 严格类型检查、Vitest、Vite 生产构建，并在空库里执行 `alembic upgrade head` 与 `alembic check`，同时校验 Compose、Shell 和 PowerShell 脚本。
 
 日常库 `knowbase`、测试库 `knowbase_test`、评估库 `knowbase_eval` 与各自的原文目录互不可见，对照表见 docs/operations.md。
 

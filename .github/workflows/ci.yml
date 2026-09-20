@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: pytest（含 PostgreSQL + pgvector）
+    name: 前端检查 + pytest（PostgreSQL/pgvector）
     runs-on: ubuntu-latest
 
     services:
@@ -35,14 +35,24 @@ jobs:
           python-version: "3.13"
           cache: pip
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22.12"
+          cache: npm
+
       - name: Install dependencies
         run: pip install -e ".[dev]"
+
+      - name: Validate and build frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npm run frontend:check
 
       - name: Validate Compose and shell installer
         run: |
           docker compose --file compose.yaml config >/dev/null
           bash -n scripts/install-wsl-docker-engine.sh
-          node --check frontend/app.js
 
       - name: Validate PowerShell scripts
         shell: pwsh

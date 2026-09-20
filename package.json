@@ -1,0 +1,22 @@
+{
+  "name": "knowbase-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "frontend:dev": "vite --config vite.config.ts",
+    "frontend:typecheck": "tsc --project frontend/tsconfig.json --noEmit && tsc --project tsconfig.node.json --noEmit",
+    "frontend:test": "vitest run --config vitest.config.ts",
+    "frontend:build": "vite build --config vite.config.ts",
+    "frontend:check": "npm run frontend:typecheck && npm run frontend:test && npm run frontend:build"
+  },
+  "devDependencies": {
+    "@types/node": "~22.20.4",
+    "typescript": "~7.0.2",
+    "vite": "~8.3.0",
+    "vitest": "~5.0.1"
+  }
+}
