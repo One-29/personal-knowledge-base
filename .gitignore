@@ -8,6 +8,7 @@ pytest-cache-files-*/
 .ruff_cache/
 .mypy_cache/
 *.egg-info/
+build/
 
 # 环境与密钥（密钥只走 .env，绝不入库）
 .env
@@ -17,8 +18,8 @@ pytest-cache-files-*/
 # 运行时数据（原文存储目录：storage/ 默认在 data/ 下）
 data/
 
-# 临时脚本（下划线前缀约定：一次性验证脚本不入库）
-_*.py
+# 根目录临时脚本（下划线前缀约定：一次性验证脚本不入库）
+/_*.py
 
 # Node / 前端
 node_modules/

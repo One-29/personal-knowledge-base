@@ -13,6 +13,7 @@ dependencies = [
     "pgvector>=0.2",             # 向量列类型（SQLAlchemy 集成）
     "python-multipart>=0.0.9",   # FastAPI 文件上传（multipart 解析）
     "httpx>=0.27",               # Embedding / LLM HTTP 客户端（运行时依赖）
+    "Pillow>=11.0",              # 图片格式/完整性校验；只读，不重编码原图
 ]
 
 [project.optional-dependencies]
@@ -24,8 +25,8 @@ dev = [
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["app", "app.core", "app.routers"]
+[tool.setuptools.packages.find]
+include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

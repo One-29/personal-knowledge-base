@@ -1,10 +1,6 @@
-"""原文文件存储（决策 D6）：正文存文件系统，库内只存相对路径。
+"""普通原文与版本文件的安全路径、原子写入和删除操作。"""
 
-路径约定（03 §3）：旧文件为 storage/{kb_id}/{doc_id}.md，新上传使用
-storage/{kb_id}/{doc_id}/v{version}-{hash}.md。路径只使用数据库 id、版本与摘要，
-不使用用户文件名。
-"""
-
+import hashlib
 import os
 import shutil
 from pathlib import Path
@@ -14,15 +10,14 @@ from app.core.config import settings
 
 
 def _abs_path(kb_id: int, doc_id: int) -> Path:
-    """相对路径 → 绝对路径：根目录由 settings.storage_dir 配置。"""
     return settings.storage_dir / f"{kb_id}/{doc_id}.md"
 
 
 def save(kb_id: int, doc_id: int, content: bytes) -> str:
-    """写文件；目录不存在自动创建；返回相对路径供 documents.file_path 存储。"""
-    p = _abs_path(kb_id, doc_id)
-    _write_atomic(p, content)
-    return f"{kb_id}/{doc_id}.md"       # 返回相对路径
+    """写入旧式原文路径；保留此入口供现有维护与测试代码使用。"""
+    path = _abs_path(kb_id, doc_id)
+    _write_atomic(path, content)
+    return f"{kb_id}/{doc_id}.md"
 
 
 def save_version(
@@ -32,9 +27,9 @@ def save_version(
     content_hash: str,
     content: bytes,
 ) -> str:
-    """把一次上传写成不可变候选文件，供成功后的数据库事务切换引用。"""
+    """把普通文本上传写成不可变候选版本。"""
     rel_path = f"{kb_id}/{doc_id}/v{version}-{content_hash[:16]}.md"
-    _write_atomic(settings.storage_dir / rel_path, content)
+    _write_atomic(resolve_relative(rel_path), content)
     return rel_path
 
 
@@ -52,29 +47,49 @@ def _write_atomic(path: Path, content: bytes) -> None:
             pass
 
 
+def resolve_relative(rel_path: str) -> Path:
+    """解析存储相对路径，并拒绝任何越出 STORAGE_DIR 的值。"""
+    root = settings.storage_dir.resolve()
+    candidate = (root / rel_path).resolve()
+    if candidate != root and root not in candidate.parents:
+        raise ValueError("storage path escapes configured root")
+    return candidate
+
+
+def verify_hash(path: Path, expected_hash: str) -> None:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    if digest.hexdigest() != expected_hash:
+        raise OSError(f"文件完整性校验失败: {path.name}")
+
+
 def read(rel_path: str) -> str:
-    """读原文。文件丢失抛 FileNotFoundError（调用方转 404）。"""
-    return (settings.storage_dir / rel_path).read_text(encoding="utf-8")   # 读文本
+    """按原始 UTF-8 字节读取原文，避免 Windows 把 CRLF 隐式转换成 LF。"""
+    return resolve_relative(rel_path).read_bytes().decode("utf-8")
 
 
 def delete(rel_path: str) -> bool:
-    """删文件。不存在返回 False（幂等，调用方决定 204/404）。
-
-    顺带清理变空的父目录（如删掉某库最后一篇文档后，{kb_id}/ 不留空壳）。
-    """
-    p = settings.storage_dir / rel_path
-    if not p.exists():
+    """幂等删除普通候选文件或一整个带清单的图片包候选目录。"""
+    path = resolve_relative(rel_path)
+    if not path.exists():
         return False
-    p.unlink()
+    if path.name == "source.md" and (path.parent / "manifest.json").is_file():
+        removed = path.parent
+        shutil.rmtree(removed)
+    else:
+        path.unlink()
+        removed = path
     try:
-        p.parent.rmdir()                # 目录已空才成功；非空抛 OSError，忽略
+        removed.parent.rmdir()
     except OSError:
         pass
     return True
 
 
 def delete_document_files(kb_id: int, doc_id: int) -> None:
-    """删除文档的旧式原文以及所有版本文件，并清理空知识库目录。"""
+    """删除文档旧式原文以及所有不可变版本，并清理空知识库目录。"""
     kb_dir = settings.storage_dir / str(kb_id)
     legacy = kb_dir / f"{doc_id}.md"
     try:
@@ -89,8 +104,5 @@ def delete_document_files(kb_id: int, doc_id: int) -> None:
 
 
 def delete_kb_dir(kb_id: int) -> None:
-    """删除整个知识库的原文目录（02 §3 删库编排：元数据 → 原文 → 块）。
-
-    幂等：目录不存在时无操作。
-    """
+    """幂等删除一个知识库的完整原文目录。"""
     shutil.rmtree(settings.storage_dir / str(kb_id), ignore_errors=True)

@@ -46,6 +46,7 @@ class DocumentOut(BaseModel):
     status: str                      # pending/processing/ready/failed
     char_count: int = 0
     chunk_count: int = 0
+    image_count: int = 0
     last_error_code: str | None = None
     last_error_message: str | None = None
     processed_at: datetime | None = None
@@ -55,11 +56,30 @@ class DocumentOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class DocumentImageOut(BaseModel):
+    """Markdown 中一次图片出现；序号和字符区间共同保证多图顺序。"""
+
+    ordinal: int
+    source_reference: str
+    alt_text: str = ""
+    char_start: int
+    char_end: int
+    content_hash: str
+    mime_type: str
+    file_size: int
+    width: int
+    height: int
+    content_url: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class DocumentContentOut(BaseModel):
     """原文响应：查看与溯源高亮用（US-M1-03、US-M3-03）。"""
 
     title: str
     content: str
+    images: list[DocumentImageOut] = Field(default_factory=list)
 
 
 class UploadResult(BaseModel):
@@ -103,6 +123,7 @@ class CitationOut(BaseModel):
     chunk_text: str
     char_start: int
     char_end: int
+    images: list[DocumentImageOut] = Field(default_factory=list)
 
 
 def citations_out(citations: Iterable["CitationData"]) -> list[CitationOut]:
@@ -116,6 +137,7 @@ def citations_out(citations: Iterable["CitationData"]) -> list[CitationOut]:
             chunk_text=c.chunk_text,
             char_start=c.char_start,
             char_end=c.char_end,
+            images=[DocumentImageOut.model_validate(image) for image in c.images],
         )
         for c in citations
     ]
@@ -141,6 +163,7 @@ class CitationDetailOut(BaseModel):
     chunk_text: str
     char_start: int
     char_end: int
+    images: list[DocumentImageOut] = Field(default_factory=list)
 
 
 class WorkflowRequest(BaseModel):

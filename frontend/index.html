@@ -240,7 +240,7 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8V4l-2 2a7 7 0 1 0 1.3 9M19 4h-4"/></svg>
             </button>
             <label class="upload-action" id="docs-upload-label">
-              <input type="file" id="docs-file" accept=".md,.txt">
+              <input type="file" id="docs-file" accept=".md,.txt,.zip">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M5 14v5h14v-5"/></svg>
               <span>上传文档</span>
             </label>
@@ -253,7 +253,7 @@
             <table class="ledger" id="docs-table">
               <thead>
                 <tr>
-                  <th>文档</th><th>处理状态</th><th>分块</th><th>字符</th><th>最近更新</th><th><span class="sr-only">操作</span></th>
+                  <th>文档</th><th>处理状态</th><th>分块</th><th>图片</th><th>字符</th><th>最近更新</th><th><span class="sr-only">操作</span></th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -262,7 +262,7 @@
           <div id="docs-empty" class="empty-state hidden">
             <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M12 7h17l7 7v27H12zM29 7v8h7M18 23h12M18 29h12"/></svg>
             <h2>这个知识库还没有文档</h2>
-            <p>上传 UTF-8 编码的 Markdown 或纯文本文件，系统会自动切块并建立索引。</p>
+            <p>上传 UTF-8 Markdown/纯文本；含图片时将一篇 Markdown 与本地 PNG/JPEG/WebP 一起打成 ZIP。</p>
             <button type="button" id="docs-empty-upload" class="secondary-action">选择第一个文档</button>
           </div>
         </section>

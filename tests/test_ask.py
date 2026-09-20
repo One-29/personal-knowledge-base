@@ -191,8 +191,10 @@ def test_model_calls_release_single_connection_pool(monkeypatch, kb_id):
         conn.execute(text("CREATE TABLE knowledge_bases (id INTEGER PRIMARY KEY, name TEXT, "
                           "description TEXT, created_at DATETIME, updated_at DATETIME)"))
         conn.execute(text("INSERT INTO knowledge_bases (id, name) VALUES (1, '知识库')"))
-        conn.execute(text("CREATE TABLE documents (id INTEGER PRIMARY KEY, title TEXT)"))
-        conn.execute(text("INSERT INTO documents VALUES (1, '原文.md')"))
+        conn.execute(text(
+            "CREATE TABLE documents (id INTEGER PRIMARY KEY, title TEXT, file_path TEXT)"
+        ))
+        conn.execute(text("INSERT INTO documents VALUES (1, '原文.md', '')"))
 
     calls = []
     with Session(engine) as session:

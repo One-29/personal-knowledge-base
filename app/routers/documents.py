@@ -9,9 +9,7 @@
 切分与向量化由 M2 的入库管线接管（接入后经 BackgroundTasks 驱动）。
 """
 
-import hashlib
 import logging
-from pathlib import Path
 
 from fastapi import (
     APIRouter,
@@ -25,16 +23,17 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
-from .. import crud, ingest, storage
-from ..core.config import settings
+from .. import crud, ingest, package_storage, storage
+from ..document_io import PreparedDocument, UploadValidationError, read_upload
 from ..db import get_db
 from ..models import Document
-from ..schemas import DocStatus, DocumentContentOut, DocumentOut, UploadResult
+from ..schemas import (
+    DocStatus,
+    DocumentOut,
+    UploadResult,
+)
 
 logger = logging.getLogger(__name__)
-
-# 一期仅支持 Markdown / 纯文本（决策 D1）
-ALLOWED_EXTENSIONS = {".md", ".txt"}
 
 kb_documents_router = APIRouter(prefix="/kbs", tags=["Documents"])
 documents_router = APIRouter(prefix="/documents", tags=["Documents"])
@@ -42,6 +41,12 @@ documents_router = APIRouter(prefix="/documents", tags=["Documents"])
 
 def _doc_out(doc: Document) -> DocumentOut:
     """ORM → 响应模型：会话存活时显式组装（防懒加载时序问题）。"""
+    try:
+        display_path = doc.pending_file_path or doc.file_path
+        manifest = package_storage.load_package_manifest(display_path) if display_path else None
+        image_count = len(manifest["occurrences"]) if manifest else 0
+    except (OSError, ValueError):
+        image_count = 0
     return DocumentOut(
         id=doc.id,
         kb_id=doc.kb_id,
@@ -53,6 +58,7 @@ def _doc_out(doc: Document) -> DocumentOut:
             else doc.char_count
         ),
         chunk_count=doc.chunk_count,
+        image_count=image_count,
         last_error_code=doc.last_error_code,
         last_error_message=doc.last_error_message,
         processed_at=doc.processed_at,
@@ -100,24 +106,30 @@ def _safe_delete(rel_path: str) -> None:
         logger.warning("清理候选原文失败: path=%s", rel_path, exc_info=True)
 
 
-def _validate_upload(file: UploadFile) -> tuple[str, bytes, str]:
-    """上传校验：格式 / 大小 / 空内容 / 编码，在写库前拦截（US-M1-06）。
-
-    返回 (title, content_bytes, text)；不合法直接抛 HTTPException。
-    """
-    title = Path(file.filename or "").name          # 只取文件名，防路径注入
-    if Path(title).suffix.lower() not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=422, detail="仅支持 .md / .txt 文件")
-    content = file.file.read(settings.max_upload_bytes + 1)
-    if len(content) > settings.max_upload_bytes:
-        raise HTTPException(status_code=413, detail="文件超过大小上限")
-    if not content.strip():
-        raise HTTPException(status_code=400, detail="文件内容为空")
+def _validate_upload(file: UploadFile) -> PreparedDocument:
+    """上传校验：普通文本兼容旧流程；ZIP 执行路径、CRC、图片与位置校验。"""
     try:
-        text = content.decode("utf-8")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=422, detail="文件编码需为 UTF-8") from None
-    return title, content, text
+        return read_upload(file.filename, file.file)
+    except UploadValidationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+
+
+def _save_candidate(
+    prepared: PreparedDocument,
+    kb_id: int,
+    doc_id: int,
+    version: int,
+) -> str:
+    """按上传类型写入不可变候选版本。"""
+    if prepared.is_package:
+        return package_storage.save_package(kb_id, doc_id, version, prepared)
+    return storage.save_version(
+        kb_id,
+        doc_id,
+        version,
+        prepared.content_hash,
+        prepared.source_bytes,
+    )
 
 
 @kb_documents_router.post("/{kb_id}/documents", response_model=UploadResult, status_code=201)
@@ -136,29 +148,27 @@ def upload_document(
     """
     if crud.get_kb(db, kb_id) is None:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    title, content, text = _validate_upload(file)
+    prepared = _validate_upload(file)
+    title = prepared.title
     if crud.get_document_by_title(db, kb_id, title) is not None:
         raise HTTPException(status_code=409, detail="同库同名文档已存在，请使用重传接口")
 
-    content_hash = hashlib.sha256(content).hexdigest()
     doc = Document(
         kb_id=kb_id,
         title=title,
         file_path="",                                   # 占位，写文件后回填相对路径
-        content_hash=content_hash,
-        char_count=len(text),
+        content_hash=prepared.content_hash,
+        char_count=len(prepared.text),
         ingest_version=1,
     )
     db.add(doc)
     db.flush()                                          # 分配 doc_id（事务未提交）
     try:
-        candidate_path = storage.save_version(
-            kb_id, doc.id, doc.ingest_version, content_hash, content
-        )
+        candidate_path = _save_candidate(prepared, kb_id, doc.id, doc.ingest_version)
         doc.file_path = candidate_path
         doc.pending_file_path = candidate_path
-        doc.pending_content_hash = content_hash
-        doc.pending_char_count = len(text)
+        doc.pending_content_hash = prepared.content_hash
+        doc.pending_char_count = len(prepared.text)
     except OSError:
         db.rollback()
         logger.exception("原文写入失败: kb_id=%s title=%s", kb_id, title)
@@ -186,11 +196,11 @@ def reupload_document(
     内容变更后写入不可变候选文件并回到 pending，经 BackgroundTasks 触发 M2；
     成功时原文与块一起切换，失败时按 DM5 保留匹配的旧原文和旧块。
     """
-    _, content, text = _validate_upload(file)
+    prepared = _validate_upload(file)
     doc = crud.get_document(db, doc_id, for_update=True)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
-    new_hash = hashlib.sha256(content).hexdigest()
+    new_hash = prepared.content_hash
 
     if new_hash == doc.pending_content_hash:
         result = UploadResult(document=_doc_out(doc), content_changed=False)
@@ -230,9 +240,7 @@ def reupload_document(
 
     next_version = doc.ingest_version + 1
     try:
-        candidate_path = storage.save_version(
-            doc.kb_id, doc.id, next_version, new_hash, content
-        )
+        candidate_path = _save_candidate(prepared, doc.kb_id, doc.id, next_version)
     except OSError:
         logger.exception("原文覆盖写入失败: doc_id=%s", doc_id)
         raise HTTPException(status_code=500, detail="原文写入失败") from None
@@ -241,7 +249,7 @@ def reupload_document(
     doc.ingest_version = next_version
     doc.pending_file_path = candidate_path
     doc.pending_content_hash = new_hash
-    doc.pending_char_count = len(text)
+    doc.pending_char_count = len(prepared.text)
     doc.status = DocStatus.PENDING.value                # 内容变更 → 待重建（M2 驱动）
     doc.last_error_code = None
     doc.last_error_message = None
@@ -284,20 +292,6 @@ def get_document(doc_id: int, db: Session = Depends(get_db)):
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
     return _doc_out(doc)
-
-
-@documents_router.get("/{doc_id}/content", response_model=DocumentContentOut)
-def get_document_content(doc_id: int, db: Session = Depends(get_db)):
-    """原文内容（前端查看与溯源高亮用）。"""
-    doc = crud.get_document(db, doc_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="文档不存在")
-    try:
-        content = storage.read(doc.file_path)
-    except FileNotFoundError:
-        logger.warning("原文文件缺失: doc_id=%s path=%s", doc.id, doc.file_path)
-        raise HTTPException(status_code=404, detail="原文文件缺失") from None
-    return DocumentContentOut(title=doc.title, content=content)
 
 
 @documents_router.delete("/{doc_id}", status_code=204)

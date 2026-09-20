@@ -441,7 +441,58 @@ function citationSnapshotDetail(citation) {
     chunk_text: citation.chunk_text,
     char_start: charStart,
     char_end: charEnd,
+    images: Array.isArray(citation.images) ? citation.images : [],
   };
+}
+
+function renderSourceWithImages(host, content, images, baseOffset = 0) {
+  const characters = Array.from(String(content || ""));
+  const ordered = (Array.isArray(images) ? images : [])
+    .slice()
+    .sort((left, right) => Number(left.char_start) - Number(right.char_start)
+      || Number(left.ordinal) - Number(right.ordinal));
+  let cursor = 0;
+
+  ordered.forEach((image) => {
+    const start = Number(image.char_start) - baseOffset;
+    const end = Number(image.char_end) - baseOffset;
+    const sourceUrl = String(image.content_url || "");
+    if (!Number.isInteger(start) || !Number.isInteger(end)
+        || start < cursor || end <= start || end > characters.length
+        || !sourceUrl.startsWith("/api/v1/")) return;
+
+    host.appendChild(document.createTextNode(characters.slice(cursor, start).join("")));
+    const figure = document.createElement("figure");
+    figure.className = "source-image";
+    figure.dataset.ordinal = String(image.ordinal || "");
+    const link = document.createElement("a");
+    link.href = sourceUrl;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.title = "打开无缩放原图";
+    const element = document.createElement("img");
+    element.src = sourceUrl;
+    element.alt = String(image.alt_text || "");
+    element.loading = "lazy";
+    element.decoding = "async";
+    const width = Number(image.width);
+    const height = Number(image.height);
+    if (Number.isInteger(width) && width > 0) element.width = width;
+    if (Number.isInteger(height) && height > 0) element.height = height;
+    element.addEventListener("error", () => {
+      figure.classList.add("broken");
+      element.alt = `图片读取失败：${image.source_reference || "原图"}`;
+    });
+    link.appendChild(element);
+    figure.appendChild(link);
+    const caption = document.createElement("figcaption");
+    const label = String(image.alt_text || image.source_reference || `图片 ${image.ordinal}`);
+    caption.textContent = `${label} · ${width || "?"}×${height || "?"} · 点击查看原图`;
+    figure.appendChild(caption);
+    host.appendChild(figure);
+    cursor = end;
+  });
+  host.appendChild(document.createTextNode(characters.slice(cursor).join("")));
 }
 
 async function pinToMargin(chunkId, displayIndex = null, citation = null) {
@@ -483,8 +534,16 @@ async function pinToMargin(chunkId, displayIndex = null, citation = null) {
           <span class="item-range">${esc(rangeLabel)}</span>
         </div>
         <button type="button" class="text-action" data-unpin>移除</button>
-      </div>
-      <blockquote>${esc(detail.chunk_text)}</blockquote>`;
+      </div>`;
+    const quote = document.createElement("blockquote");
+    quote.className = "positioned-source";
+    renderSourceWithImages(
+      quote,
+      detail.chunk_text,
+      detail.images,
+      Number(detail.char_start),
+    );
+    item.appendChild(quote);
     item.querySelector("[data-unpin]").addEventListener("click", () => removeMarginItem(key, chunkId));
     document.getElementById("margin-list").appendChild(item);
     marginItems.set(key, item);
@@ -516,8 +575,11 @@ async function openDocument(docId, title = "") {
           <span class="item-range">完整原文预览</span>
         </div>
         <button type="button" class="text-action" data-unpin>移除</button>
-      </div>
-      <blockquote>${esc(detail.content)}</blockquote>`;
+      </div>`;
+    const quote = document.createElement("blockquote");
+    quote.className = "positioned-source";
+    renderSourceWithImages(quote, detail.content, detail.images, 0);
+    item.appendChild(quote);
     item.querySelector("[data-unpin]").addEventListener("click", () => removeMarginItem(key));
     document.getElementById("margin-list").appendChild(item);
     marginItems.set(key, item);
@@ -742,7 +804,7 @@ function renderDocs() {
     tbody.innerHTML = "";
     showDocsEmpty(
       "这个知识库还没有文档",
-      "上传 UTF-8 编码的 Markdown 或纯文本文件，系统会自动切块并建立索引。",
+      "上传 UTF-8 Markdown/纯文本；含本地图片时上传一篇 Markdown 与图片组成的 ZIP。",
     );
     return;
   }
@@ -767,6 +829,7 @@ function renderDocs() {
         </td>
         <td><span class="status-badge ${esc(doc.status)}">${esc(statusText)}</span></td>
         <td class="num">${formatCount(doc.chunk_count)}</td>
+        <td class="num">${formatCount(doc.image_count)}</td>
         <td class="num">${formatCount(doc.char_count)}</td>
         <td class="num">${stamp(doc.updated_at)}</td>
         <td class="acts">
@@ -775,7 +838,7 @@ function renderDocs() {
           <button type="button" class="table-action danger" data-remove="${doc.id}">删除</button>
         </td>
       </tr>
-      ${doc.last_error_message ? `<tr class="error-row"><td colspan="6"><span class="hint-inline">${
+      ${doc.last_error_message ? `<tr class="error-row"><td colspan="7"><span class="hint-inline">${
         doc.status === "ready" ? "当前旧索引仍可使用；上次更新未完成" : esc(doc.last_error_code || "处理失败")
       }：${esc(doc.last_error_message)}</span></td></tr>` : ""}`;
   }).join("");
@@ -866,7 +929,7 @@ async function uploadDocument(file) {
 function pickAndReupload(docId) {
   const picker = document.createElement("input");
   picker.type = "file";
-  picker.accept = ".md,.txt";
+  picker.accept = ".md,.txt,.zip";
   picker.addEventListener("change", async () => {
     if (!picker.files.length) return;
     const form = new FormData();

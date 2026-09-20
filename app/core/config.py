@@ -23,8 +23,15 @@ class Settings(BaseSettings):
     # 原文文件存储根目录（决策 D6）
     storage_dir: Path = Path("./data/storage")
 
-    # 上传大小上限（字节）—— 对应错误码 TOO_LARGE
-    max_upload_bytes: int = 10 * 1024 * 1024
+    # 普通文本与一期 Markdown 图片包限制。ZIP 同时限制压缩前后大小、条目数、
+    # 单图大小/像素及压缩比，避免压缩炸弹和超大图片耗尽内存。
+    max_upload_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    max_package_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
+    max_package_uncompressed_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
+    max_package_files: int = Field(default=200, ge=2)
+    max_image_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
+    max_image_pixels: int = Field(default=40_000_000, gt=0)
+    max_zip_compression_ratio: float = Field(default=100.0, gt=1)
 
     # 切分参数（04 §2 DR1；06 评估阶段用网格扫描回调）
     chunk_max_chars: int = 800
