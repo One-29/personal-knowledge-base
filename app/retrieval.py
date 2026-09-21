@@ -1,9 +1,8 @@
-"""检索层（M3）：向量通道 + 关键词通道 + RRF 合并（04 §4 DR3/DR4）。
+"""检索编排层（M3）：向量通道 + 关键词通道 + RRF 合并。
 
 设计要点：
-- 向量通道：pgvector cosine（`<=>` 运算符，与 HNSW 索引的 vector_cosine_ops 匹配，
-  否则索引失效退化为全表扫描）；
-- 关键词通道：pg_trgm `%` 索引预过滤 + `similarity()` 排序（中文短词由向量通道互补）；
+- 方言实现位于 ``app.search``：PostgreSQL 使用 pgvector/pg_trgm，SQLite 使用
+  JSON 小规模余弦扫描/FTS5 trigram；
 - 合并：RRF（Reciprocal Rank Fusion，k=60）——只吃排名不吃原始分，免权重标定。
 
 本层只负责「找到候选块」，不生成回答（那属 M3 的生成层）。
@@ -11,11 +10,13 @@
 
 from dataclasses import dataclass
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .core.config import settings
 from .models import Chunk
+from .search import search_keyword as _backend_search_keyword
+from .search import search_vector as _backend_search_vector
 
 # RRF 平滑常数（业界惯用 60：压制头部排名的绝对优势，让两通道都能贡献）
 RRF_K = 60
@@ -36,11 +37,6 @@ class RetrievedChunk:
     keyword_rank: int | None          # 在关键词通道中的排名
 
 
-def _kb_filter(stmt: Select, kb_id: int | None) -> Select:
-    """按知识库过滤：用 chunks.kb_id 冗余列（DM3），免 join documents。"""
-    return stmt if kb_id is None else stmt.where(Chunk.kb_id == kb_id)
-
-
 def search_vector(
     db: Session,
     query_vector: list[float],
@@ -51,14 +47,7 @@ def search_vector(
 
     :return: [(chunk_id, 相似度)]，相似度 = 1 - cosine 距离（降序排列）
     """
-    distance = Chunk.embedding.cosine_distance(query_vector)
-    stmt = (
-        select(Chunk.id, (1 - distance).label("similarity"))
-        .order_by(distance)
-        .limit(limit)
-    )
-    stmt = _kb_filter(stmt, kb_id)
-    return [(row[0], float(row[1])) for row in db.execute(stmt).all()]
+    return _backend_search_vector(db, query_vector, kb_id, limit)
 
 
 def search_keyword(
@@ -67,17 +56,14 @@ def search_keyword(
     kb_id: int | None,
     limit: int = 10,
 ) -> list[int]:
-    """关键词通道：pg_trgm 相似度降序取 top-N（04 DR4），返回块 id 列表。"""
-    # set_config(..., true) 等价 SET LOCAL，支持绑定参数；提交/回滚后恢复，
-    # 不会把本次检索阈值泄漏给复用连接的其它请求。
-    db.execute(select(func.set_config(
-        "pg_trgm.similarity_threshold", str(settings.keyword_similarity_threshold), True
-    )))
-    stmt = select(Chunk.id).where(
-        Chunk.content.bool_op("%")(query)
-    ).order_by(func.similarity(Chunk.content, query).desc(), Chunk.id).limit(limit)
-    stmt = _kb_filter(stmt, kb_id)
-    return list(db.scalars(stmt).all())
+    """关键词通道：按当前数据库选择索引实现，返回块 id 列表。"""
+    return _backend_search_keyword(
+        db,
+        query,
+        kb_id,
+        limit,
+        similarity_threshold=settings.keyword_similarity_threshold,
+    )
 
 
 def fuse_rrf(

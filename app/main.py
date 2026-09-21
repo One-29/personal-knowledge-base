@@ -16,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings  # noqa: F401  （供后续装配读取配置）
+from app.database import initialize_database
 from app.db import engine
 from app.http_client import close_http_client
 from app.routers import ask, document_content, documents, graph, kbs, workflow
@@ -28,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """HTTP 池按需创建，服务完成在途请求和后台任务后统一释放。"""
+    """准备嵌入式 schema；退出时统一释放 HTTP 连接池。"""
+    initialize_database(engine)
     try:
         yield
     finally:

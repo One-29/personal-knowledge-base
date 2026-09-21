@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: 前端检查 + pytest（PostgreSQL/pgvector）
+    name: 前端检查 + pytest（PostgreSQL + SQLite）
     runs-on: ubuntu-latest
 
     services:
