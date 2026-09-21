@@ -204,6 +204,12 @@ def test_storage_roundtrip_and_tamper_detection():
     assert manifest is not None
     assert [item["ordinal"] for item in manifest["occurrences"]] == [1, 2, 3]
     package_storage.verify_package_source(manifest, prepared.text)
+    verified_manifest, verified_text = package_storage.verify_stored_package(
+        source_path,
+        expected_package_hash=prepared.content_hash,
+    )
+    assert verified_manifest == manifest
+    assert verified_text == prepared.text
     with pytest.raises(package_storage.StorageIntegrityError, match="原文"):
         package_storage.verify_package_source(manifest, prepared.text + "篡改")
 

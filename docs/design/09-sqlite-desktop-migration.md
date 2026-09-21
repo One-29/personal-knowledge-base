@@ -2,13 +2,13 @@
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 已实现（阶段 1 + 质量门） |
-| 版本 | v0.2 |
+| 状态 | 已实现（阶段 1 核心双方言 + 阶段 2 数据迁移） |
+| 版本 | v0.3 |
 | 日期 | 2026-09-21 |
 | 上游 | `02-modules.md`（模块边界）· `03-data-model.md`（数据模型）· `04-retrieval.md`（检索） |
-| 关联 | 桌面 App 化阶段 1：核心存储双方言、模型指纹与迁移质量门 |
+| 关联 | 桌面 App 化阶段 1–2：核心双方言、模型指纹、质量门与数据迁移 |
 
-> 本文记录从 PostgreSQL 服务迁移到 SQLite 嵌入式数据库的边界、当前实现和后续切换顺序。阶段 1 已让核心业务同时运行在两种数据库上；默认启动方式仍保持 PostgreSQL，待数据迁移和启动器切换完成后再删除旧路径。
+> 本文记录从 PostgreSQL 服务迁移到 SQLite 嵌入式数据库的边界、当前实现和后续切换顺序。核心业务和一次性数据迁移已经完成；默认启动方式仍保持 PostgreSQL，待启动器切换完成后再退役旧路径。
 
 ## 1. 目标与约束
 
@@ -55,7 +55,37 @@ SQLite 向量检索当前是精确扫描，适合个人知识库的 MB 到低百
 
 2026-09-21 使用相同 BGE-M3、5 库、20 文档、60 问题重跑：SQLite recall@8 为 1.000（50/50），MRR 为 1.000；PostgreSQL 参考值分别为 1.000 和 0.987。τ=0.50 下两者都是库外拒答率 1.000、库内误拒率 0。`eval.comparison` 把“recall 不下降、MRR 下降不超过 0.01”固化为可执行门，而非人工看两份日志。
 
-## 4. 启动与升级语义
+## 4. 一次性数据迁移
+
+`app.migration` 把迁移拆成数据规范化、存储完整性、报告与 PostgreSQL →
+SQLite 编排四个边界。PowerShell 只负责准备源数据库并调用 Python，不复制
+业务规则。迁移顺序如下：
+
+```mermaid
+flowchart LR
+    PG[PostgreSQL 一致快照] --> AUDIT[原文 / 图片包 / chunk 锚点校验]
+    AUDIT --> CANDIDATE[同目录 SQLite 候选文件]
+    CANDIDATE --> CHECK[FK + FTS5 + quick_check + 逐表摘要]
+    CHECK --> SEAL[checkpoint WAL]
+    SEAL --> PUBLISH[原子发布]
+```
+
+迁移显式复制业务表的每一列并保留 ID；字段清单与 ORM 模型不一致时直接失败，
+因此以后新增列不会被旧迁移器静默漏掉。PostgreSQL 带时区时间统一转换为 UTC
+后写入 SQLite，pgvector 值规范化为有限浮点 JSON 数组；向量维度取持久化的
+embedding 指纹。`app_metadata.schema_version` 由 SQLite 初始化器管理，其余元
+数据原样参与摘要。
+
+源库以 `REPEATABLE READ` 读取，并对元数据、知识库、文档和块表加 `SHARE`
+锁。迁移期间应用写入会等待，超过锁超时则显式失败。活动文件是不可变版本，
+表锁同时阻止删除或切换活动版本；运维流程仍要求先停止 API，以免发布后源库
+继续产生新写入。
+
+目标已存在时默认拒绝操作。显式替换会先 checkpoint 旧库，把它改名为带 UTC
+时间戳的备份，再发布候选；最终复核失败会撤回候选并恢复备份。报告不保存
+数据库 URL、口令、API key 或 embedding base URL。
+
+## 5. 启动与升级语义
 
 设置下面的连接串并直接启动 API，可使用阶段 1 的 SQLite 路径：
 
@@ -65,10 +95,10 @@ DATABASE_URL=sqlite+pysqlite:///./data/knowbase.db
 
 应用 lifespan 会幂等创建 v1 schema、启用 WAL、创建 FTS5 索引与同步触发器。数据库版本高于当前程序时拒绝打开，防止旧应用改坏新格式；低于当前版本时也明确要求升级。后续每次 schema 变化必须提供按版本顺序执行、事务化且可重复验证的升级函数，不能用 `create_all()` 假装完成字段迁移。
 
-## 5. 后续阶段与验收门
+## 6. 后续阶段与验收门
 
-1. **数据迁移**：提供 PostgreSQL/文件系统到 SQLite 的一次性导入、指纹核对与完整性校验。
-2. **默认运行时切换**：默认连接串改为用户数据目录中的 SQLite 文件；启动器删除 PostgreSQL、WSL、Docker 和 Alembic 用户路径。验收为干净机器只装 Python/前端构建产物即可运行。
+1. **已完成：数据迁移**。PostgreSQL/文件系统到 SQLite 的一次性导入、指纹核对、逐表摘要和失败保护已有真实 PostgreSQL 集成测试。
+2. **下一步：默认运行时切换**。默认连接串改为 SQLite；启动器移除 PostgreSQL、WSL、Docker 和 Alembic 用户路径。验收为普通运行只需 Python 和前端构建产物，原 PostgreSQL 路径仍保留为开发/迁移兼容入口。
 3. **文件系统可重建**：为原文补稳定元数据，删除数据库后可全量重建；通过 mtime/size 检测外部编辑。
 4. **桌面壳**：先用 pywebview 验证 Python、WebView、SQLite、文件监听和单实例锁，再决定 Tauri sidecar 的正式打包。
 

@@ -7,7 +7,7 @@
 docs/
 ├── README.md              # 本文件：文档地图 + 写作规范（先读这里）
 ├── workflow.md            # 开发流程规范：步骤/DoD/内容归属表/简洁原则
-├── operations.md          # 运行边界、卡住排查、旧文档重建与后续优化建议
+├── operations.md          # 运行边界、SQLite 数据迁移、卡住排查与旧文档重建
 ├── demo.md                # 高等数学演示库：问答/工作流示例与关联图阈值
 ├── image-packages.md      # Markdown 本地图片 ZIP：格式、限制、存储和排错
 ├── design/                # 设计文档（按思考顺序编号，向下依赖）
@@ -20,7 +20,7 @@ docs/
 │   ├── 06-evaluation.md   # 评估方案：多库分层基线 / recall@k / τ 校准（v0.4）
 │   ├── 07-frontend-design.md  # 前端界面设计：token 系统 / 关键决策（v0.1）
 │   ├── 08-graph-view.md   # 关联图：边的计算 / 权重合成 / 决策（v0.1）
-│   └── 09-sqlite-desktop-migration.md # SQLite 桌面化迁移：双方言边界 / 阶段门
+│   └── 09-sqlite-desktop-migration.md # SQLite 桌面化迁移：双方言 / 数据迁移 / 阶段门
 ├── templates/
 │   └── module-design.md   # 模块设计模板（= GitHub 子 Issue 模板）
 └── issue-map.md           # 本地文档 → GitHub Issue 的映射（建仓后维护，待写）

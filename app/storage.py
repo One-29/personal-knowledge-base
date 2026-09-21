@@ -47,9 +47,9 @@ def _write_atomic(path: Path, content: bytes) -> None:
             pass
 
 
-def resolve_relative(rel_path: str) -> Path:
+def resolve_relative(rel_path: str, *, storage_root: Path | None = None) -> Path:
     """解析存储相对路径，并拒绝任何越出 STORAGE_DIR 的值。"""
-    root = settings.storage_dir.resolve()
+    root = (storage_root or settings.storage_dir).resolve()
     candidate = (root / rel_path).resolve()
     if candidate != root and root not in candidate.parents:
         raise ValueError("storage path escapes configured root")
