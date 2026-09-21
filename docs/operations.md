@@ -2,11 +2,11 @@
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 已实现（SQLite 默认运行时、旧数据迁移与隔离测试） |
-| 版本 | v0.5 |
+| 状态 | 已实现（SQLite 默认运行时、Vault 重建、旧数据迁移与隔离测试） |
+| 版本 | v0.6 |
 | 日期 | 2026-09-21 |
 | 上游 | `design/03-data-model.md` · `design/04-retrieval.md` · `design/05-agent-workflow.md` |
-| 关联 | A1–A2、B1–B4、C1–C7 修复 · SQLite 桌面化阶段 1–3 |
+| 关联 | A1–A2、B1–B4、C1–C7 修复 · SQLite 桌面化与文件系统可重建 |
 
 本文区分代码已经保证的行为、部署边界与后续建议。性能缺陷能解释请求等待，不足以证明某次浏览器或桌面 GUI 卡死的原因；确认实际原因仍需要对应请求的日志与耗时。
 
@@ -22,7 +22,7 @@
 | macOS | `~/Library/Application Support/KnowBase` |
 | Linux | `$XDG_DATA_HOME/knowbase`，未设置时为 `~/.local/share/knowbase` |
 
-目录中 `knowbase.db` 保存元数据、切块和检索索引，`storage/` 保存原始 Markdown 与图片。需要整体改位置时只设置 `KNOWBASE_DATA_DIR`；普通用户不配置底层 `DATABASE_URL` 和 `STORAGE_DIR`。
+目录中 `knowbase.db` 保存运行状态、切块和检索索引，`storage/` 保存原始 Markdown、图片与 `.knowbase-vault.json` 原子清单。清单只含重建需要的稳定元数据和摘要，不含模型密钥、问答历史、chunk 或向量。需要整体改位置时只设置 `KNOWBASE_DATA_DIR`；普通用户不配置底层 `DATABASE_URL` 和 `STORAGE_DIR`。
 
 日常从项目根目录启动：
 
@@ -30,7 +30,7 @@
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 ```
 
-启动器先确认现有服务和端口状态，再调用 `scripts/build-frontend.ps1`：核对 Node.js 版本，以 `package-lock.json` 的 SHA-256 判断是否需要 `npm ci`，再以源码树指纹判断是否需要 Vite 构建。随后 `app.runtime` 初始化 schema、WAL、外键、FTS5 与 embedding 指纹，最后以单 worker 启动 API；`/ready` 确认 API 与数据库均可用后才打开浏览器。重复启动时，如果 API 已经正常运行，脚本只打开界面；如果端口被其它程序占用，则明确报错。
+启动器先确认现有服务和端口状态，再调用 `scripts/build-frontend.ps1`：核对 Node.js 版本，以 `package-lock.json` 的 SHA-256 判断是否需要 `npm ci`，再以源码树指纹判断是否需要 Vite 构建。随后 `app.runtime` 初始化 schema、WAL、外键、FTS5、embedding 指纹与 Vault 一致性，最后以单 worker 启动 API；`/ready` 确认 API 与数据库均可用后才打开浏览器。重复启动时，如果 API 已经正常运行，脚本只打开界面；如果端口被其它程序占用，则明确报错。
 
 项目根由脚本自身位置解析，不依赖当前用户名、盘符或仓库名。代码可位于含空格、中文和常见特殊字符的本地目录，其他人从 GitHub 克隆到不同路径也不会继承开发者机器的绝对路径。日常数据与 clone 分离，所以移动或重新下载代码不会隐式产生另一份个人库；网络共享盘的锁和原子改名语义因服务端实现不同，不在当前支持范围内。
 
@@ -40,7 +40,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-shortcut.ps1
 ```
 
-按 `Ctrl+C` 会停止 API；SQLite 没有需要单独关闭的服务。离线备份时先停止 API，再复制整个用户数据目录，确保数据库、可能尚未清理的 WAL 文件和原文属于同一停止时刻。恢复时同样保持 API 关闭，并整体恢复数据库与 `storage/`，不要只恢复其中一边。
+按 `Ctrl+C` 会停止 API；SQLite 没有需要单独关闭的服务。离线备份时先停止 API，再复制整个用户数据目录，确保数据库、可能尚未清理的 WAL 文件、Vault 清单和原文属于同一停止时刻。恢复时同样保持 API 关闭，并整体恢复数据库与 `storage/`，不要随意拼接不同时间的副本。
+
+### 从原文 Vault 重建 SQLite
+
+正常用户无需手工删除数据库。需要验证恢复或数据库确实损坏时，先停止 KnowBase，把 `knowbase.db` 以及同名的 `-wal`、`-shm`、`-journal` 文件一起移动到用户数据目录外的备份文件夹，保留整个 `storage/`。再次运行启动器后会执行：
+
+1. 严格校验 Vault 格式、payload SHA-256、主键关系和全部活动/候选原文；
+2. 在目标数据库同目录创建随机候选文件，并保留知识库和文档 ID；
+3. 使用当前 embedding 配置逐文档重新切分和向量化；崩溃前已登记的候选版本在完整成功后提升为活动版本；
+4. 核对原文区间、块序号、外键、FTS5、逻辑摘要与 `quick_check`，收束 WAL；
+5. 仅当目标仍不存在时发布，随后再复核发布文件。
+
+重建会调用 embedding 服务，耗时随文档量增长，也要求 API key、网络和模型仍可用。任何文档失败时，候选数据库会被清理，Vault 与原文保留；并发启动时也不会覆盖或删除另一进程先发布的目标。Vault 存在时优先从 Vault 重建，不会误导入仓库 `data/` 中可能过期的迁移快照。已有 SQLite 与 Vault 的业务元数据不一致，或外部编辑改变了原文字节时，当前版本会停止启动并给出错误；自动识别外部编辑并增量重建属于下一阶段。
 
 ### PostgreSQL 日常数据迁移到 SQLite
 
@@ -230,4 +242,4 @@ PostgreSQL 兼容后端仍先用 `content % :query` 预过滤，再按 `similari
 | 3 | 验证干净安装与构建产物 | CI 已同时验证 SQLite 真文件与空 PostgreSQL 迁移链；后续仍需构建桌面安装包，并在无 Python、无源码目录的干净环境验证前端资源、schema 升级与启动链是否齐全 |
 | 3 | 按规模优化列表与图 | `selectinload` 解决库列表 N+1 后，可用聚合计数避免加载全部文档；前端力模拟现已在收敛、页面隐藏或离开关联图时停止 RAF，下一步仍应针对大节点数用浏览器 Performance 验证 O(n²) 斥力，并按索引版本缓存图请求 |
 
-当前日常技术栈是 SQLite + FTS5 + FastAPI，PostgreSQL + pgvector 保留为迁移和质量对照。下一步先完成文件系统可重建、任务进度持久化、日志和桌面壳；只有真实规模与测量证明精确向量扫描不足时，再引入可选向量扩展。
+当前日常技术栈是 SQLite + FTS5 + FastAPI，并由版本化 JSON Vault 保证原文可重建；PostgreSQL + pgvector 保留为迁移和质量对照。下一步先完成外部编辑增量同步，再做任务进度持久化、日志和桌面壳；只有真实规模与测量证明精确向量扫描不足时，再引入可选向量扩展。

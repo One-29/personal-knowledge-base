@@ -18,6 +18,7 @@ from app.runtime import RuntimeConfigurationError, prepare_runtime
 from app.runtime import project_import as project_import_module
 from app.runtime.configuration import resolve_runtime_paths
 from app.runtime.project_import import ProjectDataImportError, import_project_data
+from app.vault import VaultStore
 
 
 def _engine(path: Path):
@@ -205,6 +206,7 @@ def test_runtime_preparation_creates_and_reuses_user_sqlite(tmp_path):
     assert second.project_import.status == "target-exists"
     assert first.paths.database.is_file()
     assert first.paths.storage.is_dir()
+    assert VaultStore(first.paths.storage).exists()
     with sqlite3.connect(first.paths.database) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
         assert connection.execute(

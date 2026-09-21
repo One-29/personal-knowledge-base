@@ -12,6 +12,7 @@
 
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
@@ -21,6 +22,7 @@ from .core.config import settings
 from .db import SessionLocal
 from .embedding import EmbeddingError
 from .models import Chunk, Document
+from .vault.coordinator import VaultTransactionError, commit_document
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,8 @@ def process_document(
     *,
     expected_version: int | None = None,
     candidate_path: str | None = None,
+    config=settings,
+    storage_root: Path | None = None,
 ) -> None:
     """处理一篇文档：切分 → 向量化 → 替换 chunks → 更新状态。
 
@@ -76,7 +80,11 @@ def process_document(
                 version,
                 doc.ingest_version,
             )
-            _delete_if_unreferenced(db, source_path)
+            _delete_if_unreferenced(
+                db,
+                source_path,
+                storage_root=storage_root,
+            )
             return
 
         source_hash = (
@@ -92,7 +100,10 @@ def process_document(
         )
 
         try:
-            embedding_profile.ensure_embedding_profile(db)
+            embedding_profile.ensure_embedding_profile(
+                db,
+                embedding_profile.EmbeddingProfile.configured(config),
+            )
         except embedding_profile.EmbeddingProfileError as exc:
             _mark_failure(
                 db,
@@ -102,6 +113,7 @@ def process_document(
                 ERROR_EMBED_PROFILE_MISMATCH,
                 str(exc),
                 require_pending_candidate=task_is_bound,
+                storage_root=storage_root,
             )
             return
 
@@ -109,8 +121,11 @@ def process_document(
         db.commit()
 
         try:
-            text = storage.read(source_path)
-            package_manifest = package_storage.load_package_manifest(source_path)
+            text = storage.read(source_path, storage_root=storage_root)
+            package_manifest = package_storage.load_package_manifest(
+                source_path,
+                storage_root=storage_root,
+            )
             package_storage.verify_package_source(package_manifest, text)
         except FileNotFoundError:
             _mark_failure(
@@ -121,6 +136,7 @@ def process_document(
                 ERROR_PARSE_FAILED,
                 "原文文件缺失",
                 require_pending_candidate=task_is_bound,
+                storage_root=storage_root,
             )
             return
         except package_storage.StorageIntegrityError as exc:
@@ -132,13 +148,14 @@ def process_document(
                 ERROR_PARSE_FAILED,
                 str(exc),
                 require_pending_candidate=task_is_bound,
+                storage_root=storage_root,
             )
             return
 
         chunks = chunking.split_markdown(
             text,
-            max_chars=settings.chunk_max_chars,
-            overlap_chars=settings.chunk_overlap_chars,
+            max_chars=config.chunk_max_chars,
+            overlap_chars=config.chunk_overlap_chars,
             protected_spans=tuple(
                 (int(item["char_start"]), int(item["char_end"]))
                 for item in (package_manifest or {}).get("occurrences", [])
@@ -153,12 +170,19 @@ def process_document(
                 ERROR_PARSE_FAILED,
                 "切分后无有效内容",
                 require_pending_candidate=task_is_bound,
+                storage_root=storage_root,
             )
             return
 
         try:
-            vectors = embedding.get_embedding_provider().embed_texts([c.text for c in chunks])
-            _validate_vectors(vectors, expected_count=len(chunks))
+            vectors = embedding.get_embedding_provider(config).embed_texts(
+                [c.text for c in chunks]
+            )
+            _validate_vectors(
+                vectors,
+                expected_count=len(chunks),
+                expected_dimension=config.embedding_dimension,
+            )
         except EmbeddingError as exc:
             _mark_failure(
                 db,
@@ -168,6 +192,7 @@ def process_document(
                 ERROR_EMBED_FAILED,
                 str(exc),
                 require_pending_candidate=task_is_bound,
+                storage_root=storage_root,
             )
             return
 
@@ -175,7 +200,7 @@ def process_document(
         if doc is None:
             logger.warning("处理完成前文档已删除: doc_id=%s", doc_id)
             db.rollback()
-            _safe_delete(source_path)
+            _safe_delete(source_path, storage_root=storage_root)
             return
         if doc.ingest_version != version or (
             task_is_bound and doc.pending_file_path != source_path
@@ -187,7 +212,7 @@ def process_document(
                 doc.ingest_version,
             )
             db.rollback()
-            _delete_if_unreferenced(db, source_path)
+            _delete_if_unreferenced(db, source_path, storage_root=storage_root)
             return
 
         old_source_path = doc.file_path
@@ -217,16 +242,26 @@ def process_document(
         doc.last_error_code = None
         doc.last_error_message = None
         doc.processed_at = datetime.now(timezone.utc)
-        db.commit()
+        commit_document(db, doc)
         # 带图片的历史版本保留到文档删除：回答中保存的引用快照仍可打开原图。
         # 普通文本沿用原清理策略，避免无图片版本不断占用磁盘。
         if (
             old_source_path
             and old_source_path != source_path
-            and not package_storage.is_package_source(old_source_path)
+            and not package_storage.is_package_source(
+                old_source_path,
+                storage_root=storage_root,
+            )
         ):
-            _safe_delete(old_source_path)
+            _safe_delete(old_source_path, storage_root=storage_root)
         logger.info("文档处理完成: doc_id=%s chunks=%s", doc.id, len(chunks))
+    except VaultTransactionError:
+        logger.exception(
+            "Vault 一致性恢复失败，停止文档任务并保留原文: doc_id=%s",
+            doc_id,
+        )
+        db.rollback()
+        raise
     except Exception as exc:
         logger.exception("处理文档异常: doc_id=%s", doc_id)
         try:
@@ -239,6 +274,7 @@ def process_document(
                 ERROR_PROCESS_FAILED,
                 f"{type(exc).__name__}: {exc}",
                 require_pending_candidate=task_is_bound,
+                storage_root=storage_root,
             )
         except Exception:
             logger.exception("处理失败后恢复文档状态也失败: doc_id=%s", doc_id)
@@ -260,6 +296,7 @@ def _mark_failure(
     message: str,
     *,
     require_pending_candidate: bool,
+    storage_root: Path | None = None,
 ) -> None:
     """只给当前版本记录失败；过期任务不能覆盖新任务的状态。"""
     db.rollback()
@@ -268,7 +305,7 @@ def _mark_failure(
         logger.warning("处理失败后无法恢复状态，文档已不存在: doc_id=%s", doc_id)
         db.rollback()
         if candidate_path:
-            _safe_delete(candidate_path)
+            _safe_delete(candidate_path, storage_root=storage_root)
         return
     if expected_version is not None and doc.ingest_version != expected_version:
         logger.info(
@@ -279,7 +316,11 @@ def _mark_failure(
         )
         db.rollback()
         if candidate_path:
-            _delete_if_unreferenced(db, candidate_path)
+            _delete_if_unreferenced(
+                db,
+                candidate_path,
+                storage_root=storage_root,
+            )
         return
     if (
         require_pending_candidate
@@ -288,7 +329,11 @@ def _mark_failure(
     ):
         logger.info("忽略已被替换的候选文档错误: doc_id=%s", doc_id)
         db.rollback()
-        _delete_if_unreferenced(db, candidate_path)
+        _delete_if_unreferenced(
+            db,
+            candidate_path,
+            storage_root=storage_root,
+        )
         return
 
     has_old_chunks = (
@@ -305,13 +350,18 @@ def _mark_failure(
     doc.last_error_message = message
     doc.processed_at = datetime.now(timezone.utc)
     doc.status = STATUS_READY if has_old_chunks else STATUS_FAILED
-    db.commit()
+    commit_document(db, doc)
     if failed_candidate:
-        _safe_delete(failed_candidate)
+        _safe_delete(failed_candidate, storage_root=storage_root)
     logger.warning("文档处理失败: doc_id=%s code=%s kept_old=%s", doc.id, code, has_old_chunks)
 
 
-def _delete_if_unreferenced(db: Session, rel_path: str) -> None:
+def _delete_if_unreferenced(
+    db: Session,
+    rel_path: str,
+    *,
+    storage_root: Path | None = None,
+) -> None:
     """删除不再被活动原文或候选原文引用的版本文件。"""
     referenced = db.scalar(
         select(func.count())
@@ -323,30 +373,35 @@ def _delete_if_unreferenced(db: Session, rel_path: str) -> None:
     )
     db.rollback()
     if not referenced:
-        _safe_delete(rel_path)
+        _safe_delete(rel_path, storage_root=storage_root)
 
 
-def _safe_delete(rel_path: str) -> None:
+def _safe_delete(rel_path: str, *, storage_root: Path | None = None) -> None:
     """提交后的旧文件清理失败只记录日志，不反转已经成功的数据库切换。"""
     try:
-        storage.delete(rel_path)
+        storage.delete(rel_path, storage_root=storage_root)
     except OSError:
         logger.warning("清理旧原文失败: path=%s", rel_path, exc_info=True)
 
 
-def _validate_vectors(vectors: list[list[float]], expected_count: int) -> None:
+def _validate_vectors(
+    vectors: list[list[float]],
+    expected_count: int,
+    expected_dimension: int | None = None,
+) -> None:
     """拒绝不完整或维度错误的 provider 响应，避免 zip 静默少写知识块。"""
     if len(vectors) != expected_count:
         raise EmbeddingError(
             f"embedding 返回数量不匹配：期望 {expected_count}，实际 {len(vectors)}"
         )
+    dimension = expected_dimension or settings.embedding_dimension
     invalid = [
         index
         for index, vector in enumerate(vectors)
-        if len(vector) != settings.embedding_dimension
+        if len(vector) != dimension
     ]
     if invalid:
         raise EmbeddingError(
-            f"embedding 维度不匹配：期望 {settings.embedding_dimension}，"
+            f"embedding 维度不匹配：期望 {dimension}，"
             f"异常位置 {invalid[:5]}"
         )

@@ -136,4 +136,8 @@ def _fake_embedding(monkeypatch) -> None:
 
     # 单一替换点：所有调用方（ask / ingest）都经 embedding 模块动态取 provider，
     # 替换这一处即可覆盖全链路——避免某个模块持有独立引用导致测试真调 API。
-    monkeypatch.setattr(embedding, "get_embedding_provider", lambda: _FakeProvider())
+    monkeypatch.setattr(
+        embedding,
+        "get_embedding_provider",
+        lambda _config=None: _FakeProvider(),
+    )

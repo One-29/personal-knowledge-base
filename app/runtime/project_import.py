@@ -11,22 +11,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.database import UnsupportedSchemaVersion, initialize_database
+from app.database import UnsupportedSchemaVersion
 from app.migration.errors import IntegrityError
 from app.migration.report import DatabaseDigest
-from app.migration.snapshot_validation import SnapshotValidator, audit_storage
 from app.migration.sqlite_target import (
     remove_sqlite_files,
-    seal_sqlite,
-    sqlite_engine,
     verify_published_database,
-    verify_sqlite,
 )
-from app.models import Chunk, Document, KnowledgeBase
 
+from .database_validation import validate_and_seal_database
 from .storage_tree import (
     StorageTreeError,
     TreeDigest,
@@ -106,7 +101,7 @@ def import_project_data(
             timeout_seconds=timeout_seconds,
         )
         storage_digest = copy_tree_verified(source_storage, storage_candidate)
-        database_digest = _validate_candidate(
+        database_digest = validate_and_seal_database(
             database_candidate,
             storage_candidate,
             embedding_dimension=embedding_dimension,
@@ -177,38 +172,6 @@ def _backup_sqlite(source: Path, candidate: Path, *, timeout_seconds: float) -> 
             sqlite3.connect(candidate, timeout=timeout_seconds)
         ) as target_connection:
             source_connection.backup(target_connection)
-
-
-def _validate_candidate(
-    database: Path,
-    storage: Path,
-    *,
-    embedding_dimension: int,
-    timeout_seconds: float,
-) -> DatabaseDigest:
-    engine = sqlite_engine(database, timeout_seconds=timeout_seconds)
-    try:
-        initialize_database(engine)
-        digest = verify_sqlite(engine, embedding_dimension=embedding_dimension)
-        with engine.connect() as connection:
-            knowledge_bases = list(
-                connection.execute(select(KnowledgeBase.__table__)).mappings()
-            )
-            documents = list(connection.execute(select(Document.__table__)).mappings())
-            chunks = list(connection.execute(select(Chunk.__table__)).mappings())
-        storage_audit = audit_storage(documents, storage)
-        validator = SnapshotValidator(
-            knowledge_bases,
-            documents,
-            storage_audit.document_texts,
-        )
-        for chunk in chunks:
-            validator.check_chunk(chunk)
-        validator.finish()
-        seal_sqlite(engine)
-        return digest
-    finally:
-        engine.dispose()
 
 
 def _validate_distinct_paths(

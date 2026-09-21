@@ -310,12 +310,16 @@ def verify_stored_package(
     return manifest, text
 
 
-def is_package_source(rel_path: str | None) -> bool:
+def is_package_source(
+    rel_path: str | None,
+    *,
+    storage_root: Path | None = None,
+) -> bool:
     """快速判断路径是否指向一个图片包版本，不在清理路径中解析整个清单。"""
     if not rel_path:
         return False
     try:
-        source = storage.resolve_relative(rel_path)
+        source = storage.resolve_relative(rel_path, storage_root=storage_root)
     except ValueError:
         return False
     return source.name == SOURCE_NAME and (source.parent / MANIFEST_NAME).is_file()

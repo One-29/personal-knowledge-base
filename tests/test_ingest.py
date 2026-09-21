@@ -159,7 +159,11 @@ def test_failed_reupload_keeps_matching_old_source_and_chunks(db, client, monkey
 
     provider = Mock()
     provider.embed_texts.side_effect = EmbeddingError("provider unavailable")
-    monkeypatch.setattr(ingest.embedding, "get_embedding_provider", lambda: provider)
+    monkeypatch.setattr(
+        ingest.embedding,
+        "get_embedding_provider",
+        lambda _config=None: provider,
+    )
     ingest.process_document(
         doc.id,
         db,
@@ -193,7 +197,11 @@ def test_failed_candidate_without_old_chunks_does_not_leave_orphan_file(
 
     provider = Mock()
     provider.embed_texts.side_effect = EmbeddingError("provider unavailable")
-    monkeypatch.setattr(ingest.embedding, "get_embedding_provider", lambda: provider)
+    monkeypatch.setattr(
+        ingest.embedding,
+        "get_embedding_provider",
+        lambda _config=None: provider,
+    )
     ingest.process_document(
         doc.id,
         db,
@@ -232,7 +240,7 @@ def test_older_task_cannot_overwrite_newer_candidate(db, client, monkeypatch):
     monkeypatch.setattr(
         ingest.embedding,
         "get_embedding_provider",
-        lambda: SupersedingProvider(),
+        lambda _config=None: SupersedingProvider(),
     )
     ingest.process_document(
         doc.id,
@@ -254,7 +262,7 @@ def test_older_task_cannot_overwrite_newer_candidate(db, client, monkeypatch):
     monkeypatch.setattr(
         ingest.embedding,
         "get_embedding_provider",
-        lambda: base_provider,
+        lambda _config=None: base_provider,
     )
     ingest.process_document(
         doc.id,
@@ -289,7 +297,11 @@ def test_unexpected_failure_restores_document_status_and_old_chunks(
     if failure_kind == "provider":
         provider = Mock()
         provider.embed_texts.side_effect = RuntimeError("unexpected provider result")
-        monkeypatch.setattr(ingest.embedding, "get_embedding_provider", lambda: provider)
+        monkeypatch.setattr(
+            ingest.embedding,
+            "get_embedding_provider",
+            lambda _config=None: provider,
+        )
         expected_message = "unexpected provider result"
     else:
         def fail_after_old_chunks_deleted(instances):
