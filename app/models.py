@@ -1,13 +1,38 @@
-"""models.py —— 03 DDL 直译（M1：仅两表；任务 B：Document 收尾 + relationship）"""
+"""KnowBase 的可移植 ORM 数据模型。
+
+PostgreSQL 使用 pgvector 与专用 HNSW/GIN 索引；SQLite 把向量保存为 JSON，
+由本地检索后端做小规模余弦扫描，关键词索引由 schema 模块的 FTS5 管理。
+"""
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Identity, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Identity,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
 
 from app.core.config import settings
 from app.db import Base  # Base 来自 db.py，绝不自己再定义
+
+# SQLite 只有类型名恰为 INTEGER 的主键才能自动分配 rowid。PostgreSQL 仍使用
+# BIGINT，因此已有 Alembic schema 与容量上限均不改变。
+PORTABLE_BIGINT = BigInteger().with_variant(Integer, "sqlite")
+# 以 Vector 作为外层类型，保留 ``cosine_distance`` comparator；SQLite 方言
+# 编译和绑定时改用 JSON。若把 JSON 放在外层，PostgreSQL 检索表达式会在 Python
+# 侧丢失 pgvector comparator，即使数据库列本身仍编译成 vector。
+PORTABLE_EMBEDDING = Vector(settings.embedding_dimension).with_variant(JSON(), "sqlite")
 
 
 class KnowledgeBase(Base):
@@ -15,12 +40,16 @@ class KnowledgeBase(Base):
 
     __tablename__ = "knowledge_bases"
 
-    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    id: Mapped[int] = mapped_column(PORTABLE_BIGINT, Identity(), primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
     description: Mapped[str | None] = mapped_column(String(500))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
     # ── 关系（父侧）：子表删除交给数据库 ON DELETE CASCADE（passive_deletes）
     documents: Mapped[list["Document"]] = relationship(
         back_populates="kb", passive_deletes=True
@@ -37,9 +66,9 @@ class Document(Base):
         CheckConstraint("status IN ('pending','processing','ready','failed')"),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    id: Mapped[int] = mapped_column(PORTABLE_BIGINT, Identity(), primary_key=True)
     kb_id: Mapped[int] = mapped_column(
-        BigInteger,
+        PORTABLE_BIGINT,
         ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -59,7 +88,7 @@ class Document(Base):
         String(16),
         nullable=False,
         default="pending",
-        server_default="pending"
+        server_default="pending",
     )
 
     # DDL: last_error_code    varchar(32),
@@ -77,7 +106,7 @@ class Document(Base):
         Integer,
         nullable=False,
         default=0,
-        server_default="0"
+        server_default="0",
     )
 
     # DDL: chunk_count   integer NOT NULL DEFAULT 0,
@@ -85,7 +114,7 @@ class Document(Base):
         Integer,
         nullable=False,
         default=0,
-        server_default="0"
+        server_default="0",
     )
 
     # DDL: processed_at  timestamptz,
@@ -97,7 +126,7 @@ class Document(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        server_default=func.now()
+        server_default=func.now(),
     )
 
     # DDL: updated_at    timestamptz NOT NULL DEFAULT now(),
@@ -105,10 +134,10 @@ class Document(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
-        onupdate=func.now()
+        onupdate=func.now(),
     )
 
-    # ── 关系空⑨（子侧）：指向父类。back_populates 点名父侧属性名（与空①成对）
+    # ── 关系（子侧）：指向父类，与父侧 back_populates 成对。
     kb: Mapped["KnowledgeBase"] = relationship(back_populates="documents")
 
     # ── 关系（子侧）：切块随文档删除由数据库级联清理（passive_deletes）
@@ -132,29 +161,33 @@ class Chunk(Base):
             "embedding",
             postgresql_using="hnsw",
             postgresql_ops={"embedding": "vector_cosine_ops"},
-        ),
+        ).ddl_if(dialect="postgresql"),
         # 关键词通道（04 DR4）：pg_trgm 相似度查询的 GIN 索引，避免全表扫描
         Index(
             "ix_chunks_content_trgm",
             "content",
             postgresql_using="gin",
             postgresql_ops={"content": "gin_trgm_ops"},
-        ),
+        ).ddl_if(dialect="postgresql"),
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    id: Mapped[int] = mapped_column(PORTABLE_BIGINT, Identity(), primary_key=True)
     doc_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+        PORTABLE_BIGINT,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
     )
     kb_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False
+        PORTABLE_BIGINT,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        nullable=False,
     )
     chunk_index: Mapped[int] = mapped_column(nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     char_start: Mapped[int] = mapped_column(nullable=False)
     char_end: Mapped[int] = mapped_column(nullable=False)
     embedding: Mapped[list[float]] = mapped_column(
-        Vector(settings.embedding_dimension), nullable=False
+        PORTABLE_EMBEDDING, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 

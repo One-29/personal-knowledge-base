@@ -19,7 +19,8 @@ docs/
 │   ├── 05-agent-workflow.md   # Agent 多步工作流：规划 / 执行 / 缺料 / 汇总（v0.2 已拍板）
 │   ├── 06-evaluation.md   # 评估方案：多库分层基线 / recall@k / τ 校准（v0.4）
 │   ├── 07-frontend-design.md  # 前端界面设计：token 系统 / 关键决策（v0.1）
-│   └── 08-graph-view.md   # 关联图：边的计算 / 权重合成 / 决策（v0.1）
+│   ├── 08-graph-view.md   # 关联图：边的计算 / 权重合成 / 决策（v0.1）
+│   └── 09-sqlite-desktop-migration.md # SQLite 桌面化迁移：双方言边界 / 阶段门
 ├── templates/
 │   └── module-design.md   # 模块设计模板（= GitHub 子 Issue 模板）
 └── issue-map.md           # 本地文档 → GitHub Issue 的映射（建仓后维护，待写）

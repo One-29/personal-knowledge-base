@@ -13,7 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
-    # 数据库连接串（psycopg3 方言）
+    # 迁移期同时支持 PostgreSQL/psycopg3 与 SQLite/pysqlite。
     database_url: str = "postgresql+psycopg://postgres:postgres@127.0.0.1:5432/knowbase"
     db_pool_size: int = Field(default=5, ge=1)
     db_max_overflow: int = Field(default=10, ge=0)

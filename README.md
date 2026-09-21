@@ -12,6 +12,7 @@
 - 含图片 Markdown 会保留原始图片字节、出现顺序与字符位置；完整原文和引用侧栏均可查看原图，图片本身不参与 OCR 或向量化。
 - v2 检索基线覆盖 5 个库、20 篇文档、60 条分层样本：recall@8 = **1.000（50/50）**、MRR = **0.987**。
 - L1 拒答阈值由 v2 相似度分布重新校准为 **τ=0.50**：10 条库外问题拒答率 100%，50 条库内问题误拒率 0%。
+- 桌面化存储迁移的第一阶段已完成：核心 ORM、入库、混合检索和关联图同时支持 PostgreSQL 与 SQLite 真文件数据库；当前一键启动器仍默认走 PostgreSQL，切换计划见 `docs/design/09-sqlite-desktop-migration.md`。
 - 已知边界：当前只支持单 worker——会话与后台入库任务都在进程内存里，加 worker 拿不到可靠的跨进程会话与任务恢复。
 - 评估已能比较多库与难度层级，但仍是固定的 60 条基线，不能替代真实用户语料上的持续评估；完整口径见 docs/design/06-evaluation.md。
 
@@ -51,6 +52,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-frontend.ps1
 .\.venv\Scripts\uvicorn.exe app.main:app --host 127.0.0.1 --port 8000
 ```
+
+要提前验证无需数据库服务的 SQLite 核心路径，可在 `.env` 中把连接串改为
+`DATABASE_URL=sqlite+pysqlite:///./data/knowbase.db` 后直接执行上面的构建与
+`uvicorn` 命令。应用会自动创建带 WAL、外键和 FTS5 trigram 索引的数据库；
+此阶段的一键启动脚本尚未切换，仍会准备 PostgreSQL。
 
 开发前端时，先运行 API，再在另一个终端执行 `npm run frontend:dev`，访问 <http://127.0.0.1:5173/ui/>；Vite 会把 `/api`、`/health` 和 `/ready` 代理到 8000 端口。开发后端时可给 uvicorn 加 `--reload`。`Ctrl+C` 只停对应进程，数据库和 WSL 保活进程继续运行；要一并释放：
 
@@ -92,7 +98,7 @@ npm ci --no-audit --no-fund
 npm run frontend:check
 ```
 
-数据库集成测试需要 PostgreSQL 可用，且 `knowbase_test` 库已存在（conftest 只重建扩展与表，不建库）：
+完整回归需要 PostgreSQL 可用，且 `knowbase_test` 库已存在（conftest 只重建扩展与表，不建库）：
 
 ```powershell
 wsl.exe -d Ubuntu -- docker exec knowbase-pg createdb -U postgres knowbase_test
@@ -103,6 +109,13 @@ wsl.exe -d Ubuntu -- docker exec knowbase-pg createdb -U postgres knowbase_test
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q tests/test_chunking.py tests/test_embedding.py
+```
+
+SQLite 集成测试使用临时真文件，覆盖建库、WAL/外键、入库、FTS5 触发器、
+混合检索、关联图、级联删除和重启持久化，不需要 PostgreSQL：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q tests/test_sqlite_storage.py
 ```
 
 评估在独立的 `knowbase_eval` 库上运行，脚本自己建库、自己迁移，只在子进程内覆盖环境变量，不碰日常数据：

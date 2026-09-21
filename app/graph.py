@@ -2,9 +2,8 @@
 
 对应 Obsidian 的 graph view：**节点 = 文档，边 = 文档间的语义关联强度**。
 
-数据来源：`chunks` 表的向量（pgvector）。一次 LATERAL 近邻查询即可算出
-"每个块在其它文档中的最近邻"，再按文档对聚合——不引入图数据库，
-复用已有 HNSW 索引（04 DM2）。
+数据来源：`chunks` 表的向量。PostgreSQL 复用 pgvector LATERAL 近邻查询，
+SQLite 在个人库规模内做进程内余弦扫描；两者都按文档对聚合，不引入图数据库。
 
 设计取舍：
 - 节点用**文档**而非块：块级图在大库上会变成毛线团，文档级更可读；
@@ -18,6 +17,9 @@ from dataclasses import dataclass, field
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+
+from app.search import graph_pairs
+from app.search.postgresql import GRAPH_PAIRS_SQL as _PAIRS_SQL
 
 logger = logging.getLogger(__name__)
 
@@ -69,34 +71,6 @@ _NODES_SQL = text("""
     ORDER BY d.id
 """)
 
-_PAIRS_SQL = text("""
-    WITH ranked AS (
-        SELECT id, doc_id, embedding,
-               ROW_NUMBER() OVER (PARTITION BY doc_id ORDER BY chunk_index, id) AS chunk_rank
-        FROM chunks
-        WHERE kb_id = :kb_id
-    ),
-    pool AS (
-        SELECT id, doc_id, embedding
-        FROM ranked
-        ORDER BY chunk_rank, doc_id
-        LIMIT :max_chunks
-    )
-    SELECT p.doc_id AS source_doc,
-           n.doc_id AS target_doc,
-           1 - (p.embedding <=> n.embedding) AS similarity
-    FROM pool p
-    JOIN LATERAL (
-        SELECT c2.doc_id, c2.embedding
-        FROM chunks c2
-        WHERE c2.kb_id = :kb_id AND c2.doc_id <> p.doc_id
-        ORDER BY c2.embedding <=> p.embedding
-        LIMIT :top_k
-    ) n ON true
-    WHERE 1 - (p.embedding <=> n.embedding) >= :min_similarity
-""")
-
-
 def build_graph(
     db: Session,
     kb_id: int,
@@ -121,15 +95,13 @@ def build_graph(
     if len(nodes) < 2:
         return GraphData(nodes=nodes, truncated=truncated)  # 单文档没有"关联"可言
 
-    rows = db.execute(
-        _PAIRS_SQL,
-        {
-            "kb_id": kb_id,
-            "top_k": top_k,
-            "min_similarity": min_similarity,
-            "max_chunks": max_chunks,
-        },
-    ).all()
+    rows = graph_pairs(
+        db,
+        kb_id,
+        top_k=top_k,
+        min_similarity=min_similarity,
+        max_chunks=max_chunks,
+    )
 
     # 按文档对聚合：跨文档近邻对数 + 平均相似度
     buckets: dict[tuple[int, int], list[float]] = {}

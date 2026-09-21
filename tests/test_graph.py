@@ -119,6 +119,7 @@ def test_graph_without_edges_reports_truncation_from_nodes(chunk_counts, max_chu
         for i, count in enumerate(chunk_counts)
     ]
     db = Mock()
+    db.dialect.name = "postgresql"
     db.execute.side_effect = [Mock(all=lambda: node_rows), Mock(all=lambda: [])]
 
     result = graph.build_graph(db, kb_id=1, max_chunks=max_chunks)
