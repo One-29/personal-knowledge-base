@@ -2,25 +2,27 @@
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 已确认（关键修复、数据隔离与 SQLite 一次性迁移已实施） |
-| 版本 | v0.4 |
+| 状态 | 已实现（SQLite 默认运行时、旧数据迁移与隔离测试） |
+| 版本 | v0.5 |
 | 日期 | 2026-09-21 |
 | 上游 | `design/03-data-model.md` · `design/04-retrieval.md` · `design/05-agent-workflow.md` |
-| 关联 | A1–A2、B1–B4、C1–C7 修复 · WSL2 命令行运行环境 |
+| 关联 | A1–A2、B1–B4、C1–C7 修复 · SQLite 桌面化阶段 1–3 |
 
 本文区分代码已经保证的行为、部署边界与后续建议。性能缺陷能解释请求等待，不足以证明某次浏览器或桌面 GUI 卡死的原因；确认实际原因仍需要对应请求的日志与耗时。
 
 ## 1. 当前运行边界
 
-### WSL2 独立 Docker Engine 与命令行启动
+### SQLite 本地运行与命令行启动
 
-KnowBase 不依赖 Docker Desktop。PostgreSQL 与 pgvector 运行在 Ubuntu WSL2 内的独立 Docker Engine 中，Windows PowerShell 通过 `wsl.exe` 调用它；API 继续使用项目的 Windows `.venv`，通过 WSL localhost 转发连接 `127.0.0.1:5432`。前端源码使用 TypeScript，Node.js 22.12+ 只参与 Vite 构建，应用运行时仍由 FastAPI 统一托管静态产物。
+日常运行使用进程内 SQLite，不启动 Docker Desktop、WSL、Docker Engine、PostgreSQL 或 Alembic。前端源码使用 TypeScript，Node.js 22.12+ 只参与 Vite 构建，应用运行时由 FastAPI 统一托管静态产物。默认用户数据位置如下：
 
-首次配置运行下面的安装器。它要求 Ubuntu WSL2 已启用 [`systemd`](https://learn.microsoft.com/windows/wsl/systemd)，按 [Docker Engine Ubuntu 安装说明](https://docs.docker.com/engine/install/ubuntu/)从官方 apt 仓库安装 Engine、containerd、Buildx 和 Compose 插件，启用 `docker.service`，并把 WSL 默认用户加入 `docker` 用户组。Docker 官方说明该用户组拥有接近 root 的控制权限，详见[安装后配置](https://docs.docker.com/engine/install/linux-postinstall/)。
+| 系统 | 数据目录 |
+|---|---|
+| Windows | `%LOCALAPPDATA%\KnowBase` |
+| macOS | `~/Library/Application Support/KnowBase` |
+| Linux | `$XDG_DATA_HOME/knowbase`，未设置时为 `~/.local/share/knowbase` |
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-wsl-docker-engine.ps1
-```
+目录中 `knowbase.db` 保存元数据、切块和检索索引，`storage/` 保存原始 Markdown 与图片。需要整体改位置时只设置 `KNOWBASE_DATA_DIR`；普通用户不配置底层 `DATABASE_URL` 和 `STORAGE_DIR`。
 
 日常从项目根目录启动：
 
@@ -28,41 +30,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-wsl-docker
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 ```
 
-启动器先调用 `scripts/build-frontend.ps1`：核对 Node.js 版本，以 `package-lock.json` 的 SHA-256 判断是否需要 `npm ci`，再以源码树指纹判断是否需要 Vite 构建。构建完成后，它读取 `compose.yaml`，创建或复用 `knowbase-pg` 与 WSL 命名卷 `knowbase_pgdata`，等待数据库健康检查，执行 Alembic 迁移，再以单 worker 启动 API；`/ready` 确认 API 与数据库均可用后才打开浏览器。`/health` 只检查 API 进程存活，不访问数据库。首次安装 npm 依赖或拉取 `pgvector/pgvector:pg16` 镜像可能需要几分钟。重复启动时，如果 API 已经正常运行，脚本只打开界面；如果 8000 端口被其它程序占用，则明确报错。
+启动器先确认现有服务和端口状态，再调用 `scripts/build-frontend.ps1`：核对 Node.js 版本，以 `package-lock.json` 的 SHA-256 判断是否需要 `npm ci`，再以源码树指纹判断是否需要 Vite 构建。随后 `app.runtime` 初始化 schema、WAL、外键、FTS5 与 embedding 指纹，最后以单 worker 启动 API；`/ready` 确认 API 与数据库均可用后才打开浏览器。重复启动时，如果 API 已经正常运行，脚本只打开界面；如果端口被其它程序占用，则明确报错。
 
-WSL 路径转换只让 `wslpath` 返回 ASCII 的盘符挂载点，再由 PowerShell 拼接未经转码的目录部分，避免 Windows PowerShell 5.1 按本机代码页误解 WSL 的 UTF-8 输出。因此项目目录可以包含空格、中文和常见特殊字符，例如 `E:\ds Harness\实践项目`，也可以位于任意已挂载到 WSL 的本地 Windows 盘符。启动器不支持 `\\server\share` 形式的 UNC 或网络共享路径；从 GitHub 下载或克隆后，请把仓库放在 `C:`、`D:`、`E:` 等本地磁盘上。
+项目根由脚本自身位置解析，不依赖当前用户名、盘符或仓库名。代码可位于含空格、中文和常见特殊字符的本地目录，其他人从 GitHub 克隆到不同路径也不会继承开发者机器的绝对路径。日常数据与 clone 分离，所以移动或重新下载代码不会隐式产生另一份个人库；网络共享盘的锁和原子改名语义因服务端实现不同，不在当前支持范围内。
 
-WSL2 的 [`vmIdleTimeout`](https://learn.microsoft.com/windows/wsl/wsl-config) 默认会在虚拟机空闲后停止它。仅有 `systemd`、Docker 与容器服务时，这台机器仍可能被判定为空闲，因此启动模块用 `flock` 建立一个无窗口、单实例的 `sleep infinity` 保活进程。它只负责维持 Ubuntu 运行，不处理请求，也不持有数据库连接。按 `Ctrl+C` 会停止 Windows API，数据库和保活进程继续运行；如需一并释放资源，停止 API 后执行：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop-knowbase-database.ps1
-```
-
-也可以安装桌面 **KnowBase** 快捷方式。快捷方式只是 PowerShell 启动命令的入口，不会打开或调用 Docker Desktop：
+也可以安装桌面 **KnowBase** 快捷方式。快捷方式只是本地 PowerShell 启动命令的入口：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-shortcut.ps1
 ```
 
-常用只读维护命令如下。`docker logs -f` 持续占用当前终端，按 `Ctrl+C` 退出日志查看，不会停止数据库。
-
-```powershell
-wsl.exe -d Ubuntu -- docker ps
-wsl.exe -d Ubuntu -- docker logs --tail 100 knowbase-pg
-wsl.exe -d Ubuntu -- docker logs -f knowbase-pg
-wsl.exe -d Ubuntu -- docker volume inspect knowbase_pgdata
-```
-
-数据库使用密码认证，默认本机开发账号为 `postgres` / `postgres`；Compose 在 WSL 虚拟机接口发布 5432，再通过 [WSL localhost 转发](https://learn.microsoft.com/windows/wsl/networking)提供给 Windows。`DATABASE_URL` 必须与之匹配。若以后改密码，需要同时重建数据库卷或在 PostgreSQL 中修改角色密码，并同步更新 `.env`。
-
-从 `pg_dump -Fc` 生成的快照恢复日常数据库和原文目录时，先停止 API，再运行：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\restore-knowbase-backup.ps1 `
-  -BackupDirectory .\data\backups\<备份目录>
-```
-
-恢复器验证 `PGDMP` 文件头，先把快照完整恢复到临时数据库，成功后才短暂切换为 `knowbase`；损坏快照不会先清空当前数据库。原文恢复前，现有 `data/storage` 会复制到带时间戳的 `data/backups/before-restore-*`，随后按快照重建，避免残留旧文件。删除前脚本会核对绝对路径必须精确位于项目 `data` 目录下。这是有意覆盖日常数据的操作，PowerShell 会显示确认提示；测试和评估数据库不从这份快照恢复。
+按 `Ctrl+C` 会停止 API；SQLite 没有需要单独关闭的服务。离线备份时先停止 API，再复制整个用户数据目录，确保数据库、可能尚未清理的 WAL 文件和原文属于同一停止时刻。恢复时同样保持 API 关闭，并整体恢复数据库与 `storage/`，不要只恢复其中一边。
 
 ### PostgreSQL 日常数据迁移到 SQLite
 
@@ -93,16 +71,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate-to-sqlite.
 候选文件并保留现有目标；最终发布复核失败会撤回新文件并恢复备份。迁移报告
 `data/knowbase-migration-report.json` 只记录计数、摘要、模型名、维度和指纹，
 不会写入数据库口令、模型密钥或 embedding 服务地址。迁移不会移动或删除
-`data/storage`，SQLite 继续引用同一批相对路径原文。
+`data/storage`。迁移完成后从旧 `.env` 删除 `DATABASE_URL` 与 `STORAGE_DIR`；
+下一次普通启动会把迁移库和原文复制到操作系统用户数据目录。
+
+首次复制使用 SQLite backup API，能读取已提交但仍在 WAL 中的页面；原文树在
+复制前后分别计算路径和内容摘要，并拒绝符号链接、目录联接、缺失活动原文或
+不匹配的 chunk 锚点。数据库与原文都先写候选位置，外键、FTS5、`quick_check`
+和确定性摘要通过后才发布。失败会清理候选，已有用户库不会被覆盖，项目内的
+迁移源也不会移动或删除。
 
 若迁移报告“块内容与原文区间不一致”，必须先重新索引对应文档，不能跳过
 校验。旧版本曾通过文本模式读取文件，Windows 上会把 CRLF 转成 LF 后再计算
 引用位置；数据库块虽然能检索，但它的字符偏移不再对应原始文件。当前
 `storage.read()` 按 UTF-8 原始字节解码，重建后会保留换行并恢复可验证引用。
 
+### PostgreSQL 兼容与旧数据维护
+
+`compose.yaml`、`KnowBase.WslDocker.psm1`、WSL Docker 安装/停止脚本、Alembic
+以及 PostgreSQL 备份恢复脚本暂时保留，服务于旧日常库迁移、PostgreSQL 方言
+集成测试和评估对照；`start-knowbase.ps1` 与桌面快捷方式不会调用它们。需要运行
+这些维护工具时，再按脚本参数准备 Ubuntu WSL2 与独立 Docker Engine。旧的
+`restore-knowbase-backup.ps1` 只恢复 PostgreSQL 快照，不应当用于当前 SQLite
+用户数据目录。
+
 ### 单 worker 与后台任务
 
-开发后端前先运行 `scripts/build-frontend.ps1`，再使用 `uvicorn app.main:app --reload`。需要前端热更新时另起 `npm run frontend:dev`，访问 `http://127.0.0.1:5173/ui/`；Vite 只做开发代理，生产与演示仍使用 FastAPI 托管的 `frontend/dist`。演示使用 `uvicorn app.main:app --workers 1`，避免修改文件重启正在运行的服务。
+开发后端前先运行 `scripts/build-frontend.ps1` 和 `python -m app.runtime`，再使用 `uvicorn app.main:app --reload`。需要前端热更新时另起 `npm run frontend:dev`，访问 `http://127.0.0.1:5173/ui/`；Vite 只做开发代理，生产与演示仍使用 FastAPI 托管的 `frontend/dist`。演示使用 `uvicorn app.main:app --workers 1`，避免修改文件重启正在运行的服务。
 
 - `session.store` 是进程内对象，不跨 worker 共享。仅携带 `session_id` 的兼容客户端在多 worker 下可能无法取得前一请求的历史。
 - `BackgroundTasks` 在处理请求的进程内执行，没有持久化队列、任务认领或跨进程恢复。进程退出后任务不会由另一 worker 自动接续。
@@ -130,7 +124,8 @@ TTL 由 `SESSION_TTL_SECONDS` 配置；到期记录在访问存储时清理，�
 
 | 用途 | 数据库/文件 | 原文目录 | 日常界面 |
 |---|---|---|---:|
-| 个人资料和高等数学演示库 | PostgreSQL `knowbase`；迁移候选为 `data/knowbase.db` | `data/storage` | 可见 |
+| 个人资料和高等数学演示库 | 用户数据目录 `knowbase.db` | 用户数据目录 `storage/` | 可见 |
+| 旧日常库迁移源 | PostgreSQL `knowbase`；候选为仓库 `data/knowbase.db` | 仓库 `data/storage` | 普通启动不读取；首次导入后保留 |
 | pytest 数据库集成测试 | PostgreSQL `knowbase_test` | `data/test-storage-*` | 不可见 |
 | PostgreSQL 检索与拒答评估 | `knowbase_eval` | `data/eval-storage` | 不可见 |
 | SQLite 迁移对照评估 | `data/eval/knowbase-eval.db` | `data/eval-storage` | 不可见 |
@@ -151,7 +146,7 @@ PostgreSQL 模式会创建或复用 `knowbase_eval` 并执行 Alembic；SQLite �
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\load-calculus-demo.ps1
 ```
 
-加载器只替换同名“大一上高等数学演示库”，并采用临时库完整处理后再切换正式名称。8 篇文档与阈值演示步骤见[高等数学演示指南](demo.md)。
+加载器先准备日常 SQLite，只替换同名“大一上高等数学演示库”，并采用临时库完整处理后再切换正式名称。它会拒绝 PostgreSQL/SQLite 的测试、评估和内存目标。8 篇文档与阈值演示步骤见[高等数学演示指南](demo.md)。
 
 ### 「停止」仅停止客户端等待
 
@@ -200,13 +195,13 @@ python -c "from app.ingest import process_document; process_document(int(input('
 
 含本地图片的 Markdown 以 ZIP 上传，详细格式和限额见 [Markdown 本地图片包](image-packages.md)。图片包使用不可变版本目录和清单；原文读取会核对 Markdown 摘要及图片出现位置，原图读取会核对 SHA-256 和字节大小。重传失败时整份候选目录删除，不会留下只切换一半的资源。
 
-历史图片包在成功重传后继续保留，以保证旧回答中保存的原图 URL 可用；删除文档或知识库时才统一清理。若频繁上传大图，应同时监控 `data/storage` 的磁盘占用。当前没有独立的历史版本清理按钮，也不能在不破坏历史图片 URL 的前提下自动按时间淘汰。
+历史图片包在成功重传后继续保留，以保证旧回答中保存的原图 URL 可用；删除文档或知识库时才统一清理。若频繁上传大图，应同时监控配置的用户 `storage/` 目录磁盘占用。当前没有独立的历史版本清理按钮，也不能在不破坏历史图片 URL 的前提下自动按时间淘汰。
 
 ## 4. 关键词与关联图的含义
 
-关键词召回先用 `content % :query` 预过滤，再按 `similarity()` 排序。阈值通过事务局部 `set_config('pg_trgm.similarity_threshold', ..., true)` 设置，事务结束后不污染复用连接；初始 `KEYWORD_SIMILARITY_THRESHOLD=0.1`，应随真实中文笔记评估校准。
+日常 SQLite 关键词召回使用 FTS5 trigram 与 BM25；短于三个字符时使用已转义的 `LIKE` 回退。FTS 表以 `chunks` 为 external content，并由 insert/update/delete 触发器同步。
 
-`%` 是 `gin_trgm_ops` 支持的相似度运算符。查询具备使用该索引的条件，实际执行计划仍由 PostgreSQL 按数据量和选择性选择；小表选择顺序扫描不能单独证明修复无效。可在代表性数据上检查 `EXPLAIN (ANALYZE, BUFFERS)`，同时记录召回质量。参见 [PostgreSQL 16 pg_trgm 文档](https://www.postgresql.org/docs/16/pgtrgm.html)。
+PostgreSQL 兼容后端仍先用 `content % :query` 预过滤，再按 `similarity()` 排序。阈值通过事务局部 `set_config('pg_trgm.similarity_threshold', ..., true)` 设置，事务结束后不污染复用连接；`%` 具备使用 `gin_trgm_ops` 的条件，实际计划仍由 PostgreSQL 按数据量和选择性决定。
 
 关联图最多用 400 个源块发起近邻查询，按文档轮流抽取以减少早期导入的大文档垄断；每个源块仍在该库其它文档的全部块中寻找近邻。超过源块计算上限时即使没有边也返回 `truncated=true`；图是导航近似结果，不代表完整的文档关系，也不影响问答检索。
 
@@ -232,7 +227,7 @@ python -c "from app.ingest import process_document; process_document(int(input('
 | 2 | 继续扩大真实中文多库评估集 | v2 已扩到 5 库/20 文档/60 条分层样本，并据此把 τ 校准为 0.50；下一步扩到至少 10 库/100 条，增加同义改写、短术语、同名概念与更强对抗问题 |
 | 完成 | 给大文档 Embedding 分批并校验供应商响应 | 默认每批 32 块；限流、5xx 与传输故障只重试当前批次。HTTP 200 的 JSON 结构、数量、index、数值有效性和维度均在 provider 边界校验；测试覆盖中途批次失败与退避重试 |
 | 2 | 给入库任务增加可恢复的任务记录 | 同文档版本检查已经阻止旧任务覆盖新内容；当前单进程后台任务仍不能跨重启续接，验收还需包含处理过程中重启与自动恢复 |
-| 3 | 验证干净安装与构建产物 | CI 已在独立空库执行 `alembic upgrade head` 与 `alembic check`，并让默认 embedding 配置与当前 `vector(1024)` 迁移一致；后续仍需构建 wheel 并在无源码目录的干净环境验证前端、迁移与启动脚本是否齐全 |
+| 3 | 验证干净安装与构建产物 | CI 已同时验证 SQLite 真文件与空 PostgreSQL 迁移链；后续仍需构建桌面安装包，并在无 Python、无源码目录的干净环境验证前端资源、schema 升级与启动链是否齐全 |
 | 3 | 按规模优化列表与图 | `selectinload` 解决库列表 N+1 后，可用聚合计数避免加载全部文档；前端力模拟现已在收敛、页面隐藏或离开关联图时停止 RAF，下一步仍应针对大节点数用浏览器 Performance 验证 O(n²) 斥力，并按索引版本缓存图请求 |
 
-先保持 PostgreSQL + pgvector + FastAPI 的现有技术栈完成数据正确性、可观测性与恢复能力。只有确实需要多进程吞吐、任务恢复或更大文档规模时，再选择共享会话与任务调度方案。
+当前日常技术栈是 SQLite + FTS5 + FastAPI，PostgreSQL + pgvector 保留为迁移和质量对照。下一步先完成文件系统可重建、任务进度持久化、日志和桌面壳；只有真实规模与测量证明精确向量扫描不足时，再引入可选向量扩展。

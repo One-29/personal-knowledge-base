@@ -39,7 +39,7 @@ $shortcut.TargetPath = $windowsPowerShell
 $shortcut.Arguments = $arguments
 $shortcut.WorkingDirectory = $ProjectRoot
 $shortcut.WindowStyle = 1
-$shortcut.Description = "Start KnowBase with PowerShell and WSL Docker Engine"
+$shortcut.Description = "Start KnowBase with its embedded SQLite database"
 $shortcut.IconLocation = "$windowsPowerShell,0"
 $shortcut.Save()
 

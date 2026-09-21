@@ -12,6 +12,7 @@
 """
 
 import hashlib
+import os
 import random
 import shutil
 from collections.abc import Iterator
@@ -21,15 +22,29 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
+
+# 必须先于任何 app 导入固定测试目标；日常运行已默认 SQLite，测试不能再从
+# 用户配置推导库名，否则 TestClient lifespan 可能初始化真实个人数据库。
+TEST_DATABASE_URL = os.environ.get(
+    "KNOWBASE_TEST_DATABASE_URL",
+    "postgresql+psycopg://postgres:postgres@127.0.0.1:5432/knowbase_test",
+)
+test_url = make_url(TEST_DATABASE_URL)
+if (
+    test_url.get_backend_name() != "postgresql"
+    or (test_url.database or "").lower() != "knowbase_test"
+):
+    raise RuntimeError(
+        "KNOWBASE_TEST_DATABASE_URL 必须明确指向 PostgreSQL knowbase_test"
+    )
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 
 from app import models  # noqa: F401  注册模型到 Base.metadata
 from app.core.config import settings
 from app.db import Base, get_db
 from app.main import app
-
-# 测试库 URL：把开发库名替换为 knowbase_test（保持其余连接参数一致）
-TEST_DATABASE_URL = settings.database_url.rsplit("/", 1)[0] + "/knowbase_test"
 
 engine = create_engine(TEST_DATABASE_URL)
 

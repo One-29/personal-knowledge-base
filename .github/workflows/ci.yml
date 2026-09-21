@@ -97,6 +97,6 @@ jobs:
       - name: Run tests
         run: pytest -q
         env:
-          # 测试库连接串：conftest 会据此推导 knowbase_test
-          DATABASE_URL: postgresql+psycopg://postgres@127.0.0.1:5432/knowbase
+          # conftest 在导入应用前把全进程固定到该独立测试库。
+          KNOWBASE_TEST_DATABASE_URL: postgresql+psycopg://postgres@127.0.0.1:5432/knowbase_test
           # 测试使用假 embedding/LLM provider，无需真实密钥

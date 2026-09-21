@@ -3,10 +3,10 @@
 | 字段 | 内容 |
 |---|---|
 | 状态 | 已确认（既有事实汇总） |
-| 版本 | v0.2 |
+| 版本 | v0.3 |
 | 日期 | 2026-09-20 |
 | 上游 | `01-requirements.md` |
-| 变更 | v0.2：加入 Markdown 本地图片包能力、API 与边界；v0.1：承接原 README 的项目总览 |
+| 变更 | v0.3：日常存储切换为用户目录 SQLite；v0.2：加入 Markdown 本地图片包能力、API 与边界 |
 | 关联 | GitHub 总功能 Issue |
 
 > 本文是**项目总览**：给第一次打开仓库的人一份几分钟能读完的全貌，细节一律指向对应设计文档。
@@ -38,7 +38,7 @@
 | 安全重传 | 新原文写入不可变候选文件，块与原文成功后在同一事务切换；失败继续使用匹配的旧原文和旧块 |
 | Markdown 本地图片 | 一篇 Markdown 与静态 PNG/JPEG/WebP 可组成 ZIP 导入；保留原图、顺序和字符位置，完整原文与引用均可查看 |
 | 结构感知切分 | 按 Markdown 标题边界切块，块记录原文**字符偏移**作为溯源锚点 |
-| 混合检索 | 向量（pgvector HNSW / cosine）+ 关键词（pg_trgm GIN）双通道召回，RRF 融合排序 |
+| 混合检索 | SQLite JSON 精确余弦 + FTS5 trigram 双通道召回，RRF 融合排序；PostgreSQL 后端保留作迁移对照 |
 | 带引用回答 | 先结论、再用资料里的机制/步骤/条件展开，每个论断标注 `[n]` 并可定位原文 |
 | 会话追问 | 指代句自动改写为自包含问题（「那它怎么调？」→「TCP 拥塞窗口如何调整？」） |
 | 会话记录本地保存 | 多会话（新建/切换/删除）存在浏览器本地，刷新不丢；上下文随请求回传 |
@@ -82,12 +82,12 @@ flowchart LR
     FE -->|REST| M4[M4 Agent 工作流]
     FE -->|REST| G[M5+ 关联图]
     M1 -->|触发| M2[M2 入库管线]
-    M2 -->|切分·向量化| PG[(PostgreSQL<br/>pgvector + pg_trgm)]
-    M3 -->|混合检索| PG
+    M2 -->|切分·向量化| DB[(SQLite<br/>JSON cosine + FTS5)]
+    M3 -->|混合检索| DB
     M3 --> EMB[Embedding API]
     M3 --> LLM[LLM API]
     M4 -->|逐步调 M3| M3
-    G -->|块级近邻聚合| PG
+    G -->|块级近邻聚合| DB
 ```
 
 图注：依赖只向下、无环。前端只消费 HTTP 契约；M4 只编排不检索；M3 是检索与判定的唯一入口；M2 不感知 HTTP；M1 只管元数据与原文。
@@ -125,8 +125,8 @@ flowchart LR
 | 层 | 选型 | 说明 |
 |---|---|---|
 | 语言 / 框架 | Python 3.13 · FastAPI · Pydantic v2 | 同步业务路由由线程池执行、请求/响应契约分离 |
-| 数据库 | PostgreSQL 16 · SQLAlchemy 2.x · Alembic | 迁移可重放；测试库独立 |
-| 向量与检索 | pgvector 0.8（HNSW / cosine）· pg_trgm（GIN） | 单库同事务，向量与元数据一致备份 |
+| 日常数据库 | SQLite · SQLAlchemy 2.x · schema version | 用户目录单文件、WAL、外键；无需独立服务 |
+| 向量与检索 | JSON 精确余弦 · FTS5 trigram/BM25 | 个人规模零扩展；PostgreSQL + pgvector/pg_trgm 保留作迁移与质量对照 |
 | 文档与图片校验 | Python `zipfile` · Pillow | 限量读取 ZIP，校验路径/CRC/压缩比与静态图片完整性；原图不重编码 |
 | Embedding | OpenAI 兼容 API（默认 `BAAI/bge-m3`，1024 维） | 全项目模型唯一 |
 | 生成 | OpenAI 兼容 Chat API（默认 `deepseek-ai/DeepSeek-V4-Flash`） | 供应商可配 |
@@ -148,8 +148,9 @@ flowchart LR
 
 ## 10. 评估结论摘要
 
-**v2 检索基线**（5 个库 / 20 篇文档 / 60 条分层样本）：recall@8 =
-**1.000（50/50）**、MRR = **0.987**。库内最高相似度最低约为 0.543，库外最高约为
+**v2 检索基线**（5 个库 / 20 篇文档 / 60 条分层样本）：PostgreSQL recall@8 为
+**1.000（50/50）**、MRR = **0.987**；日常 SQLite 为
+**1.000（50/50）**、MRR = **1.000**。库内最高相似度最低约为 0.543，库外最高约为
 0.493；据此把 L1 拒答阈值从 0.45 重新校准为 **0.50**，离线扫描得到库外拒答率
 100%、库内误拒率 0%。
 

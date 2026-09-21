@@ -5,9 +5,11 @@ from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app import crud, graph
 from app.core.config import settings
+from app.database import create_database_engine, initialize_database
 from app.models import Document, KnowledgeBase
 from app.schemas import KnowledgeBaseCreate
 from demo import load_calculus
@@ -57,9 +59,23 @@ def test_demo_loader_accepts_daily_database():
     )
 
 
-def test_demo_loader_rejects_non_postgresql_database():
-    with pytest.raises(RuntimeError, match="只允许加载到 PostgreSQL"):
-        load_calculus.validate_demo_target("sqlite:///knowbase")
+def test_demo_loader_accepts_daily_sqlite_file(tmp_path):
+    load_calculus.validate_demo_target(
+        "sqlite+pysqlite:///" + (tmp_path / "daily-knowbase.db").as_posix()
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "sqlite+pysqlite:///:memory:",
+        "sqlite+pysqlite:///data/eval/knowbase.db",
+        "sqlite+pysqlite:///data/knowbase-test.db",
+    ],
+)
+def test_demo_loader_rejects_memory_test_and_eval_sqlite(url):
+    with pytest.raises(RuntimeError, match="拒绝加载演示知识库"):
+        load_calculus.validate_demo_target(url)
 
 
 def test_demo_loader_rejects_session_connected_to_different_database():
@@ -81,6 +97,29 @@ def test_demo_loader_accepts_session_matching_configured_database():
         db,
         "postgresql+psycopg://postgres@localhost/knowbase",
     )
+
+
+def test_demo_loader_checks_real_sqlite_file(tmp_path):
+    database = tmp_path / "daily-knowbase.db"
+    url = "sqlite+pysqlite:///" + database.as_posix()
+    engine = create_database_engine(
+        url,
+        pool_size=1,
+        max_overflow=0,
+        pool_recycle=1800,
+        pool_timeout=1,
+    )
+    try:
+        initialize_database(engine)
+        with Session(engine) as db:
+            load_calculus.validate_demo_database_session(db, url)
+            with pytest.raises(RuntimeError, match="当前连接实际指向"):
+                load_calculus.validate_demo_database_session(
+                    db,
+                    "sqlite+pysqlite:///" + (tmp_path / "other.db").as_posix(),
+                )
+    finally:
+        engine.dispose()
 
 
 def test_demo_loader_is_idempotent_and_all_documents_are_ready(db):
