@@ -5,6 +5,7 @@
 """
 
 from .models import PreparedAsset, PreparedDocument, PreparedOccurrence, UploadValidationError
+from .package_hash import calculate_package_hash
 from .uploads import prepare_upload, read_upload
 
 __all__ = [
@@ -12,6 +13,7 @@ __all__ = [
     "PreparedDocument",
     "PreparedOccurrence",
     "UploadValidationError",
+    "calculate_package_hash",
     "prepare_upload",
     "read_upload",
 ]

@@ -17,6 +17,13 @@ def test_save_creates_dir_and_returns_relpath():
     assert (settings.storage_dir / rel).read_text(encoding="utf-8") == "内容"
 
 
+def test_read_preserves_crlf_for_citation_offsets():
+    raw = b"# title\r\n\r\nbody\r\n"
+    rel = storage.save(1, 3, raw)
+
+    assert storage.read(rel) == raw.decode("utf-8")
+
+
 def test_delete_removes_file_and_empty_dir():
     """删文件后，空的 {kb_id}/ 目录一并清理（不留空壳）。"""
     rel = storage.save(3, 4, b"x")

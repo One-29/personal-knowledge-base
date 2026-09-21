@@ -9,7 +9,11 @@ from uuid import uuid4
 
 from app import storage
 from app.core.config import settings
-from app.document_io import PreparedDocument, UploadValidationError
+from app.document_io import (
+    PreparedDocument,
+    UploadValidationError,
+    calculate_package_hash,
+)
 from app.document_io.archive_paths import is_canonical_archive_path
 from app.document_io.image_validation import MIME_EXTENSIONS
 from app.document_io.markdown_images import resolve_image_reference, scan_image_occurrences
@@ -111,17 +115,30 @@ def save_package(
     return source_rel
 
 
-def load_package_manifest(rel_path: str) -> dict | None:
+def load_package_manifest(
+    rel_path: str,
+    *,
+    storage_root: Path | None = None,
+) -> dict | None:
     """读取并校验图片包清单；普通文本版本返回 None。"""
-    source = storage.resolve_relative(rel_path)
+    source = storage.resolve_relative(rel_path, storage_root=storage_root)
     manifest_path = source.parent / MANIFEST_NAME
     if source.name != SOURCE_NAME or not manifest_path.is_file():
         return None
-    return _load_manifest_path(manifest_path, expected_source=rel_path)
+    return _load_manifest_path(
+        manifest_path,
+        expected_source=rel_path,
+        storage_root=storage_root,
+    )
 
 
-def _load_manifest_path(manifest_path: Path, *, expected_source: str | None = None) -> dict:
-    root = settings.storage_dir.resolve()
+def _load_manifest_path(
+    manifest_path: Path,
+    *,
+    expected_source: str | None = None,
+    storage_root: Path | None = None,
+) -> dict:
+    root = (storage_root or settings.storage_dir).resolve()
     resolved_manifest = manifest_path.resolve()
     if resolved_manifest != root and root not in resolved_manifest.parents:
         raise StorageIntegrityError("图片包版本清单越出存储目录")
@@ -238,6 +255,61 @@ def _load_manifest_path(manifest_path: Path, *, expected_source: str | None = No
     return manifest
 
 
+def verify_stored_package(
+    rel_path: str,
+    *,
+    expected_package_hash: str | None = None,
+    storage_root: Path | None = None,
+) -> tuple[dict, str]:
+    """完整校验图片包清单、原文、资源与逻辑摘要。
+
+    日常读取可以只校验实际访问的资源；备份和数据库迁移需要一次读完包内
+    所有字节，因此提供这个显式的维护入口。
+    """
+    manifest = load_package_manifest(rel_path, storage_root=storage_root)
+    if manifest is None:
+        raise StorageIntegrityError("路径不是有效的 Markdown 图片包")
+    if (
+        expected_package_hash is not None
+        and manifest["package_hash"] != expected_package_hash
+    ):
+        raise StorageIntegrityError("图片包摘要与文档记录不一致")
+
+    source = storage.resolve_relative(rel_path, storage_root=storage_root)
+    if not source.is_file():
+        raise StorageIntegrityError("图片包原文缺失")
+    source_bytes = source.read_bytes()
+    try:
+        text = source_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise StorageIntegrityError("图片包原文不是 UTF-8") from exc
+
+    assets: list[tuple[str, bytes]] = []
+    for asset in manifest["assets"]:
+        path = storage.resolve_relative(
+            asset["stored_path"],
+            storage_root=storage_root,
+        )
+        if not path.is_file():
+            raise StorageIntegrityError("图片包资源缺失")
+        data = path.read_bytes()
+        if len(data) != asset["file_size"]:
+            raise StorageIntegrityError("图片文件大小与清单不一致")
+        if hashlib.sha256(data).hexdigest() != asset["content_hash"]:
+            raise StorageIntegrityError("图片包资源完整性校验失败")
+        assets.append((asset["source_path"], data))
+
+    calculated = calculate_package_hash(
+        manifest["source_archive_path"],
+        source_bytes,
+        assets,
+    )
+    if calculated != manifest["package_hash"]:
+        raise StorageIntegrityError("图片包逻辑摘要校验失败")
+    verify_package_source(manifest, text)
+    return manifest, text
+
+
 def is_package_source(rel_path: str | None) -> bool:
     """快速判断路径是否指向一个图片包版本，不在清理路径中解析整个清单。"""
     if not rel_path:
@@ -323,14 +395,24 @@ def resolve_version_image(
     return path, asset, occurrence
 
 
-def _verify_saved_package(manifest: dict) -> None:
+def _verify_saved_package(
+    manifest: dict,
+    *,
+    storage_root: Path | None = None,
+) -> None:
     """读取并校验一整份已发布包；仅用于碰撞恢复，避免日常列表全量读图。"""
-    source = storage.resolve_relative(manifest["source_path"])
+    source = storage.resolve_relative(
+        manifest["source_path"],
+        storage_root=storage_root,
+    )
     if not source.is_file():
         raise StorageIntegrityError("图片包原文缺失")
     _verify_hash(source, manifest["source_sha256"])
     for asset in manifest["assets"]:
-        path = storage.resolve_relative(asset["stored_path"])
+        path = storage.resolve_relative(
+            asset["stored_path"],
+            storage_root=storage_root,
+        )
         if not path.is_file():
             raise StorageIntegrityError("图片包资源缺失")
         if path.stat().st_size != asset["file_size"]:

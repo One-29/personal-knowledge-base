@@ -13,6 +13,7 @@ from .archive_paths import normalize_archive_path
 from .image_validation import IMAGE_EXTENSIONS, IMAGE_FORMATS, validate_image
 from .markdown_images import resolve_image_reference, scan_image_occurrences
 from .models import PreparedAsset, PreparedDocument, PreparedOccurrence, UploadValidationError
+from .package_hash import calculate_package_hash
 
 PLAIN_EXTENSIONS = {".md", ".txt"}
 SUPPORTED_EXTENSIONS = PLAIN_EXTENSIONS | {".zip"}
@@ -197,7 +198,11 @@ def _prepare_zip(payload: bytes) -> PreparedDocument:
             title=PurePosixPath(source_path).name,
             source_bytes=source_bytes,
             text=text,
-            content_hash=_package_hash(source_path, source_bytes, assets),
+            content_hash=calculate_package_hash(
+                source_path,
+                source_bytes,
+                ((asset.source_path, asset.data) for asset in assets),
+            ),
             source_archive_path=source_path,
             assets=tuple(assets),
             occurrences=occurrences,
@@ -218,16 +223,3 @@ def _decode_markdown(payload: bytes) -> str:
         return payload.decode("utf-8")
     except UnicodeDecodeError:
         raise UploadValidationError("文件编码需为 UTF-8") from None
-
-
-def _package_hash(source_path: str, source: bytes, assets: list[PreparedAsset]) -> str:
-    """对逻辑内容计算稳定摘要；ZIP 时间戳和压缩级别不影响摘要。"""
-    digest = hashlib.sha256(b"knowbase-image-package-v1\0")
-    entries = [(source_path, source)] + [(asset.source_path, asset.data) for asset in assets]
-    for path, data in sorted(entries, key=lambda item: item[0]):
-        path_bytes = path.encode("utf-8")
-        digest.update(len(path_bytes).to_bytes(4, "big"))
-        digest.update(path_bytes)
-        digest.update(len(data).to_bytes(8, "big"))
-        digest.update(data)
-    return digest.hexdigest()

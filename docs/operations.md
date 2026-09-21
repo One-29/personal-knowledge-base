@@ -2,9 +2,9 @@
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 已确认（关键修复、并发回归与数据环境隔离已实施） |
-| 版本 | v0.3 |
-| 日期 | 2026-09-14 |
+| 状态 | 已确认（关键修复、数据隔离与 SQLite 一次性迁移已实施） |
+| 版本 | v0.4 |
+| 日期 | 2026-09-21 |
 | 上游 | `design/03-data-model.md` · `design/04-retrieval.md` · `design/05-agent-workflow.md` |
 | 关联 | A1–A2、B1–B4、C1–C7 修复 · WSL2 命令行运行环境 |
 
@@ -64,6 +64,42 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\restore-knowbase-b
 
 恢复器验证 `PGDMP` 文件头，先把快照完整恢复到临时数据库，成功后才短暂切换为 `knowbase`；损坏快照不会先清空当前数据库。原文恢复前，现有 `data/storage` 会复制到带时间戳的 `data/backups/before-restore-*`，随后按快照重建，避免残留旧文件。删除前脚本会核对绝对路径必须精确位于项目 `data` 目录下。这是有意覆盖日常数据的操作，PowerShell 会显示确认提示；测试和评估数据库不从这份快照恢复。
 
+### PostgreSQL 日常数据迁移到 SQLite
+
+迁移前先停止 API，避免迁移完成后 PostgreSQL 继续接收新写入而与 SQLite
+分叉；数据库容器可以继续运行。然后从项目根执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate-to-sqlite.ps1
+```
+
+脚本先执行最新 Alembic 迁移，再调用 `app.migration`。迁移器会完成以下检查：
+
+1. 拒绝 `pending` / `processing` 文档和仍挂着候选原文的记录；
+2. 用 PostgreSQL `REPEATABLE READ` 与四张业务表的 `SHARE` 锁取得一致快照；
+3. 逐个校验活动普通原文的 SHA-256，以及 Markdown 图片包的清单、全部资源、逻辑摘要和图片出现位置；
+4. 核对每个 chunk 的 `kb_id`、连续序号、数量、向量维度及 `[char_start, char_end)` 对应的原文；
+5. 在同目录临时文件复制显式主键和数据，随后运行外键检查、FTS5 external-content `integrity-check`、`quick_check` 和源/目标逐表摘要比对；
+6. checkpoint 候选 WAL 并切回单文件模式，最终才原子改名为 `data/knowbase.db`。
+
+默认不会覆盖已有目标。确认要用新快照替换时执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate-to-sqlite.ps1 `
+  -ReplaceExisting
+```
+
+旧文件会保留为 `knowbase.db.pre-migration-<UTC>.bak`。任何候选阶段失败都会清理
+候选文件并保留现有目标；最终发布复核失败会撤回新文件并恢复备份。迁移报告
+`data/knowbase-migration-report.json` 只记录计数、摘要、模型名、维度和指纹，
+不会写入数据库口令、模型密钥或 embedding 服务地址。迁移不会移动或删除
+`data/storage`，SQLite 继续引用同一批相对路径原文。
+
+若迁移报告“块内容与原文区间不一致”，必须先重新索引对应文档，不能跳过
+校验。旧版本曾通过文本模式读取文件，Windows 上会把 CRLF 转成 LF 后再计算
+引用位置；数据库块虽然能检索，但它的字符偏移不再对应原始文件。当前
+`storage.read()` 按 UTF-8 原始字节解码，重建后会保留换行并恢复可验证引用。
+
 ### 单 worker 与后台任务
 
 开发后端前先运行 `scripts/build-frontend.ps1`，再使用 `uvicorn app.main:app --reload`。需要前端热更新时另起 `npm run frontend:dev`，访问 `http://127.0.0.1:5173/ui/`；Vite 只做开发代理，生产与演示仍使用 FastAPI 托管的 `frontend/dist`。演示使用 `uvicorn app.main:app --workers 1`，避免修改文件重启正在运行的服务。
@@ -94,7 +130,7 @@ TTL 由 `SESSION_TTL_SECONDS` 配置；到期记录在访问存储时清理，�
 
 | 用途 | 数据库/文件 | 原文目录 | 日常界面 |
 |---|---|---|---:|
-| 个人资料和高等数学演示库 | PostgreSQL `knowbase` | `data/storage` | 可见 |
+| 个人资料和高等数学演示库 | PostgreSQL `knowbase`；迁移候选为 `data/knowbase.db` | `data/storage` | 可见 |
 | pytest 数据库集成测试 | PostgreSQL `knowbase_test` | `data/test-storage-*` | 不可见 |
 | PostgreSQL 检索与拒答评估 | `knowbase_eval` | `data/eval-storage` | 不可见 |
 | SQLite 迁移对照评估 | `data/eval/knowbase-eval.db` | `data/eval-storage` | 不可见 |
