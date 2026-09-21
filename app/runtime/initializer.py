@@ -19,6 +19,9 @@ from app.embedding_profile import (
     EmbeddingProfileError,
     ensure_embedding_profile,
 )
+from app.vault.rebuild import VaultRebuildError, rebuild_database
+from app.vault.store import VaultError, VaultStore
+from app.vault.sync import ensure_snapshot, verify_database_matches_snapshot
 
 from .configuration import RuntimePaths, resolve_runtime_paths
 from .project_import import ProjectDataImport, import_project_data
@@ -47,17 +50,31 @@ def prepare_runtime(
         if project_root is not None
         else Path(__file__).resolve().parents[2]
     )
-    if import_existing_project_data:
-        project_import = import_project_data(
-            source_database=root / "data" / "knowbase.db",
-            source_storage=root / "data" / "storage",
-            target_database=paths.database,
-            target_storage=paths.storage,
-            embedding_dimension=config.embedding_dimension,
-            timeout_seconds=config.db_pool_timeout,
-        )
-    else:
-        project_import = ProjectDataImport(status="disabled")
+    vault = VaultStore(paths.storage)
+    try:
+        if not paths.database.exists() and vault.exists():
+            rebuilt = rebuild_database(
+                paths.database,
+                store=vault,
+                config=config,
+            )
+            project_import = ProjectDataImport(
+                status="vault-rebuilt",
+                database=rebuilt.database,
+            )
+        elif import_existing_project_data:
+            project_import = import_project_data(
+                source_database=root / "data" / "knowbase.db",
+                source_storage=root / "data" / "storage",
+                target_database=paths.database,
+                target_storage=paths.storage,
+                embedding_dimension=config.embedding_dimension,
+                timeout_seconds=config.db_pool_timeout,
+            )
+        else:
+            project_import = ProjectDataImport(status="disabled")
+    except (VaultError, VaultRebuildError) as exc:
+        raise RuntimeInitializationError(f"SQLite 启动前重建失败：{exc}") from exc
 
     engine = None
     try:
@@ -73,6 +90,8 @@ def prepare_runtime(
         initialize_database(engine)
         with Session(engine, expire_on_commit=False) as db:
             ensure_embedding_profile(db, EmbeddingProfile.configured(config))
+            snapshot = ensure_snapshot(db, store=vault)
+            verify_database_matches_snapshot(db, snapshot, store=vault)
         with engine.connect() as connection:
             quick_check = connection.exec_driver_sql("PRAGMA quick_check").scalar_one()
             foreign_keys = connection.exec_driver_sql(
@@ -91,6 +110,7 @@ def prepare_runtime(
         OSError,
         SQLAlchemyError,
         UnsupportedSchemaVersion,
+        VaultError,
     ) as exc:
         raise RuntimeInitializationError(f"SQLite 启动前检查失败：{exc}") from exc
     finally:

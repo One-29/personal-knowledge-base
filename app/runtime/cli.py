@@ -47,6 +47,7 @@ def main(argv: list[str] | None = None) -> int:
         "target-exists": "复用已有用户数据库",
         "source-missing": "没有旧迁移数据，已创建新的用户数据库",
         "disabled": "已跳过项目数据导入",
+        "vault-rebuilt": "已从原文 Vault 完整重建用户数据库",
     }
     print(f"[KnowBase Runtime] {status_messages[initialized.project_import.status]}")
     print(f"  database: {initialized.paths.database}")

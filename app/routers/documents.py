@@ -32,6 +32,8 @@ from ..schemas import (
     DocumentOut,
     UploadResult,
 )
+from ..vault.coordinator import VaultTransactionError, commit_document
+from ..vault.store import VaultError
 
 logger = logging.getLogger(__name__)
 
@@ -163,21 +165,35 @@ def upload_document(
     )
     db.add(doc)
     db.flush()                                          # 分配 doc_id（事务未提交）
+    candidate_path: str | None = None
     try:
         candidate_path = _save_candidate(prepared, kb_id, doc.id, doc.ingest_version)
         doc.file_path = candidate_path
         doc.pending_file_path = candidate_path
         doc.pending_content_hash = prepared.content_hash
         doc.pending_char_count = len(prepared.text)
-    except OSError:
+        commit_document(db, doc)
+    except VaultTransactionError:
         db.rollback()
+        logger.exception(
+            "上传事务失败且 Vault 未能恢复，保留候选原文: kb_id=%s title=%s",
+            kb_id,
+            title,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="数据一致性恢复失败，请停止写入并重新启动检查",
+        ) from None
+    except (OSError, VaultError):
+        db.rollback()
+        if candidate_path:
+            _safe_delete(candidate_path)
         logger.exception("原文写入失败: kb_id=%s title=%s", kb_id, title)
         raise HTTPException(status_code=500, detail="原文写入失败") from None
-    try:
-        db.commit()
     except Exception:
         db.rollback()
-        _safe_delete(candidate_path)
+        if candidate_path:
+            _safe_delete(candidate_path)
         raise
     db.refresh(doc)
     _schedule_ingest(background_tasks, doc)
@@ -219,7 +235,7 @@ def reupload_document(
             )
             doc.last_error_code = None
             doc.last_error_message = None
-            db.commit()
+            _commit_document_and_vault(db, doc)
             db.refresh(doc)
             if abandoned_path != doc.file_path:
                 _safe_delete(abandoned_path)
@@ -233,7 +249,7 @@ def reupload_document(
             doc.status = DocStatus.PENDING.value
             doc.last_error_code = None
             doc.last_error_message = None
-            db.commit()
+            _commit_document_and_vault(db, doc)
             db.refresh(doc)
             _schedule_ingest(background_tasks, doc)
         return UploadResult(document=_doc_out(doc), content_changed=False)
@@ -254,9 +270,11 @@ def reupload_document(
     doc.last_error_code = None
     doc.last_error_message = None
     try:
-        db.commit()
+        _commit_document_and_vault(db, doc)
+    except VaultTransactionError:
+        # 清单恢复失败时保留候选字节，避免进一步破坏可能领先的文件真相。
+        raise
     except Exception:
-        db.rollback()
         _safe_delete(candidate_path)
         raise
     db.refresh(doc)
@@ -264,6 +282,11 @@ def reupload_document(
         _safe_delete(abandoned_path)
     _schedule_ingest(background_tasks, doc)
     return UploadResult(document=_doc_out(doc), content_changed=True)
+
+
+def _commit_document_and_vault(db: Session, doc: Document) -> None:
+    """先发布文件真相，再提交派生数据库；失败时按回滚后的 DB 重写清单。"""
+    commit_document(db, doc)
 
 
 @kb_documents_router.get("/{kb_id}/documents", response_model=list[DocumentOut])

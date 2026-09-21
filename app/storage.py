@@ -65,14 +65,14 @@ def verify_hash(path: Path, expected_hash: str) -> None:
         raise OSError(f"文件完整性校验失败: {path.name}")
 
 
-def read(rel_path: str) -> str:
+def read(rel_path: str, *, storage_root: Path | None = None) -> str:
     """按原始 UTF-8 字节读取原文，避免 Windows 把 CRLF 隐式转换成 LF。"""
-    return resolve_relative(rel_path).read_bytes().decode("utf-8")
+    return resolve_relative(rel_path, storage_root=storage_root).read_bytes().decode("utf-8")
 
 
-def delete(rel_path: str) -> bool:
+def delete(rel_path: str, *, storage_root: Path | None = None) -> bool:
     """幂等删除普通候选文件或一整个带清单的图片包候选目录。"""
-    path = resolve_relative(rel_path)
+    path = resolve_relative(rel_path, storage_root=storage_root)
     if not path.exists():
         return False
     if path.name == "source.md" and (path.parent / "manifest.json").is_file():

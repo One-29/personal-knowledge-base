@@ -15,7 +15,7 @@ from typing import Protocol
 
 import httpx
 
-from .core.config import settings
+from .core.config import Settings, settings
 from .http_client import get_http_client
 
 logger = logging.getLogger(__name__)
@@ -176,17 +176,17 @@ class OpenAICompatibleEmbedding:
         return [vector for vector in ordered if vector is not None]
 
 
-def get_embedding_provider() -> EmbeddingProvider:
+def get_embedding_provider(config: Settings = settings) -> EmbeddingProvider:
     """按配置构造 provider；未配置 key 时立刻失败（不静默降级）。"""
-    if not settings.embedding_api_key:
+    if not config.embedding_api_key:
         raise EmbeddingError("未配置 EMBEDDING_API_KEY（见 .env.example）")
     return OpenAICompatibleEmbedding(
-        api_key=settings.embedding_api_key,
-        base_url=settings.embedding_base_url,
-        model=settings.embedding_model,
-        timeout=settings.embedding_timeout_seconds,
-        batch_size=settings.embedding_batch_size,
-        max_retries=settings.embedding_max_retries,
-        retry_base_seconds=settings.embedding_retry_base_seconds,
-        dimension=settings.embedding_dimension,
+        api_key=config.embedding_api_key,
+        base_url=config.embedding_base_url,
+        model=config.embedding_model,
+        timeout=config.embedding_timeout_seconds,
+        batch_size=config.embedding_batch_size,
+        max_retries=config.embedding_max_retries,
+        retry_base_seconds=config.embedding_retry_base_seconds,
+        dimension=config.embedding_dimension,
     )

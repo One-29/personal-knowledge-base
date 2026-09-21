@@ -22,6 +22,11 @@ from app.database import (
 from app.db import SessionLocal, engine
 from app.models import Document, KnowledgeBase
 from app.schemas import KnowledgeBaseCreate
+from app.vault.coordinator import (
+    VaultTransactionError,
+    commit_document,
+    commit_full_snapshot,
+)
 
 DEMO_KB_NAME = "大一上高等数学演示库"
 STAGING_KB_NAME = f"{DEMO_KB_NAME}（导入中）"
@@ -128,7 +133,11 @@ def _add_and_process_document(db: Session, kb_id: int, path: Path) -> Document:
     db.flush()
     try:
         doc.file_path = storage.save(kb_id, doc.id, content)
-        db.commit()
+        commit_document(db, doc)
+    except VaultTransactionError:
+        db.rollback()
+        # 清单可能已经记录这份原文；保留目录供启动自检恢复。
+        raise
     except Exception:
         db.rollback()
         storage.delete_kb_dir(kb_id)
@@ -162,7 +171,11 @@ def replace_demo_kb(db: Session) -> tuple[int, list[Document]]:
             raise RuntimeError("演示知识库在名称切换前消失")
         staging.name = DEMO_KB_NAME
         staging.description = DEMO_DESCRIPTION
-        db.commit()
+        commit_full_snapshot(db)
+    except VaultTransactionError:
+        # 清单可能已经领先于数据库；保留全部原文，供启动自检和重建恢复。
+        db.rollback()
+        raise
     except Exception:
         db.rollback()
         failed = db.get(KnowledgeBase, staging_id)

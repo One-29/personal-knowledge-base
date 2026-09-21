@@ -124,7 +124,11 @@ def test_ask_refuses_mismatched_profile_before_embedding_call(
         classmethod(lambda cls, config=None: _profile("current")),
     )
     provider = Mock(side_effect=AssertionError("模型指纹不匹配时不应请求 embedding"))
-    monkeypatch.setattr(embedding, "get_embedding_provider", provider)
+    monkeypatch.setattr(
+        embedding,
+        "get_embedding_provider",
+        lambda _config=None: provider(),
+    )
 
     result = ask.answer_question(profile_db, "会不会混用旧向量？", kb.id)
 

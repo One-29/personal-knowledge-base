@@ -1,8 +1,14 @@
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
-from .models import KnowledgeBase, Document
+from .models import Document, KnowledgeBase
 from .schemas import KnowledgeBaseCreate
+from .vault.coordinator import (
+    commit_document,
+    commit_knowledge_base,
+    commit_without_document,
+    commit_without_knowledge_base,
+)
 
 
 def create_kb(db: Session, data: KnowledgeBaseCreate) -> KnowledgeBase:
@@ -11,7 +17,8 @@ def create_kb(db: Session, data: KnowledgeBaseCreate) -> KnowledgeBase:
         description=data.description,
     )
     db.add(db_kb)
-    db.commit()
+    db.flush()
+    commit_knowledge_base(db, db_kb)
     db.refresh(db_kb)
     return db_kb
 
@@ -40,8 +47,9 @@ def delete_kb(db: Session, kb_id: int) -> bool:
     if db_kb is None:
         return False
     db.delete(db_kb)
-    db.commit()
+    commit_without_knowledge_base(db, kb_id)
     return True
+
 
 def create_document(
     db: Session,
@@ -52,12 +60,19 @@ def create_document(
     char_count: int,
 ) -> Document:
     """登记新文档（status 由 default 落 pending；文件已由调用方写入 storage）"""
-    db_doc = Document(kb_id=kb_id, title=title, file_path=file_path,
-                      content_hash=content_hash, char_count=char_count)
+    db_doc = Document(
+        kb_id=kb_id,
+        title=title,
+        file_path=file_path,
+        content_hash=content_hash,
+        char_count=char_count,
+    )
     db.add(db_doc)
-    db.commit()
+    db.flush()
+    commit_document(db, db_doc)
     db.refresh(db_doc)
     return db_doc
+
 
 def list_documents(
     db: Session,
@@ -73,6 +88,7 @@ def list_documents(
         stmt = stmt.where(Document.title.ilike(f"%{title}%"))
     stmt = stmt.order_by(desc(Document.created_at), desc(Document.id))
     return list(db.scalars(stmt).all())
+
 
 def get_document(
     db: Session,
@@ -97,5 +113,5 @@ def delete_document(db: Session, doc_id: int) -> bool:
     if doc is None:
         return False
     db.delete(doc)
-    db.commit()
+    commit_without_document(db, doc_id)
     return True
