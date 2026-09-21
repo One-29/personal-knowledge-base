@@ -10,7 +10,7 @@
 
 ## 1. 加载或恢复演示库
 
-先在 `.env` 中配置 Embedding，再从项目根目录执行；脚本会自动启动 Ubuntu WSL2 内的独立 Docker Engine 和 `knowbase-pg`：
+先在 `.env` 中配置 Embedding，再从项目根目录执行。脚本会准备日常 SQLite 并导入演示语料，不需要 WSL、Docker 或 PostgreSQL：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\load-calculus-demo.ps1
@@ -20,7 +20,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\load-calculus-demo
 
 重新加载演示库或更新、删除文档后，旧知识块的数据库 ID 会失效。浏览器保存的历史回答同时保存了回答生成时的文档标题、原文块和字符区间；点击这类旧引用时，右侧核对栏会显示“回答时引用快照”，并明确提示当前原文已经更新或删除。当前回答仍优先读取数据库中的最新引用详情。
 
-加载器禁止向 `knowbase_test`、`knowbase_eval` 以及名称以 `_test` 或 `_eval` 结尾的数据库写入，避免演示数据破坏自动测试或质量评估环境。
+加载器会核对配置与 Session 的真实目标。它禁止向 PostgreSQL/SQLite 的测试、评估目标及 SQLite 内存库写入，避免演示数据破坏自动测试或质量评估环境。
 
 ## 2. 普通问答与引用演示
 
@@ -65,6 +65,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\load-calculus-demo
 
 ## 5. 演示数据的边界
 
-演示库保存在日常 `knowbase` 中，所以会出现在界面，也会在选择“全部知识库”时参与检索。它的用途是提供可重复的公开样例，不应放入个人隐私资料。
+演示库保存在用户数据目录的日常 `knowbase.db` 中，所以会出现在界面，也会在选择“全部知识库”时参与检索。它的用途是提供可重复的公开样例，不应放入个人隐私资料。
 
-pytest 使用独立的 `knowbase_test`；质量评估使用 `knowbase_eval` 和 `data/eval-storage`。后两者不会出现在日常界面，也不会进入日常全库检索。
+pytest 使用独立的 PostgreSQL `knowbase_test`；质量评估使用 `knowbase_eval` 或固定的 SQLite 评估文件与 `data/eval-storage`。这些目标不会出现在日常界面，也不会进入日常全库检索。

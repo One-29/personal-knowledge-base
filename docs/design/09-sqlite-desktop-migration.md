@@ -2,13 +2,13 @@
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 已实现（阶段 1 核心双方言 + 阶段 2 数据迁移） |
-| 版本 | v0.3 |
+| 状态 | 已实现（阶段 1 核心双方言 + 阶段 2 数据迁移 + 阶段 3 默认运行时） |
+| 版本 | v0.4 |
 | 日期 | 2026-09-21 |
 | 上游 | `02-modules.md`（模块边界）· `03-data-model.md`（数据模型）· `04-retrieval.md`（检索） |
-| 关联 | 桌面 App 化阶段 1–2：核心双方言、模型指纹、质量门与数据迁移 |
+| 关联 | 桌面 App 化阶段 1–3：核心双方言、模型指纹、质量门、迁移与默认运行时 |
 
-> 本文记录从 PostgreSQL 服务迁移到 SQLite 嵌入式数据库的边界、当前实现和后续切换顺序。核心业务和一次性数据迁移已经完成；默认启动方式仍保持 PostgreSQL，待启动器切换完成后再退役旧路径。
+> 本文记录从 PostgreSQL 服务迁移到 SQLite 嵌入式数据库的边界、当前实现和后续顺序。核心业务、一次性数据迁移和默认启动切换已经完成；PostgreSQL 路径只保留给迁移、兼容回归与评估对照。
 
 ## 1. 目标与约束
 
@@ -17,7 +17,7 @@
 迁移遵守三条约束：
 
 1. 每个阶段都能独立回归，`main` 始终可运行；
-2. PostgreSQL 基线在切换完成前保持可用，用同一 ORM 和业务测试检查行为等价；
+2. PostgreSQL 基线作为迁移与回归对照继续可用，用同一 ORM 和业务测试检查行为等价；
 3. 方言差异只能位于 `app/database` 与 `app/search`，路由、问答、工作流和入库管线不拼接方言 SQL。
 
 ## 2. 阶段 1 已实现结构
@@ -87,19 +87,23 @@ embedding 指纹。`app_metadata.schema_version` 由 SQLite 初始化器管理�
 
 ## 5. 启动与升级语义
 
-设置下面的连接串并直接启动 API，可使用阶段 1 的 SQLite 路径：
+普通配置不再写 `DATABASE_URL` 或 `STORAGE_DIR`。运行时按平台选择用户数据目录，并允许用一个 `KNOWBASE_DATA_DIR` 整体覆盖：
 
-```dotenv
-DATABASE_URL=sqlite+pysqlite:///./data/knowbase.db
-```
+| 系统 | 默认目录 |
+|---|---|
+| Windows | `%LOCALAPPDATA%\KnowBase` |
+| macOS | `~/Library/Application Support/KnowBase` |
+| Linux | `$XDG_DATA_HOME/knowbase` 或 `~/.local/share/knowbase` |
 
-应用 lifespan 会幂等创建 v1 schema、启用 WAL、创建 FTS5 索引与同步触发器。数据库版本高于当前程序时拒绝打开，防止旧应用改坏新格式；低于当前版本时也明确要求升级。后续每次 schema 变化必须提供按版本顺序执行、事务化且可重复验证的升级函数，不能用 `create_all()` 假装完成字段迁移。
+`app.runtime` 在 API 启动前幂等创建 v1 schema、启用 WAL、创建 FTS5 索引与同步触发器，并核对 embedding 指纹、外键和 `quick_check`。数据库版本高于当前程序时拒绝打开，防止旧应用改坏新格式；低于当前版本时也明确要求升级。后续每次 schema 变化必须提供按版本顺序执行、事务化且可重复验证的升级函数，不能用 `create_all()` 假装完成字段迁移。
+
+旧 PostgreSQL 迁移产物先落在仓库 `data/knowbase.db`，普通首次启动再通过 SQLite backup API 与原文树双重摘要复制到用户目录。复制使用候选文件/目录，校验活动原文、图片包、chunk 锚点、外键、FTS 和逻辑摘要后才发布；失败清理候选，源文件与已有用户库保持不变。目标库一旦存在，后续启动只复用它，不会再次导入或覆盖。
 
 ## 6. 后续阶段与验收门
 
 1. **已完成：数据迁移**。PostgreSQL/文件系统到 SQLite 的一次性导入、指纹核对、逐表摘要和失败保护已有真实 PostgreSQL 集成测试。
-2. **下一步：默认运行时切换**。默认连接串改为 SQLite；启动器移除 PostgreSQL、WSL、Docker 和 Alembic 用户路径。验收为普通运行只需 Python 和前端构建产物，原 PostgreSQL 路径仍保留为开发/迁移兼容入口。
-3. **文件系统可重建**：为原文补稳定元数据，删除数据库后可全量重建；通过 mtime/size 检测外部编辑。
+2. **已完成：默认运行时切换**。默认连接串改为用户目录 SQLite；启动器、演示库和快捷方式移除 PostgreSQL、WSL、Docker 与 Alembic 用户路径。首次导入覆盖 WAL、失败回滚、目标不覆盖和跨平台路径测试。
+3. **下一步：文件系统可重建**。为原文补稳定元数据，删除数据库后可全量重建；通过 mtime/size 检测外部编辑。
 4. **桌面壳**：先用 pywebview 验证 Python、WebView、SQLite、文件监听和单实例锁，再决定 Tauri sidecar 的正式打包。
 
-每一阶段都必须跑 PostgreSQL 全回归、SQLite 真文件集成测试以及 v2 检索基线。默认切换前，不删除 PostgreSQL 实现和迁移文件。
+每一阶段都必须跑 PostgreSQL 全回归、SQLite 真文件集成测试以及 v2 检索基线。文件系统可重建和桌面壳完成前，不删除 PostgreSQL 实现与迁移文件。

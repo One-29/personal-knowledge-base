@@ -9,7 +9,8 @@ from pathlib import Path
 from app.core.config import settings
 from app.db import engine
 
-from .postgresql_to_sqlite import MigrationError, migrate_postgresql_to_sqlite
+from .errors import MigrationError
+from .postgresql_to_sqlite import migrate_postgresql_to_sqlite
 
 
 def build_parser() -> argparse.ArgumentParser:

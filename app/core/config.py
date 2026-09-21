@@ -6,22 +6,32 @@
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .paths import DATABASE_FILE_NAME, default_user_data_dir, sqlite_database_url
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_ignore_empty=True,
+        populate_by_name=True,
+    )
 
-    # 迁移期同时支持 PostgreSQL/psycopg3 与 SQLite/pysqlite。
-    database_url: str = "postgresql+psycopg://postgres:postgres@127.0.0.1:5432/knowbase"
+    # 日常数据默认进入操作系统用户目录；DATABASE_URL / STORAGE_DIR 仍可覆盖，
+    # 供旧 PostgreSQL 数据迁移、CI 和高级自托管使用。
+    data_dir: Path = Field(
+        default_factory=default_user_data_dir,
+        alias="KNOWBASE_DATA_DIR",
+    )
+    database_url: str | None = None
+    storage_dir: Path | None = None
     db_pool_size: int = Field(default=5, ge=1)
     db_max_overflow: int = Field(default=10, ge=0)
     db_pool_recycle: int = Field(default=1800, gt=0)
     db_pool_timeout: float = Field(default=5.0, gt=0)
-
-    # 原文文件存储根目录（决策 D6）
-    storage_dir: Path = Path("./data/storage")
 
     # 普通文本与一期 Markdown 图片包限制。ZIP 同时限制压缩前后大小、条目数、
     # 单图大小/像素及压缩比，避免压缩炸弹和超大图片耗尽内存。
@@ -72,6 +82,21 @@ class Settings(BaseSettings):
     # 多步工作流（05 §5 AW2）：单次任务的步骤上限
     workflow_max_steps: int = Field(default=5, ge=1)
 
+    @model_validator(mode="after")
+    def derive_local_storage_paths(self) -> "Settings":
+        self.data_dir = self.data_dir.expanduser().resolve()
+        if not self.database_url or not self.database_url.strip():
+            self.database_url = sqlite_database_url(
+                self.data_dir / DATABASE_FILE_NAME
+            )
+        if self.storage_dir is None:
+            self.storage_dir = self.data_dir / "storage"
+        else:
+            self.storage_dir = self.storage_dir.expanduser().resolve()
+        return self
+
 
 # 进程内单例：整个应用共享一份配置（import settings 即用）
 settings = Settings()
+assert settings.database_url is not None
+assert settings.storage_dir is not None

@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import sys
 from pathlib import Path
 
 from sqlalchemy import func, select
-from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from app import crud, graph, ingest, storage
 from app.core.config import settings
-from app.db import SessionLocal
+from app.database import (
+    DatabaseLocation,
+    DatabaseLocationError,
+    initialize_database,
+    parse_database_location,
+    session_database_location,
+)
+from app.db import SessionLocal, engine
 from app.models import Document, KnowledgeBase
 from app.schemas import KnowledgeBaseCreate
 
@@ -23,39 +30,59 @@ NOTES_DIR = Path(__file__).resolve().parent / "calculus"
 # 使用项目示例配置 BAAI/bge-m3 对本语料实测校准：从“整体关系”逐步收紧到核心关系。
 GRAPH_THRESHOLDS = (0.60, 0.68, 0.72, 0.76)
 FORBIDDEN_DATABASES = frozenset({"knowbase_test", "knowbase_eval"})
-
-
-def database_name(database_url: str) -> str:
-    """从 SQLAlchemy URL 取得数据库名，供安全边界与测试复用。"""
-    return (make_url(database_url).database or "").lower()
+FORBIDDEN_PATH_PARTS = frozenset({"test", "tests", "eval", "evaluation"})
 
 
 def validate_demo_target(database_url: str) -> None:
     """演示数据只能进入日常/演示实例，绝不写入自动测试或评估数据库。"""
     try:
-        url = make_url(database_url)
-    except Exception as exc:
+        location = parse_database_location(database_url)
+    except DatabaseLocationError as exc:
         raise RuntimeError("DATABASE_URL 无效，拒绝加载演示知识库") from exc
-    if url.get_backend_name() != "postgresql":
-        raise RuntimeError("演示知识库只允许加载到 PostgreSQL")
-    name = database_name(database_url)
-    if not name:
-        raise RuntimeError("DATABASE_URL 没有数据库名，拒绝加载演示知识库")
-    if name in FORBIDDEN_DATABASES or name.endswith("_test") or name.endswith("_eval"):
-        raise RuntimeError(f"目标数据库 {name!r} 属于测试或评估环境，拒绝加载演示知识库")
+    if _is_forbidden_demo_location(location):
+        target = location.name or str(location.path)
+        raise RuntimeError(
+            f"目标数据库 {target!r} 属于测试或评估环境，拒绝加载演示知识库"
+        )
 
 
 def validate_demo_database_session(db: Session, database_url: str) -> None:
     """核对 Session 的真实目标，避免配置已变而连接工厂仍指向另一数据库。"""
-    configured = database_name(database_url)
-    actual = str(db.scalar(select(func.current_database())) or "").lower()
+    configured = parse_database_location(database_url)
+    actual = session_database_location(db, database_url)
     if actual != configured:
         raise RuntimeError(
-            f"数据库配置指向 {configured or '未知数据库'}，"
-            f"当前连接实际指向 {actual or '未知数据库'}，拒绝加载演示知识库"
+            f"数据库配置指向 {_location_label(configured)}，"
+            f"当前连接实际指向 {_location_label(actual)}，拒绝加载演示知识库"
         )
-    if actual in FORBIDDEN_DATABASES or actual.endswith("_test") or actual.endswith("_eval"):
-        raise RuntimeError(f"当前连接 {actual!r} 属于测试或评估环境，拒绝加载演示知识库")
+    if _is_forbidden_demo_location(actual):
+        raise RuntimeError(
+            f"当前连接 {_location_label(actual)!r} 属于测试或评估环境，"
+            "拒绝加载演示知识库"
+        )
+
+
+def _is_forbidden_demo_location(location: DatabaseLocation) -> bool:
+    if location.backend == "postgresql":
+        name = (location.name or "").lower()
+        return (
+            name in FORBIDDEN_DATABASES
+            or name.endswith("_test")
+            or name.endswith("_eval")
+        )
+    if location.path is None:
+        return True
+    parts = {part.lower() for part in location.path.parts}
+    stem_tokens = {
+        token
+        for token in re.split(r"[^a-z0-9]+", location.path.stem.lower())
+        if token
+    }
+    return bool(parts & FORBIDDEN_PATH_PARTS or stem_tokens & {"test", "eval"})
+
+
+def _location_label(location: DatabaseLocation) -> str:
+    return location.name or str(location.path or "未知数据库")
 
 
 def note_paths() -> list[Path]:
@@ -160,7 +187,9 @@ def graph_summary(db: Session, kb_id: int) -> list[tuple[float, int, int]]:
 
 
 def main() -> int:
+    assert settings.database_url is not None
     validate_demo_target(settings.database_url)
+    initialize_database(engine)
     db = SessionLocal()
     try:
         validate_demo_database_session(db, settings.database_url)

@@ -12,20 +12,14 @@
 - 含图片 Markdown 会保留原始图片字节、出现顺序与字符位置；完整原文和引用侧栏均可查看原图，图片本身不参与 OCR 或向量化。
 - v2 检索基线覆盖 5 个库、20 篇文档、60 条分层样本：PostgreSQL recall@8 = **1.000（50/50）**、MRR = **0.987**；SQLite recall@8 = **1.000（50/50）**、MRR = **1.000**，已通过自动迁移质量门。
 - L1 拒答阈值由 v2 相似度分布重新校准为 **τ=0.50**：10 条库外问题拒答率 100%，50 条库内问题误拒率 0%。
-- 桌面化存储迁移的前两阶段已完成：核心业务同时支持 PostgreSQL 与 SQLite，并提供带一致性快照、原文/引用校验、FTS 自检和原子发布的一次性数据迁移器；当前一键启动器仍默认走 PostgreSQL，切换计划见 `docs/design/09-sqlite-desktop-migration.md`。
+- 桌面化存储迁移的前三阶段已完成：日常运行默认使用 SQLite 和操作系统用户数据目录；一键启动不再依赖 WSL、Docker、PostgreSQL 或 Alembic。PostgreSQL 只保留给旧数据迁移、双方言回归和评估对照。
 - 数据库会持久化 embedding 服务地址、模型和维度的指纹；配置变化且仍有旧块时，问答会明确提示重建，入库会保留旧块并记录可诊断错误，避免不同语义空间静默混用。
 - 已知边界：当前只支持单 worker——会话与后台入库任务都在进程内存里，加 worker 拿不到可靠的跨进程会话与任务恢复。
 - 评估已能比较多库与难度层级，但仍是固定的 60 条基线，不能替代真实用户语料上的持续评估；完整口径见 docs/design/06-evaluation.md。
 
 ## 本地运行
 
-需要 Python 3.12+、Node.js 22.12+、Windows 11 + WSL2（Ubuntu，启用 systemd）、PostgreSQL 16 + pgvector。不需要 Docker Desktop。Node.js 只负责构建前端，不作为应用运行时服务；问答必须配置模型 Key，任何 OpenAI 兼容的 embedding 与 chat 服务都可以。
-
-数据库跑在 WSL2 内的独立 Docker Engine 里，第一次使用先装一次：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-wsl-docker-engine.ps1
-```
+日常运行只需要 Python 3.12+ 和 Node.js 22.12+，不需要 Docker Desktop、WSL、Docker Engine 或独立数据库服务。Node.js 只负责构建前端，不作为应用运行时服务；问答必须配置模型 Key，任何 OpenAI 兼容的 embedding 与 chat 服务都可以。
 
 准备虚拟环境与依赖。命令都在项目根执行；PowerShell 不支持 `&&`，分两行或改用 `;`。不需要激活 venv，直接用它的解释器：
 
@@ -35,15 +29,25 @@ python -m venv .venv
 Copy-Item .env.example .env
 ```
 
-在 `.env` 里填 `DATABASE_URL`、`EMBEDDING_*`、`LLM_*`。配置只从项目根读取（`pydantic-settings` 相对当前目录），换个目录启动会读不到。
+在 `.env` 里填写 `EMBEDDING_*` 和 `LLM_*`。通常不应设置 `DATABASE_URL` 或 `STORAGE_DIR`；数据库与原文默认放在 Windows `%LOCALAPPDATA%\KnowBase`、macOS `~/Library/Application Support/KnowBase`，或 Linux `$XDG_DATA_HOME/knowbase`。如需整体改位置，只设置 `KNOWBASE_DATA_DIR`。
 
-一条命令拉起数据库和 API：
+一条命令准备前端、SQLite 并启动 API：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 ```
 
-启动器先核对 Node.js 版本，根据 `package-lock.json` 安装锁定的前端依赖，并仅在源码变化时重建 `frontend/dist`；随后启动 WSL 里的 Docker、按 `compose.yaml` 创建或复用 `knowbase-pg` 与卷 `knowbase_pgdata`、等健康检查、执行 `alembic upgrade head`，再以单 worker 启动 API。`/ready` 通过后打开 <http://127.0.0.1:8000/ui/>。首次安装 npm 依赖或拉取 `pgvector/pgvector:pg16` 镜像需要联网，之后未改变依赖与前端源码时会直接复用。可加 `-Port 9000` 换端口，`-NoBrowser` 不自动开浏览器。
+启动器先核对端口和 Node.js 版本，根据 `package-lock.json` 安装锁定的前端依赖，并仅在源码变化时重建 `frontend/dist`；随后初始化 SQLite schema、WAL、外键、FTS5 与 embedding 指纹，再以单 worker 启动 API。`/ready` 通过后打开 <http://127.0.0.1:8000/ui/>。首次安装 npm 依赖需要联网，之后未改变依赖与前端源码时会直接复用。可加 `-Port 9000` 换端口，`-NoBrowser` 不自动开浏览器。
+
+若仓库的 `data/knowbase.db` 是旧 PostgreSQL 数据的已验证迁移产物，首次启动会通过 SQLite backup API 把数据库和完整 `data/storage` 复制到用户数据目录。候选库通过原文、chunk 锚点、外键、FTS 与摘要复核后才发布；源文件不会移动或删除，已有用户数据库绝不会被覆盖。
+
+启动脚本从自身位置解析项目根目录，代码和数据路径都没有写死当前电脑的盘符或用户名。因此其他人从 GitHub 下载到不同目录时不会因绝对路径报错，目录包含空格或中文也可以；每个用户的数据仍进入自己的系统用户目录，不会跟随仓库位置变化。
+
+Windows 可以安装一个指向同一启动器的桌面快捷方式；以后双击 **KnowBase** 即可启动，关闭终端或按 `Ctrl+C` 即停止 API：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-shortcut.ps1
+```
 
 界面五个视图：问答、工作流、关联图、文档、知识库。
 
@@ -51,13 +55,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-frontend.ps1
+.\.venv\Scripts\python.exe -m app.runtime
 .\.venv\Scripts\uvicorn.exe app.main:app --host 127.0.0.1 --port 8000
 ```
-
-要提前验证无需数据库服务的 SQLite 核心路径，可在 `.env` 中把连接串改为
-`DATABASE_URL=sqlite+pysqlite:///./data/knowbase.db` 后直接执行上面的构建与
-`uvicorn` 命令。应用会自动创建带 WAL、外键和 FTS5 trigram 索引的数据库；
-此阶段的一键启动脚本尚未切换，仍会准备 PostgreSQL。
 
 已有 PostgreSQL 日常库先关闭 API，再用下面的维护命令迁移。默认目标是
 `data/knowbase.db`，已有目标会被拒绝，不会静默覆盖：
@@ -70,14 +70,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\migrate-to-sqlite.
 图片包、每个 chunk 的原文区间、embedding 指纹、外键、FTS5 与 SQLite
 `quick_check`，再比较源/目标确定性摘要。所有检查完成前只写同目录候选文件；
 成功后才原子发布 SQLite 和 `data/knowbase-migration-report.json`。确需重跑时加
-`-ReplaceExisting`，旧 SQLite 会保留为带 UTC 时间戳的 `.bak` 文件。当前
-PostgreSQL 启动器尚未自动改读这个文件，默认运行时切换会在下一阶段单独完成。
+`-ReplaceExisting`，旧 SQLite 会保留为带 UTC 时间戳的 `.bak` 文件。迁移完成后，
+从旧 `.env` 删除 `DATABASE_URL` 与 `STORAGE_DIR`；下一次普通启动会把这份候选及
+原文完整复制到用户数据目录。
 
-开发前端时，先运行 API，再在另一个终端执行 `npm run frontend:dev`，访问 <http://127.0.0.1:5173/ui/>；Vite 会把 `/api`、`/health` 和 `/ready` 代理到 8000 端口。开发后端时可给 uvicorn 加 `--reload`。`Ctrl+C` 只停对应进程，数据库和 WSL 保活进程继续运行；要一并释放：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop-knowbase-database.ps1
-```
+开发前端时，先运行 API，再在另一个终端执行 `npm run frontend:dev`，访问 <http://127.0.0.1:5173/ui/>；Vite 会把 `/api`、`/health` 和 `/ready` 代理到 8000 端口。开发后端时可给 uvicorn 加 `--reload`。`Ctrl+C` 会停止对应 API 进程；SQLite 没有需要另行停止的服务。
 
 仓库自带 8 篇高等数学演示笔记，入库后可直接试问答与关联图：
 
@@ -113,7 +110,7 @@ npm ci --no-audit --no-fund
 npm run frontend:check
 ```
 
-完整回归需要 PostgreSQL 可用，且 `knowbase_test` 库已存在（conftest 只重建扩展与表，不建库）：
+完整回归为了验证保留的 PostgreSQL 方言，需要 PostgreSQL 可用，且 `knowbase_test` 库已存在（conftest 只重建扩展与表，不建库）：
 
 ```powershell
 wsl.exe -d Ubuntu -- docker exec knowbase-pg createdb -U postgres knowbase_test
@@ -147,9 +144,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Back
 `eval/baselines/postgresql-bge-m3-v2.json` 与
 `eval/baselines/sqlite-bge-m3-v2.json`；评估脚本只会替换专用评估库/文件。
 
-CI 在 pgvector service container 上跑 pytest，另外执行 TypeScript 严格类型检查、Vitest、Vite 生产构建，并在空库里执行 `alembic upgrade head` 与 `alembic check`，同时校验 Compose、Shell 和 PowerShell 脚本。
+CI 在 pgvector service container 上跑双方言 pytest，另外执行 TypeScript 严格类型检查、Vitest、Vite 生产构建，并在空 PostgreSQL 库里执行 `alembic upgrade head` 与 `alembic check`，同时校验兼容用 Compose、Shell 和 PowerShell 脚本。
 
-日常库 `knowbase`、测试库 `knowbase_test`、评估库 `knowbase_eval` 与各自的原文目录互不可见，对照表见 docs/operations.md。
+用户目录中的日常 SQLite、PostgreSQL 测试库 `knowbase_test`、评估库 `knowbase_eval` 与各自的原文目录互不可见，对照表见 docs/operations.md。
 
 ## 参与
 

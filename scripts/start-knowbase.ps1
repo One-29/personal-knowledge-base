@@ -2,17 +2,18 @@
 
 [CmdletBinding()]
 param(
-    [string]$WslDistribution = "Ubuntu",
     [ValidateRange(1, 65535)]
     [int]$Port = 8000,
-    [ValidateRange(10, 600)]
-    [int]$DockerStartupTimeoutSeconds = 180,
     [switch]$NoBrowser,
     [switch]$NoPause
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[Console]::OutputEncoding = $utf8
+$OutputEncoding = $utf8
+$env:PYTHONIOENCODING = "utf-8"
 
 function Write-Stage {
     param([Parameter(Mandatory = $true)][string]$Message)
@@ -41,7 +42,6 @@ function Start-KnowBase {
     $envFile = Join-Path $projectRoot ".env"
     $readyUrl = "http://127.0.0.1:$Port/ready"
     $appUrl = "http://127.0.0.1:$Port/ui/"
-    $dockerModule = Join-Path $PSScriptRoot "KnowBase.WslDocker.psm1"
     $frontendBuilder = Join-Path $PSScriptRoot "build-frontend.ps1"
 
     if (-not (Test-Path -LiteralPath $pythonExe -PathType Leaf)) {
@@ -50,26 +50,9 @@ function Start-KnowBase {
     if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
         throw "Missing .env. Copy .env.example to .env and configure the model API keys first."
     }
-    if (-not (Test-Path -LiteralPath $dockerModule -PathType Leaf)) {
-        throw "WSL Docker helper module not found: $dockerModule"
-    }
     if (-not (Test-Path -LiteralPath $frontendBuilder -PathType Leaf)) {
         throw "Frontend build helper not found: $frontendBuilder"
     }
-
-    Import-Module -Name $dockerModule -Force
-
-    Write-Stage "Preparing the TypeScript frontend..."
-    & $frontendBuilder
-    if ($LASTEXITCODE -ne 0) {
-        throw "Frontend preparation failed."
-    }
-
-    Write-Stage "Starting PostgreSQL with Docker Engine in WSL '$WslDistribution'..."
-    Start-KnowBaseDatabase `
-        -ProjectRoot $projectRoot `
-        -Distribution $WslDistribution `
-        -StartupTimeoutSeconds $DockerStartupTimeoutSeconds
 
     if (Test-KnowBaseReady -ReadyUrl $readyUrl) {
         Write-Stage "KnowBase is already running at $appUrl"
@@ -84,10 +67,16 @@ function Start-KnowBase {
         throw "Port $Port is already in use by another application. Close it or launch with a different -Port value."
     }
 
-    Write-Stage "Applying database migrations..."
-    & $pythonExe -m alembic upgrade head
+    Write-Stage "Preparing the TypeScript frontend..."
+    & $frontendBuilder
     if ($LASTEXITCODE -ne 0) {
-        throw "Database migration failed."
+        throw "Frontend preparation failed."
+    }
+
+    Write-Stage "Preparing the embedded SQLite database..."
+    & $pythonExe -m app.runtime --project-root $projectRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "SQLite runtime preparation failed. Read the error above before restarting."
     }
 
     if (-not $NoBrowser) {
