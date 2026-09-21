@@ -101,7 +101,11 @@ def build_eval_kbs(
         settings.storage_dir,
         project_root=PROJECT_ROOT,
     )
-    validate_eval_database_session(db)
+    validate_eval_database_session(
+        db,
+        settings.database_url,
+        project_root=PROJECT_ROOT,
+    )
     evaluation.validate_eval_sources(dataset)
     evaluation.assert_baseline_scale(dataset)
 

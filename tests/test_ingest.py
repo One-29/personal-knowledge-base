@@ -326,6 +326,11 @@ def test_failed_status_recovery_logs_both_errors_without_claiming_success(monkey
     )
     db = Mock()
     monkeypatch.setattr(
+        ingest.embedding_profile,
+        "ensure_embedding_profile",
+        Mock(),
+    )
+    monkeypatch.setattr(
         ingest.crud, "get_document", Mock(side_effect=[doc, RuntimeError("database unavailable")])
     )
     monkeypatch.setattr(ingest.storage, "read", Mock(side_effect=RuntimeError("read failed")))

@@ -35,6 +35,15 @@ PORTABLE_BIGINT = BigInteger().with_variant(Integer, "sqlite")
 PORTABLE_EMBEDDING = Vector(settings.embedding_dimension).with_variant(JSON(), "sqlite")
 
 
+class AppMetadata(Base):
+    """应用级键值元数据：schema/embedding 等跨业务表约束。"""
+
+    __tablename__ = "app_metadata"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class KnowledgeBase(Base):
     """表 knowledge_bases：DDL 见 03 §3"""
 

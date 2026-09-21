@@ -10,9 +10,10 @@
 
 - M1–M5 与检索评估已完成，CI 绿灯。前端使用严格 TypeScript + Vite，生产构建由 API 挂在 `/ui`。
 - 含图片 Markdown 会保留原始图片字节、出现顺序与字符位置；完整原文和引用侧栏均可查看原图，图片本身不参与 OCR 或向量化。
-- v2 检索基线覆盖 5 个库、20 篇文档、60 条分层样本：recall@8 = **1.000（50/50）**、MRR = **0.987**。
+- v2 检索基线覆盖 5 个库、20 篇文档、60 条分层样本：PostgreSQL recall@8 = **1.000（50/50）**、MRR = **0.987**；SQLite recall@8 = **1.000（50/50）**、MRR = **1.000**，已通过自动迁移质量门。
 - L1 拒答阈值由 v2 相似度分布重新校准为 **τ=0.50**：10 条库外问题拒答率 100%，50 条库内问题误拒率 0%。
 - 桌面化存储迁移的第一阶段已完成：核心 ORM、入库、混合检索和关联图同时支持 PostgreSQL 与 SQLite 真文件数据库；当前一键启动器仍默认走 PostgreSQL，切换计划见 `docs/design/09-sqlite-desktop-migration.md`。
+- 数据库会持久化 embedding 服务地址、模型和维度的指纹；配置变化且仍有旧块时，问答会明确提示重建，入库会保留旧块并记录可诊断错误，避免不同语义空间静默混用。
 - 已知边界：当前只支持单 worker——会话与后台入库任务都在进程内存里，加 worker 拿不到可靠的跨进程会话与任务恢复。
 - 评估已能比较多库与难度层级，但仍是固定的 60 条基线，不能替代真实用户语料上的持续评估；完整口径见 docs/design/06-evaluation.md。
 
@@ -118,16 +119,18 @@ SQLite 集成测试使用临时真文件，覆盖建库、WAL/外键、入库、
 .\.venv\Scripts\python.exe -m pytest -q tests/test_sqlite_storage.py
 ```
 
-评估在独立的 `knowbase_eval` 库上运行，脚本自己建库、自己迁移，只在子进程内覆盖环境变量，不碰日常数据：
+评估支持隔离的 PostgreSQL `knowbase_eval` 或固定 SQLite 文件，脚本只在子进程内覆盖环境变量，不碰日常数据：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Retrieval   # 只跑检索
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1              # 完整评估
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Retrieval -TopK 8 -ReportPath eval\baselines\postgresql-bge-m3-v2.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Backend SQLite -Retrieval -TopK 8 -ReportPath eval\baselines\sqlite-bge-m3-v2.json -ReferenceReportPath eval\baselines\postgresql-bge-m3-v2.json
 ```
 
 归档的真实 BGE-M3 检索结果与阈值扫描见
-`eval/baselines/postgresql-bge-m3-v2.json`；评估脚本只会替换专用评估库。
+`eval/baselines/postgresql-bge-m3-v2.json` 与
+`eval/baselines/sqlite-bge-m3-v2.json`；评估脚本只会替换专用评估库/文件。
 
 CI 在 pgvector service container 上跑 pytest，另外执行 TypeScript 严格类型检查、Vitest、Vite 生产构建，并在空库里执行 `alembic upgrade head` 与 `alembic check`，同时校验 Compose、Shell 和 PowerShell 脚本。
 

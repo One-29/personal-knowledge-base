@@ -195,6 +195,10 @@ def test_model_calls_release_single_connection_pool(monkeypatch, kb_id):
             "CREATE TABLE documents (id INTEGER PRIMARY KEY, title TEXT, file_path TEXT)"
         ))
         conn.execute(text("INSERT INTO documents VALUES (1, '原文.md', '')"))
+        conn.execute(text(
+            "CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        ))
+        conn.execute(text("CREATE TABLE chunks (id INTEGER PRIMARY KEY)"))
 
     calls = []
     with Session(engine) as session:

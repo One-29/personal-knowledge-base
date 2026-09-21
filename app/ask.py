@@ -19,7 +19,16 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import crud, document_images, embedding, generation, package_storage, retrieval, session
+from . import (
+    crud,
+    document_images,
+    embedding,
+    embedding_profile,
+    generation,
+    package_storage,
+    retrieval,
+    session,
+)
 from .core.config import settings
 from .embedding import EmbeddingError
 from .generation import LLMError, LLMProvider
@@ -46,6 +55,7 @@ REFUSAL_INVALID_CITATION = "invalid_citation"  # 引用越界（幻觉引用）
 REFUSAL_NO_CITATION = "no_citation"           # 有实质内容却零引用（不可溯源）
 REFUSAL_LLM_UNAVAILABLE = "llm_unavailable"   # 生成服务不可用
 REFUSAL_EMBEDDING_UNAVAILABLE = "embedding_unavailable"  # 查询向量服务不可用
+REFUSAL_EMBEDDING_MISMATCH = "embedding_mismatch"  # 配置与现有向量空间不一致
 
 REFUSAL_MESSAGES = {
     REFUSAL_EMPTY_KB: "知识库里还没有相关内容，无法回答这个问题。可以先导入相关笔记再试。",
@@ -54,6 +64,9 @@ REFUSAL_MESSAGES = {
     REFUSAL_NO_CITATION: "生成的回答没有标注任何来源，无法核对，为保证可信性已拒绝这次回答。",
     REFUSAL_LLM_UNAVAILABLE: "回答生成服务暂时不可用，请稍后重试。",
     REFUSAL_EMBEDDING_UNAVAILABLE: "知识库检索服务暂时不可用，请稍后重试。",
+    REFUSAL_EMBEDDING_MISMATCH: (
+        "当前向量模型与知识库索引不一致。请改回原模型，或重建全部向量后再提问。"
+    ),
 }
 
 # 模型自述"资料不足"的常见说法（此时归入低相关度拒答，文案更贴切）
@@ -102,9 +115,19 @@ def answer_question(
         前端把会话持久化在本地并随请求回传，服务端因此保持无状态——
         刷新页面或重启服务都不会丢失追问上下文（也不必把会话落库）。
     """
-    validate_kb(db, kb_id)
-
     store = session_store or session.store
+    validate_kb(db, kb_id)
+    try:
+        embedding_profile.ensure_embedding_profile(db)
+    except embedding_profile.EmbeddingProfileError as exc:
+        logger.warning("embedding 模型指纹不兼容: %s", exc)
+        return _finish(
+            store,
+            session_id,
+            _refuse(question, REFUSAL_EMBEDDING_MISMATCH),
+            question,
+        )
+
     if history:
         context = [SessionTurn(question=q, answer=a) for q, a in history]
     else:

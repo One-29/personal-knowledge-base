@@ -1,12 +1,12 @@
-# 06-评估方案（v0.4）
+# 06-评估方案（v0.5）
 
 | 字段 | 内容 |
 |---|---|
 | 状态 | 已实现 |
-| 版本 | v0.4 |
-| 日期 | 2026-09-20 |
+| 版本 | v0.5 |
+| 日期 | 2026-09-21 |
 | 上游 | `04-retrieval.md`（切分 DR1 / embedding DR2 / 混合检索 DR3-DR4 / 拒答 DR6） |
-| 变更 | v2 多知识库分层基线；五库原子替换；按库与难度统计；重新校准 τ |
+| 变更 | 新增 SQLite 隔离评估、模型指纹与 PostgreSQL→SQLite 自动质量门 |
 
 本文定义可复现的质量基线。切分算法、检索后端或存储层迁移前后都运行同一份清单，
 用相同口径比较结果，避免“功能还能打开”掩盖召回质量回退。
@@ -79,10 +79,10 @@
 
 ## 3. 数据隔离与原子替换
 
-评估固定使用 PostgreSQL 数据库 `knowbase_eval` 和
-`data/eval-storage`。入口先检查配置，再通过
-`current_database()` 核对 Session 的真实连接；日常库 `knowbase` 和测试库
-`knowbase_test` 都不能通过检查。
+评估只允许使用 PostgreSQL 数据库 `knowbase_eval` 或 SQLite 文件
+`data/eval/knowbase-eval.db`，原文统一放在 `data/eval-storage`。入口先检查配置，
+再通过 `current_database()` 或 `PRAGMA database_list` 核对 Session 的真实连接；
+日常库、测试库和日常 SQLite 文件都不能通过检查。
 
 每次运行按以下顺序更新基线：
 
@@ -128,11 +128,13 @@ app/evaluation/runner.py                  # 批量向量、检索、拒答与阈
 eval/environment.py                       # 数据库与原文目录隔离
 eval/baseline.py                          # 候选库导入、原子切换与失败清理
 eval/reporting.py                         # 稳定 JSON 序列化
+eval/comparison.py                        # 报告可比性与迁移质量门
 eval/run_eval.py                          # CLI 编排
 eval/eval_set.json                        # v2 问题与标注
 eval/notes/<library>/*.md                 # 固定语料
 scripts/run-eval.ps1                      # Windows/WSL Docker 入口
 eval/baselines/postgresql-bge-m3-v2.json # 已归档的真实检索基线
+eval/baselines/sqlite-bge-m3-v2.json     # SQLite/FTS5 对照基线
 ```
 
 推荐命令：
@@ -143,12 +145,17 @@ eval/baselines/postgresql-bge-m3-v2.json # 已归档的真实检索基线
 
 # Q1 + Q2 + Q3；会产生回答模型调用
 .\scripts\run-eval.ps1 -TopK 8
+
+# SQLite 对照评估并强制执行迁移质量门
+.\scripts\run-eval.ps1 -Backend SQLite -Retrieval -TopK 8 `
+  -ReportPath eval\baselines\sqlite-bge-m3-v2.json `
+  -ReferenceReportPath eval\baselines\postgresql-bge-m3-v2.json
 ```
 
-脚本自行启动 WSL Docker、创建和迁移 `knowbase_eval`，环境变量只在当前 PowerShell
-进程内覆盖，退出时恢复。
+PostgreSQL 模式自行启动 WSL Docker、创建和迁移 `knowbase_eval`；SQLite 模式不启动
+Docker，只打开固定评估文件。环境变量只在当前 PowerShell 进程内覆盖，退出时恢复。
 
-## 6. 2026-09-20 v2 真实检索结果
+## 6. v2 真实检索结果
 
 运行条件：`BAAI/bge-m3`、1024 维、`top_k=8`、PostgreSQL + pgvector +
 pg_trgm。完整原始结果见
@@ -191,6 +198,20 @@ L1 截止，同时不误拒 50 条库内问题。0.55 已开始误拒，不能�
 本次归档运行是 retrieval 模式，报告中的 `refusal` 为 `null`。上表是 L1 规则的
 精确离线模拟，不代表回答模型的 L2 自检已在 v2 的 60 条样本上重跑。
 
+### 6.3 2026-09-21 SQLite 迁移对照
+
+运行条件保持同一 BGE-M3、1024 维、`top_k=8`，存储与关键词通道改为 SQLite JSON
+精确余弦扫描 + FTS5 trigram。原始报告见 `eval/baselines/sqlite-bge-m3-v2.json`。
+
+| 后端 | recall@8 | MRR | τ=0.50 库外拒答率 | τ=0.50 库内误拒率 |
+|---|---:|---:|---:|---:|
+| PostgreSQL / pgvector / pg_trgm | 1.000 | 0.987 | 1.000 | 0.000 |
+| SQLite / JSON cosine / FTS5 | **1.000** | **1.000** | **1.000** | **0.000** |
+
+质量门要求语料版本、模型、维度、TopK 和样本规模完全一致；候选 recall 不得低于参考，
+MRR 最多下降 0.01。本次 SQLite 候选通过。MRR 提高来自两条召回排名的组合变化，只能
+说明当前固定样本没有回退，不能据此宣称 SQLite 在所有真实语料上更好。
+
 ## 7. 历史结果的适用范围
 
 2026-09-10 的首次完整评估只有 3 篇文档、12 条问题，曾得到 recall/MRR 1.000、库外
@@ -202,13 +223,13 @@ v2 增加了跨领域的相似库外问题后，证明 τ=0.45 只能拦截 60% 
 
 ## 8. 迁移关卡与后续扩展
 
-PostgreSQL → SQLite、pg_trgm → FTS5 或切块算法变更前，先保留本报告；迁移后用同一
-清单重跑。最低验收是 recall@8 不低于 1.000、MRR 不显著低于 0.987，并重新报告每库、
-每难度结果。若向量模型或相似度实现变化，τ 必须重新扫描，不能把 0.50 当成跨模型常量。
+PostgreSQL → SQLite 的第一轮质量门已经通过。以后 pg_trgm/FTS5、切块或排序变化仍须用
+同一清单重跑，要求 recall 不下降且 MRR 下降不超过 0.01。若向量模型或相似度实现变化，
+模型指纹必须先变化，τ 也必须重新扫描，不能把 0.50 当成跨模型常量。
 
 下一轮扩展目标：
 
 - 增至至少 10 个库、100 条问题，增加同义改写、短术语、跨库同名概念与更强对抗样本；
 - 在 v2 上运行完整 Q2，归档 L2 拒答、零引用和引用有效性指标；
 - 扫描块大小、重叠和召回量，分别记录质量与耗时；
-- 为后续 SQLite/FTS5 路线建立与本报告相同 schema 的对照基线。
+- 为评估报告加入耗时和峰值内存，给 SQLite 精确扫描何时需要插件提供量化依据。
