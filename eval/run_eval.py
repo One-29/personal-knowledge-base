@@ -1,7 +1,7 @@
 r"""隔离的多知识库评估 CLI。
 
 Windows 推荐通过 ``scripts/run-eval.ps1`` 运行。直接执行模块时，数据库与原文
-目录必须已经显式指向 ``knowbase_eval`` 和 ``data/eval-storage``。
+目录必须显式指向隔离的 ``knowbase_eval`` 或固定 SQLite 评估文件。
 """
 
 from __future__ import annotations
@@ -11,12 +11,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 import sys
 
+from sqlalchemy.engine import make_url
+
 from app import evaluation
 from app.core.config import settings
-from app.db import SessionLocal
+from app.database import initialize_database
+from app.db import SessionLocal, engine
+from app.embedding_profile import stored_embedding_profile
 
 from .baseline import build_eval_kbs
-from .environment import UnsafeEvalEnvironmentError, validate_eval_environment
+from .comparison import EvaluationGateError, compare_reports, load_report
+from .environment import (
+    UnsafeEvalEnvironmentError,
+    validate_eval_engine,
+    validate_eval_environment,
+)
 from .reporting import _refusal_payload, _retrieval_payload, _write_report
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -33,17 +42,25 @@ def main() -> int:
     )
     parser.add_argument("--top-k", type=int, default=None, help="检索候选数")
     parser.add_argument("--report", type=Path, default=None, help="写出结构化 JSON 报告")
+    parser.add_argument(
+        "--reference-report",
+        type=Path,
+        default=None,
+        help="与参考报告比较；recall 不得下降，MRR 最多下降 0.01",
+    )
     args = parser.parse_args()
     if args.top_k is not None and args.top_k < 1:
         parser.error("--top-k 必须是正整数。")
 
     try:
         validate_eval_environment(settings.database_url, settings.storage_dir)
+        validate_eval_engine(engine, settings.database_url, settings.storage_dir)
         dataset = evaluation.load_eval_set(EVAL_SET_PATH)
         evaluation.assert_baseline_scale(dataset)
     except (UnsafeEvalEnvironmentError, evaluation.EvalDatasetError) as exc:
         parser.error(str(exc))
 
+    initialize_database(engine)
     db = SessionLocal()
     try:
         kb_ids = build_eval_kbs(db, dataset)
@@ -90,6 +107,7 @@ def main() -> int:
             value = f"{similarity:.3f}" if similarity is not None else "无候选"
             print(f"  [{item.library}/{tag}] {value}  {item.question}")
 
+        profile = stored_embedding_profile(db)
         report: dict[str, object] = {
             "schema_version": 1,
             "generated_at": datetime.now(UTC).isoformat(),
@@ -97,6 +115,8 @@ def main() -> int:
             "dataset_version": dataset.version,
             "embedding_model": settings.embedding_model,
             "embedding_dimension": settings.embedding_dimension,
+            "embedding_fingerprint": profile.fingerprint if profile else None,
+            "database_backend": make_url(settings.database_url).get_backend_name(),
             "query_vector_count": len(query_vectors),
             "configured_refusal_threshold": settings.refusal_similarity_threshold,
             "top_k": settings.retrieval_top_k if args.top_k is None else args.top_k,
@@ -125,6 +145,18 @@ def main() -> int:
         }
         if args.report is not None:
             _write_report(args.report, report)
+        if args.reference_report is not None:
+            reference_path = (
+                args.reference_report
+                if args.reference_report.is_absolute()
+                else PROJECT_ROOT / args.reference_report
+            )
+            try:
+                comparison = compare_reports(load_report(reference_path), report)
+            except EvaluationGateError as exc:
+                print(f"\n[评估迁移门] 失败：{exc}", file=sys.stderr)
+                return 2
+            print(f"\n[评估迁移门] {comparison.summary()}")
         return 0
     finally:
         db.close()

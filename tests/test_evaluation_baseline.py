@@ -5,11 +5,16 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
 
 from app import evaluation
+from app.database import create_database_engine, initialize_database
+from app.models import Document
 from eval import baseline as eval_baseline
 from eval import environment as eval_environment
 from tests.evaluation_helpers import _set_eval_environment, _write_small_eval_set
+
 
 def test_eval_environment_rejects_daily_database(tmp_path):
     with pytest.raises(
@@ -55,6 +60,49 @@ def test_eval_environment_accepts_isolated_database_and_storage(tmp_path):
     )
 
 
+def test_eval_environment_accepts_only_fixed_sqlite_file(tmp_path):
+    expected = (tmp_path / "data" / "eval" / "knowbase-eval.db").as_posix()
+    eval_environment.validate_eval_environment(
+        f"sqlite+pysqlite:///{expected}",
+        "data/eval-storage",
+        project_root=tmp_path,
+        working_directory=tmp_path,
+    )
+
+    daily = (tmp_path / "data" / "knowbase.db").as_posix()
+    with pytest.raises(
+        eval_environment.UnsafeEvalEnvironmentError,
+        match="固定文件",
+    ):
+        eval_environment.validate_eval_environment(
+            f"sqlite+pysqlite:///{daily}",
+            "data/eval-storage",
+            project_root=tmp_path,
+            working_directory=tmp_path,
+        )
+
+
+def test_eval_engine_is_checked_before_schema_initialization(tmp_path):
+    expected = (tmp_path / "data" / "eval" / "knowbase-eval.db").as_posix()
+    daily = (tmp_path / "data" / "knowbase.db").as_posix()
+    engine = create_engine(f"sqlite+pysqlite:///{daily}")
+    try:
+        with pytest.raises(
+            eval_environment.UnsafeEvalEnvironmentError,
+            match="固定文件",
+        ):
+            eval_environment.validate_eval_engine(
+                engine,
+                f"sqlite+pysqlite:///{expected}",
+                "data/eval-storage",
+                project_root=tmp_path,
+                working_directory=tmp_path,
+            )
+        assert not Path(daily).exists()
+    finally:
+        engine.dispose()
+
+
 def test_build_eval_kbs_validates_environment_before_touching_database(
     tmp_path,
     monkeypatch,
@@ -85,6 +133,7 @@ def test_build_eval_kbs_rejects_session_connected_to_another_database(
 ):
     _, dataset = _write_small_eval_set(tmp_path)
     db = Mock()
+    db.get_bind.return_value.dialect.name = "postgresql"
     db.scalar.return_value = "knowbase"
     get_kb = Mock()
     _set_eval_environment(tmp_path, monkeypatch)
@@ -163,6 +212,7 @@ def test_build_eval_kbs_swaps_all_libraries_in_one_final_transaction(
     }
     events: list[str] = []
     db = Mock()
+    db.get_bind.return_value.dialect.name = "postgresql"
     db.scalar.return_value = "knowbase_eval"
     db.get.side_effect = lambda _model, object_id: objects_by_id.get(object_id)
     db.delete.side_effect = lambda item: events.append(f"delete:{item.id}")
@@ -236,6 +286,7 @@ def test_second_library_failure_preserves_all_old_libraries_and_cleans_candidate
     stage_by_id = {item.id: item for item in staging.values()}
     events: list[str] = []
     db = Mock()
+    db.get_bind.return_value.dialect.name = "postgresql"
     db.scalar.return_value = "knowbase_eval"
     db.get.side_effect = lambda _model, object_id: stage_by_id.get(object_id)
 
@@ -283,3 +334,39 @@ def test_second_library_failure_preserves_all_old_libraries_and_cleans_candidate
     db.rollback.assert_called_once()
     db.delete.assert_not_called()
     db.commit.assert_not_called()
+
+
+def test_sqlite_eval_baseline_imports_into_isolated_file(tmp_path, monkeypatch):
+    _, dataset = _write_small_eval_set(tmp_path, ("alpha",))
+    database = (tmp_path / "data" / "eval" / "knowbase-eval.db").resolve()
+    database_url = "sqlite+pysqlite:///" + database.as_posix()
+    engine = create_database_engine(
+        database_url,
+        pool_size=1,
+        max_overflow=0,
+        pool_recycle=1800,
+        pool_timeout=1,
+    )
+    initialize_database(engine)
+    monkeypatch.setattr(eval_baseline, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(eval_baseline.settings, "database_url", database_url)
+    monkeypatch.setattr(
+        eval_baseline.settings,
+        "storage_dir",
+        tmp_path / "data" / "eval-storage",
+    )
+    monkeypatch.setattr(evaluation, "assert_baseline_scale", Mock())
+
+    try:
+        with Session(engine, expire_on_commit=False) as db:
+            kb_ids = eval_baseline.build_eval_kbs(db, dataset)
+            documents = list(
+                db.scalars(
+                    select(Document).where(Document.kb_id == kb_ids["alpha"])
+                )
+            )
+            assert len(documents) == 1
+            assert documents[0].status == "ready"
+            assert documents[0].chunk_count >= 1
+    finally:
+        engine.dispose()

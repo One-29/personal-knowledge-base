@@ -1,12 +1,12 @@
-# 03-数据模型（v0.4）
+# 03-数据模型（v0.5）
 
 | 字段 | 内容 |
 |---|---|
 | 状态 | 已实现 |
-| 版本 | v0.4 |
-| 日期 | 2026-09-20 |
+| 版本 | v0.5 |
+| 日期 | 2026-09-21 |
 | 上游 | `01-requirements.md`（PRD v0.5，决策 D1–D7）· `02-modules.md`（v0.4，模块边界） |
-| 变更 | v0.4：加入不可变图片包目录、清单和历史版本保留语义；v0.3：原文候选版本与任务版本核对 |
+| 变更 | v0.5：增加应用元数据与 embedding 模型指纹；记录 PostgreSQL/SQLite 方言映射 |
 | 关联 | M1/M2 子 Issue（建仓后建立） |
 
 > 本文回答：需求落成哪几张表、字段与约束怎么定、存储与索引选型、如何映射到 SQLAlchemy。
@@ -21,6 +21,7 @@
 | `knowledge_bases` | M1 | D2 多知识库；US-M1-01 |
 | `documents` | M1（M2 写状态字段） | D2/D3/D6；US-M1-02~06 |
 | `chunks` | M2 产物 | D3 全量重建；US-M3-03 溯源 |
+| `app_metadata` | 基础设施 | SQLite schema 版本；embedding 服务/模型/维度指纹 |
 | （无会话表） | M3 | D5：会话仅进程内存，V1.0 持久化时再增量建表，不预建 |
 
 ### 1.2 三条建模原则
@@ -39,6 +40,11 @@ erDiagram
     KNOWLEDGE_BASES ||--o{ DOCUMENTS : "1 库含 N 文档"
     DOCUMENTS ||--o{ CHUNKS : "1 文档产生 N 块"
     KNOWLEDGE_BASES ||--o{ CHUNKS : "冗余归属 检索免join"
+
+    APP_METADATA {
+        varchar key PK
+        text value
+    }
 
     KNOWLEDGE_BASES {
         bigint id PK
@@ -133,7 +139,20 @@ CREATE TABLE chunks (
 );
 CREATE INDEX idx_chunks_doc ON chunks (doc_id);
 -- 向量索引（HNSW / cosine）待 04 定稿 embedding 模型后随迁移创建
+
+CREATE TABLE app_metadata (
+    key   varchar(100) PRIMARY KEY,
+    value text NOT NULL
+);
 ```
+
+`app_metadata` 不存用户内容。PostgreSQL 由 Alembic 建表；SQLite 还用其中的
+`schema_version` 驱动桌面数据库升级。`embedding_profile_v1` 保存规范化的服务地址、
+模型和维度，并对 JSON 取 SHA-256 作为诊断指纹。有现有块时不允许直接改写该值。
+
+SQLite 方言把 bigint 主键映射为 `INTEGER PRIMARY KEY`，把 `vector(1024)` 映射为 JSON
+数组；FTS5 虚拟表与触发器由 schema 初始化器维护，不进入 ORM 实体。PostgreSQL 仍保留
+BIGINT、pgvector、HNSW 与 GIN，双方言差异不进入业务表模型。
 
 ### 原文文件目录约定（D6）
 

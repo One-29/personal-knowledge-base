@@ -92,20 +92,22 @@ TTL 由 `SESSION_TTL_SECONDS` 配置；到期记录在访问存储时清理，�
 
 ### 日常、测试、评估与演示数据
 
-| 用途 | PostgreSQL 数据库 | 原文目录 | 日常界面 |
+| 用途 | 数据库/文件 | 原文目录 | 日常界面 |
 |---|---|---|---:|
-| 个人资料和高等数学演示库 | `knowbase` | `data/storage` | 可见 |
-| pytest 数据库集成测试 | `knowbase_test` | `data/test-storage-*` | 不可见 |
-| 检索与拒答评估 | `knowbase_eval` | `data/eval-storage` | 不可见 |
+| 个人资料和高等数学演示库 | PostgreSQL `knowbase` | `data/storage` | 可见 |
+| pytest 数据库集成测试 | PostgreSQL `knowbase_test` | `data/test-storage-*` | 不可见 |
+| PostgreSQL 检索与拒答评估 | `knowbase_eval` | `data/eval-storage` | 不可见 |
+| SQLite 迁移对照评估 | `data/eval/knowbase-eval.db` | `data/eval-storage` | 不可见 |
 
 运行评估统一使用：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Retrieval
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Retrieval -TopK 8 -ReportPath eval\baselines\postgresql-bge-m3-v2.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Backend SQLite -Retrieval -TopK 8 -ReportPath eval\baselines\sqlite-bge-m3-v2.json -ReferenceReportPath eval\baselines\postgresql-bge-m3-v2.json
 ```
 
-脚本会创建或复用 `knowbase_eval`，在该数据库执行迁移，并只为评估子进程设置数据库和存储目录。`eval.run_eval` 会先校验配置，再用只读查询核对 Session 实际连接的数据库：两者都必须精确指向 `knowbase_eval`，原文目录必须精确为项目内的 `data/eval-storage`；任何条件不满足都会在业务查询和删除前拒绝执行。五个评估语料库先分别写入候选库；只有全部文档进入 `ready` 后，才在一个事务中统一替换正式评估库。中途失败会清理候选并保留上一次完整的五库基线。直接在日常配置下运行 `python -m eval.run_eval` 会拒绝执行。
+PostgreSQL 模式会创建或复用 `knowbase_eval` 并执行 Alembic；SQLite 模式只允许固定文件 `data/eval/knowbase-eval.db`，由应用 schema 初始化器准备 WAL、外键和 FTS5。`eval.run_eval` 会先校验配置，再核对 Session 的真实方言与数据库/文件；原文目录必须精确为项目内的 `data/eval-storage`。任何条件不满足都会在业务查询和删除前拒绝执行。五个评估语料库先分别写入候选库；只有全部文档进入 `ready` 后，才在一个事务中统一替换正式评估库。中途失败会清理候选并保留上一版完整基线。`-ReferenceReportPath` 还会强制语料、模型和 TopK 可比，要求 recall 不下降、MRR 下降不超过 0.01。
 
 高等数学演示库通过以下命令幂等加载：
 

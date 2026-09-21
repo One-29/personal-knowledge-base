@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from . import chunking, crud, embedding, package_storage, storage
+from . import chunking, crud, embedding, embedding_profile, package_storage, storage
 from .core.config import settings
 from .db import SessionLocal
 from .embedding import EmbeddingError
@@ -32,6 +32,7 @@ STATUS_FAILED = "failed"
 # 错误码（US-M1-06 分类；上传期错误由 M1 现场拦截，此处为处理期错误）
 ERROR_PARSE_FAILED = "PARSE_FAILED"
 ERROR_EMBED_FAILED = "EMBED_FAILED"
+ERROR_EMBED_PROFILE_MISMATCH = "EMBED_PROFILE_MISMATCH"
 ERROR_PROCESS_FAILED = "PROCESS_FAILED"
 
 
@@ -89,6 +90,20 @@ def process_document(
             and doc.pending_char_count is not None
             else doc.char_count
         )
+
+        try:
+            embedding_profile.ensure_embedding_profile(db)
+        except embedding_profile.EmbeddingProfileError as exc:
+            _mark_failure(
+                db,
+                doc_id,
+                version,
+                source_path,
+                ERROR_EMBED_PROFILE_MISMATCH,
+                str(exc),
+                require_pending_candidate=task_is_bound,
+            )
+            return
 
         doc.status = STATUS_PROCESSING
         db.commit()
