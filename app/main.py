@@ -19,6 +19,7 @@ from app.core.config import settings  # noqa: F401  （供后续装配读取配�
 from app.database import initialize_database
 from app.db import engine
 from app.http_client import close_http_client
+from app.http_security import local_browser_write_guard
 from app.routers import ask, document_content, documents, graph, kbs, workflow
 
 API_PREFIX = "/api/v1"
@@ -43,6 +44,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.middleware("http")(local_browser_write_guard)
 
 # 版本前缀在装配层统一管理（单点修改）；各 router 只声明业务前缀
 app.include_router(kbs.router, prefix=API_PREFIX)

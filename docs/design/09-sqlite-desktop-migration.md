@@ -2,11 +2,11 @@
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 已实现（核心双方言、数据迁移、默认运行时、Vault 可重建、外部编辑同步） |
-| 版本 | v0.6 |
+| 状态 | 已实现（核心双方言、数据迁移、默认运行时、Vault 可重建、外部编辑同步、pywebview 壳原型） |
+| 版本 | v0.7 |
 | 日期 | 2026-09-22 |
 | 上游 | `02-modules.md`（模块边界）· `03-data-model.md`（数据模型）· `04-retrieval.md`（检索） |
-| 关联 | 桌面 App 化：核心双方言、模型指纹、质量门、迁移、默认运行时与文件真相 |
+| 关联 | 桌面 App 化：核心双方言、模型指纹、质量门、迁移、默认运行时、文件真相与本地窗口生命周期 |
 
 > 本文记录从 PostgreSQL 服务迁移到 SQLite 嵌入式数据库的边界、当前实现和后续顺序。核心业务、一次性数据迁移和默认启动切换已经完成；PostgreSQL 路径只保留给迁移、兼容回归与评估对照。
 
@@ -105,12 +105,21 @@ embedding 指纹。`app_metadata.schema_version` 由 SQLite 初始化器管理�
 
 已有数据库启动时，`app.vault.external_sync` 编排同步，`external_source` 先用 mtime/size 筛选已登记来源，再以 SHA-256 判定普通文本的实际变化；内容未变时只刷新观察值，内容改变时通过共享的 `app.document_index` 切分和向量化，再由 `external_index` 只替换该文档的 chunk 与 FTS 索引。模型调用完成后再次读取原文，避免把调用期间新保存的文本和旧向量组合。新 SourceRecord 和 `ingest_version` 先写入 Vault，SQLite 在随后事务中校验数据库指纹、溯源区间、向量维度和 FTS 完整性；中途退出会留下“数据库落后于 Vault”的唯一可恢复状态，下次启动使用 Vault 版本继续，不重复递增。图片包仍要求 ZIP 重传；来源缺失、重命名、空内容、候选版本冲突与未登记散文件均不猜测用户意图。同步当前只发生在启动阶段，运行中修改在下次启动生效。
 
+### pywebview 桌面壳原型
+
+桌面宿主位于独立的 `app.desktop` 包，不把窗口技术侵入业务层。`instance_lock` 在用户数据库目录持有跨进程操作系统文件锁；`server` 预绑定 `127.0.0.1` 端口，在后台线程启动单 worker Uvicorn，并轮询真实 `/ready`；`launcher` 在持锁期间先调用 `prepare_runtime`，就绪后才在主线程创建 pywebview 窗口。pywebview 的事件循环返回时，托管服务器会执行正常退出并释放 HTTP 连接池、端口和实例锁。启动失败、端口冲突、重复实例与前端构建产物缺失均在创建业务窗口前转成明确错误。
+
+WebView profile 持久化到用户数据目录的 `webview/`，因此浏览器会话不会跟随源码 clone。窗口只加载回环 `/ui/`，TypeScript 前端仍通过原 REST 契约工作。由于回环 HTTP 接口可能被其它网站从浏览器发起请求，应用层增加本地浏览器写保护：请求目标必须是明确的回环主机，带 `Origin` 的非安全方法只接受 API 同源页面或固定的 Vite 开发源 `127.0.0.1:5173` / `localhost:5173`；无 `Origin` 的本机 CLI 继续可用。显式主机白名单同时阻断仅靠 Origin/Host 相等无法识别的 DNS 重绑定域名。这个保护和只监听回环地址共同组成当前本地边界，不代表支持局域网或多用户暴露。
+
+该阶段只验证源码形态的整条链路。`desktop` 是可选依赖，Windows 快捷方式在需要时构建 `frontend/dist`，再用 `pythonw -m app.desktop` 隐藏启动；运行机器仍需要 Python、源码和 Node.js。正式发布仍需把 Python 后端、前端产物、SQLite schema 升级和壳一起封装，并在无开发环境的干净机器验证。pywebview 原型提供是否继续冻结 Python 或改用 Tauri sidecar 的实测依据，不等于已经完成发行包。
+
 ## 6. 后续阶段与验收门
 
 1. **已完成：数据迁移**。PostgreSQL/文件系统到 SQLite 的一次性导入、指纹核对、逐表摘要和失败保护已有真实 PostgreSQL 集成测试。
 2. **已完成：默认运行时切换**。默认连接串改为用户目录 SQLite；启动器、演示库和快捷方式移除 PostgreSQL、WSL、Docker 与 Alembic 用户路径。首次导入覆盖 WAL、失败回滚、目标不覆盖和跨平台路径测试。
 3. **已完成：文件系统可重建基础**。严格 Vault 清单、事务补偿、数据库删除后候选重建、pending 提升、失败和并发发布保护均有真 SQLite 回归测试。
 4. **已完成：外部编辑同步**。mtime/size 廉价筛选、SHA-256 最终判定、单文档索引替换、模型等待期间二次保存保护、Vault 领先后的启动续接和删除/重命名失败关闭均有真 SQLite 回归测试。
-5. **下一步：桌面壳**。先用 pywebview 验证 Python、WebView、SQLite、文件监听和单实例锁，再决定 Tauri sidecar 的正式打包。
+5. **已完成：桌面壳原型**。pywebview 已验证 Windows WebView2、SQLite 准备、启动阶段外部同步、跨进程单实例、后台 API 就绪门、关窗退出和同源写保护；自动化测试不依赖真实 GUI，另有本机原生窗口冒烟验证。
+6. **下一步：可分发桌面包**。先补本地滚动日志与复制诊断信息，再比较 PyInstaller/pywebview 与 Tauri sidecar 的包体、启动时间和维护成本；选定后建立 Windows/macOS/Linux 构建、干净机器安装、schema 升级、签名说明和发布验证。
 
-每一阶段都必须跑 PostgreSQL 全回归、SQLite 真文件集成测试以及 v2 检索基线。桌面壳与安装包完成前，不删除 PostgreSQL 实现与迁移文件。
+每一阶段都必须跑 PostgreSQL 全回归、SQLite 真文件集成测试以及相关前端检查；检索或存储语义变化还必须通过 v2 质量门。可分发安装包完成前，不删除 PostgreSQL 实现与迁移文件。

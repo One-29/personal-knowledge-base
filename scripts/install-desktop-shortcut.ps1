@@ -4,7 +4,9 @@
 param(
     [string]$ProjectRoot = "",
     [string]$ShortcutName = "KnowBase",
-    [string]$DesktopPath = ""
+    [string]$DesktopPath = "",
+    [ValidateRange(1, 65535)]
+    [int]$Port = 8000
 )
 
 Set-StrictMode -Version Latest
@@ -17,9 +19,24 @@ else {
     $ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 }
 
-$launcherPath = Join-Path $ProjectRoot "scripts\start-knowbase.ps1"
+$launcherPath = Join-Path $ProjectRoot "scripts\start-knowbase-app.ps1"
 if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf)) {
     throw "Launcher not found: $launcherPath"
+}
+$pythonExe = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$pythonwExe = Join-Path $ProjectRoot ".venv\Scripts\pythonw.exe"
+$frontendBuilder = Join-Path $ProjectRoot "scripts\build-frontend.ps1"
+if (-not (Test-Path -LiteralPath $pythonExe -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $pythonwExe -PathType Leaf)) {
+    throw "Missing .venv. Install the project with the desktop extra first."
+}
+& $pythonExe -c "import webview" *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw 'Desktop dependency missing. Run: .\.venv\Scripts\python.exe -m pip install -e ".[desktop]"'
+}
+& $frontendBuilder
+if ($LASTEXITCODE -ne 0) {
+    throw "Frontend preparation failed."
 }
 
 if ([string]::IsNullOrWhiteSpace($DesktopPath)) {
@@ -31,16 +48,17 @@ if (-not (Test-Path -LiteralPath $DesktopPath -PathType Container)) {
 
 $windowsPowerShell = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $shortcutPath = Join-Path $DesktopPath "$ShortcutName.lnk"
-$arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $launcherPath
+$arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Port {1}' -f `
+    $launcherPath, $Port
 
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($shortcutPath)
 $shortcut.TargetPath = $windowsPowerShell
 $shortcut.Arguments = $arguments
 $shortcut.WorkingDirectory = $ProjectRoot
-$shortcut.WindowStyle = 1
-$shortcut.Description = "Start KnowBase with its embedded SQLite database"
-$shortcut.IconLocation = "$windowsPowerShell,0"
+$shortcut.WindowStyle = 7
+$shortcut.Description = "Open KnowBase as a desktop application"
+$shortcut.IconLocation = "$pythonwExe,0"
 $shortcut.Save()
 
 Write-Output $shortcutPath

@@ -3,10 +3,10 @@
 | 字段 | 内容 |
 |---|---|
 | 状态 | 已确认（既有事实汇总） |
-| 版本 | v0.3 |
-| 日期 | 2026-09-20 |
+| 版本 | v0.4 |
+| 日期 | 2026-09-22 |
 | 上游 | `01-requirements.md` |
-| 变更 | v0.3：日常存储切换为用户目录 SQLite；v0.2：加入 Markdown 本地图片包能力、API 与边界 |
+| 变更 | v0.4：加入 pywebview 桌面壳原型与本地生命周期边界；v0.3：日常存储切换为用户目录 SQLite；v0.2：加入 Markdown 本地图片包能力、API 与边界 |
 | 关联 | GitHub 总功能 Issue |
 
 > 本文是**项目总览**：给第一次打开仓库的人一份几分钟能读完的全貌，细节一律指向对应设计文档。
@@ -46,6 +46,7 @@
 | Agent 多步工作流 | 跨文档综合任务自动拆步执行，**缺料步骤显式标注**，引用全局统一编号 |
 | 关联图 | Obsidian 式 graph view：节点是笔记、连线是语义关联强度（悬停看关联文档、可拖动、可调阈值） |
 | 可评估 | 内置评估集与指标（recall@k / MRR / 拒答率 / τ 扫描），参数由数据校准 |
+| 原生桌面窗口 | pywebview 承载同一套 TypeScript 界面；单实例、API 就绪门与关窗退出已经接通，正式独立安装包仍在后续阶段 |
 
 ## 4. 怎么做到「不编造」
 
@@ -77,7 +78,8 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    FE[前端单页 M5<br/>TypeScript + Vite] -->|REST| M1[M1 库与文档管理]
+    HOST[桌面宿主<br/>pywebview] --> FE[前端单页 M5<br/>TypeScript + Vite]
+    FE -->|REST| M1[M1 库与文档管理]
     FE -->|REST| M3[M3 问答·溯源·拒答]
     FE -->|REST| M4[M4 Agent 工作流]
     FE -->|REST| G[M5+ 关联图]
@@ -96,7 +98,7 @@ flowchart LR
 
 ## 6. 界面
 
-前端是单页应用（`frontend/`，HTML5 + CSS Grid/Flexbox + 严格 TypeScript，无运行时框架与外部 CDN），由 Vite 构建后交给 FastAPI 托管。源码按 API、会话、导航、知识库/文档、问答/工作流、关联图和原文核对拆包。三栏研究工作台的左栏显示功能与并发任务状态，中间承载业务视图，右侧用于原文核对。五个视图为 **问答**、**工作流**、**关联图**、**文档**、**知识库**。
+前端是单页应用（`frontend/`，HTML5 + CSS Grid/Flexbox + 严格 TypeScript，无运行时框架与外部 CDN），由 Vite 构建后交给 FastAPI 托管。源码按 API、会话、导航、知识库/文档、问答/工作流、关联图和原文核对拆包。三栏研究工作台的左栏显示功能与并发任务状态，中间承载业务视图，右侧用于原文核对。五个视图为 **问答**、**工作流**、**关联图**、**文档**、**知识库**。Windows 源码运行可由 pywebview 打开系统原生窗口；桌面宿主只管理单实例、后台 API 与窗口生命周期，浏览器开发模式继续可用。
 
 普通问答和工作流可各运行一个并同时在途，切换视图后左栏仍显示各自计时状态。桌面端原文栏常驻且可调宽，平板与手机端改为默认收起的按需抽屉。回答内容先进行 HTML 转义，再渲染标题、列表、代码、公式文本与引用，避免执行模型返回的 HTML。设计细节见 `07-frontend-design.md` 与 `08-graph-view.md`。
 
@@ -130,6 +132,7 @@ flowchart LR
 | 文档与图片校验 | Python `zipfile` · Pillow | 限量读取 ZIP，校验路径/CRC/压缩比与静态图片完整性；原图不重编码 |
 | Embedding | OpenAI 兼容 API（默认 `BAAI/bge-m3`，1024 维） | 全项目模型唯一 |
 | 生成 | OpenAI 兼容 Chat API（默认 `deepseek-ai/DeepSeek-V4-Flash`） | 供应商可配 |
+| 桌面宿主 | pywebview 6.x · 系统 WebView | 源码原型已接通；独立安装包和三平台发布尚未完成 |
 | 测试 / CI | pytest · GitHub Actions（pgvector service container） | 测试不依赖真实密钥 |
 
 ## 9. 边界与已知取舍
@@ -145,6 +148,7 @@ flowchart LR
 | 关联图规模 | 参与近邻计算的块最多 400 个，超出时响应里标注 `truncated` |
 | 评估结论 | v2 固定基线为 5 库 / 20 文档 / 60 条样本；可用于回归对比，仍不能替代真实用户语料 |
 | 文档格式 | 支持 Markdown / txt，以及“单篇 Markdown + 本地静态图片”的 ZIP；PDF、Word、OCR 与图片语义解析留给后续版本 |
+| 桌面发布 | 当前桌面窗口从源码环境启动，仍需要 Python 和用于构建前端的 Node.js；无开发环境安装包、签名与自动更新尚未完成 |
 
 ## 10. 评估结论摘要
 
@@ -170,7 +174,8 @@ flowchart LR
 | 06 检索质量评估 | 评估集、recall/MRR、τ 校准 | ✅ 完成 |
 | CI/CD | GitHub Actions 自动化测试 | ✅ 完成 |
 | M5 前端 | 库/文档管理、问答与溯源高亮、工作流进度 | ✅ 完成（TypeScript 模块化单页，Vite 构建） |
-| V1.0 | PDF/Word 导入、问答历史持久化、增量同步 | 规划 |
+| 桌面壳原型 | pywebview、单实例、后台 API 生命周期、同源写保护 | ✅ 完成（源码运行） |
+| V1.0 | 可分发桌面包、本地诊断、任务恢复、PDF/Word 导入 | 规划 |
 
 ## 12. 文档索引
 

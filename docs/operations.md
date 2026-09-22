@@ -2,17 +2,17 @@
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 已实现（SQLite 默认运行时、Vault 重建、外部编辑同步、旧数据迁移与隔离测试） |
-| 版本 | v0.7 |
+| 状态 | 已实现（SQLite 默认运行时、Vault 重建、外部编辑同步、pywebview 桌面壳原型、旧数据迁移与隔离测试） |
+| 版本 | v0.8 |
 | 日期 | 2026-09-22 |
 | 上游 | `design/03-data-model.md` · `design/04-retrieval.md` · `design/05-agent-workflow.md` |
-| 关联 | A1–A2、B1–B4、C1–C7 修复 · SQLite 桌面化、文件系统重建与外部编辑同步 |
+| 关联 | A1–A2、B1–B4、C1–C7 修复 · SQLite 桌面化、文件系统重建、外部编辑同步与本地窗口生命周期 |
 
 本文区分代码已经保证的行为、部署边界与后续建议。性能缺陷能解释请求等待，不足以证明某次浏览器或桌面 GUI 卡死的原因；确认实际原因仍需要对应请求的日志与耗时。
 
 ## 1. 当前运行边界
 
-### SQLite 本地运行与命令行启动
+### SQLite 本地运行
 
 日常运行使用进程内 SQLite，不启动 Docker Desktop、WSL、Docker Engine、PostgreSQL 或 Alembic。前端源码使用 TypeScript，Node.js 22.12+ 只参与 Vite 构建，应用运行时由 FastAPI 统一托管静态产物。默认用户数据位置如下：
 
@@ -24,23 +24,43 @@
 
 目录中 `knowbase.db` 保存运行状态、切块和检索索引，`storage/` 保存原始 Markdown、图片与 `.knowbase-vault.json` 原子清单。清单只含重建需要的稳定元数据和摘要，不含模型密钥、问答历史、chunk 或向量。需要整体改位置时只设置 `KNOWBASE_DATA_DIR`；普通用户不配置底层 `DATABASE_URL` 和 `STORAGE_DIR`。
 
-日常从项目根目录启动：
+项目根由脚本自身位置解析，不依赖当前用户名、盘符或仓库名。代码可位于含空格、中文和常见特殊字符的本地目录，其他人从 GitHub 克隆到不同路径也不会继承开发者机器的绝对路径。日常数据与 clone 分离，所以移动或重新下载代码不会隐式产生另一份个人库；网络共享盘的锁和原子改名语义因服务端实现不同，不在当前支持范围内。
+
+### 原生桌面窗口
+
+源码环境安装 `desktop` 可选依赖后，Windows 可以创建 **KnowBase** 快捷方式：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,desktop]"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-shortcut.ps1
+```
+
+安装脚本先复用 `scripts/build-frontend.ps1` 准备 Vite 生产资源，再把快捷方式指向隐藏运行的 `start-knowbase-app.ps1`。该启动器用 `pythonw` 进入 `app.desktop`，因此窗口打开后不依赖一个可见终端。默认端口是 8000；需要改端口时，安装快捷方式时传 `-Port 9000`。桌面模式和浏览器模式不要同时使用同一端口。
+
+`app.desktop` 在用户数据库旁持有 `.knowbase-instance.lock` 的操作系统文件锁，同一用户数据目录只允许一个桌面实例。锁文件可以在崩溃后保留，实际所有权由操作系统锁决定，进程退出会自动释放。取得锁后，启动器准备 schema、Vault 与外部编辑同步，在后台线程预绑定回环端口并运行单 worker Uvicorn；只有真实 `/ready` 返回 200 后才把 `/ui/` 交给主线程中的 pywebview。关闭最后一个窗口会请求 API 正常退出并释放 HTTP 连接池、端口和单实例锁。WebView 的持久化 profile 位于用户数据目录的 `webview/`。
+
+本地服务器只监听 `127.0.0.1`。对于带 `Origin` 的浏览器写请求，中间件要求请求目标是明确的回环主机，并只接受与 API 同源的窗口页面或固定的本地 Vite 开发源 `127.0.0.1:5173` / `localhost:5173`；其它网站和 DNS 重绑定域名不能借用户浏览器调用本地修改接口。没有 `Origin` 的本机脚本和命令行请求保持兼容。这个检查不能替代将服务绑定到回环地址，也不能把当前 API 变成可安全暴露到局域网的多用户服务。
+
+无需创建快捷方式时可直接启动；`--check` 会完整准备运行时、启动 API、验证就绪再停止，但不会创建 GUI：
+
+```powershell
+.\.venv\Scripts\python.exe -m app.desktop
+.\.venv\Scripts\python.exe -m app.desktop --check
+```
+
+当前阶段是源码桌面壳原型：Windows WebView2 链路已经做过原生窗口冒烟测试，但运行机器仍需 Python、源码目录和构建前端所需的 Node.js。无 Python 干净机器安装包、代码签名、自动更新和三平台打包尚未完成；Linux 还需显式选择 GTK 或 Qt pywebview 后端。
+
+### 浏览器与开发模式
+
+需要浏览器、OpenAPI 联调或可见服务日志时，从项目根目录启动：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 ```
 
-启动器先确认现有服务和端口状态，再调用 `scripts/build-frontend.ps1`：核对 Node.js 版本，以 `package-lock.json` 的 SHA-256 判断是否需要 `npm ci`，再以源码树指纹判断是否需要 Vite 构建。随后 `app.runtime` 初始化 schema、WAL、外键、FTS5、embedding 指纹与 Vault 一致性，并同步已登记普通原文的外部变化，最后以单 worker 启动 API；`/ready` 确认 API 与数据库均可用后才打开浏览器。重复启动时，如果 API 已经正常运行，脚本只打开界面；如果端口被其它程序占用，则明确报错。
+浏览器启动器先确认现有服务和端口状态，再调用 `scripts/build-frontend.ps1`：核对 Node.js 版本，以 `package-lock.json` 的 SHA-256 判断是否需要 `npm ci`，再以源码树指纹判断是否需要 Vite 构建。随后 `app.runtime` 初始化 schema、WAL、外键、FTS5、embedding 指纹与 Vault 一致性，并同步已登记普通原文的外部变化，最后以单 worker 启动 API；`/ready` 确认 API 与数据库均可用后才打开浏览器。重复启动时，如果 API 已经正常运行，脚本只打开界面；如果端口被其它程序占用，则明确报错。
 
-项目根由脚本自身位置解析，不依赖当前用户名、盘符或仓库名。代码可位于含空格、中文和常见特殊字符的本地目录，其他人从 GitHub 克隆到不同路径也不会继承开发者机器的绝对路径。日常数据与 clone 分离，所以移动或重新下载代码不会隐式产生另一份个人库；网络共享盘的锁和原子改名语义因服务端实现不同，不在当前支持范围内。
-
-也可以安装桌面 **KnowBase** 快捷方式。快捷方式只是本地 PowerShell 启动命令的入口：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-shortcut.ps1
-```
-
-按 `Ctrl+C` 会停止 API；SQLite 没有需要单独关闭的服务。离线备份时先停止 API，再复制整个用户数据目录，确保数据库、可能尚未清理的 WAL 文件、Vault 清单和原文属于同一停止时刻。恢复时同样保持 API 关闭，并整体恢复数据库与 `storage/`，不要随意拼接不同时间的副本。
+浏览器模式按 `Ctrl+C` 停止 API；桌面模式关闭窗口即可。SQLite 没有需要单独关闭的服务。离线备份时先停止 API，再复制整个用户数据目录，确保数据库、可能尚未清理的 WAL 文件、Vault 清单和原文属于同一停止时刻。恢复时同样保持 API 关闭，并整体恢复数据库与 `storage/`，不要随意拼接不同时间的副本。
 
 ### 从原文 Vault 重建 SQLite
 
@@ -248,6 +268,7 @@ PostgreSQL 兼容后端仍先用 `content % :query` 预过滤，再按 `similari
 | 优先级 | 建议 | 原因与验收方式 |
 |---|---|---|
 | 完成 | 启动时同步已登记普通原文的外部编辑 | mtime/size 廉价筛选、SHA-256 最终判定；只重建变化文档，并覆盖模型等待期间二次保存、模型失败、Vault 已推进后 SQLite 失败与下次续接 |
+| 完成 | pywebview 桌面壳原型与单实例生命周期 | 原生窗口只在真实 `/ready` 后打开；窗口关闭后 API、端口、HTTP 连接池和文件锁均释放；跨进程锁、端口冲突、GUI 编排和异源写保护有自动化测试 |
 | 1 | 记录请求 id、模型/检索分阶段耗时、文档 id 与工作流步骤；给模型链路设置总耗时预算 | 让「卡住」可定位到模型、数据库或前端；验证超时错误能说明阶段，并观测多个页面同时操作时列表仍能响应 |
 | 完成 | 重传采用不可变候选原文与单调版本，处理成功后统一切换 | Embedding 失败继续使用匹配的旧原文和旧块；处理中再次重传时，较早任务的结果与错误均不会覆盖新版本 |
 | 1 | 增加显式重新索引入口与索引版本记录 | B1 等切分算法修复不能自动修好旧块；记录切块版本、Embedding 模型/维度与重建时间，以便只处理受影响文档 |
@@ -257,4 +278,4 @@ PostgreSQL 兼容后端仍先用 `content % :query` 预过滤，再按 `similari
 | 3 | 验证干净安装与构建产物 | CI 已同时验证 SQLite 真文件与空 PostgreSQL 迁移链；后续仍需构建桌面安装包，并在无 Python、无源码目录的干净环境验证前端资源、schema 升级与启动链是否齐全 |
 | 3 | 按规模优化列表与图 | `selectinload` 解决库列表 N+1 后，可用聚合计数避免加载全部文档；前端力模拟现已在收敛、页面隐藏或离开关联图时停止 RAF，下一步仍应针对大节点数用浏览器 Performance 验证 O(n²) 斥力，并按索引版本缓存图请求 |
 
-当前日常技术栈是 SQLite + FTS5 + FastAPI，并由版本化 JSON Vault 保证原文可重建和外部编辑可续接；PostgreSQL + pgvector 保留为迁移和质量对照。下一步做任务进度持久化、本地诊断日志和桌面壳；只有真实规模与测量证明精确向量扫描不足时，再引入可选向量扩展。
+当前日常技术栈是 SQLite + FTS5 + FastAPI + pywebview，并由版本化 JSON Vault 保证原文可重建和外部编辑可续接；PostgreSQL + pgvector 保留为迁移和质量对照。下一步做本地滚动日志与可复制诊断信息、任务进度持久化，并用干净机器打包验证决定正式壳和发布流水线；只有真实规模与测量证明精确向量扫描不足时，再引入可选向量扩展。
