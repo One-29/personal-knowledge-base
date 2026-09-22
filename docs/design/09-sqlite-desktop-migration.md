@@ -2,11 +2,11 @@
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 已实现（核心双方言、数据迁移、默认运行时、Vault 可重建、外部编辑同步、pywebview 壳原型） |
-| 版本 | v0.7 |
+| 状态 | 已实现（核心双方言、数据迁移、默认运行时、Vault 可重建、外部编辑同步、pywebview 壳与本地诊断） |
+| 版本 | v0.8 |
 | 日期 | 2026-09-22 |
 | 上游 | `02-modules.md`（模块边界）· `03-data-model.md`（数据模型）· `04-retrieval.md`（检索） |
-| 关联 | 桌面 App 化：核心双方言、模型指纹、质量门、迁移、默认运行时、文件真相与本地窗口生命周期 |
+| 关联 | 桌面 App 化：核心双方言、模型指纹、质量门、迁移、默认运行时、文件真相、本地窗口与诊断生命周期 |
 
 > 本文记录从 PostgreSQL 服务迁移到 SQLite 嵌入式数据库的边界、当前实现和后续顺序。核心业务、一次性数据迁移和默认启动切换已经完成；PostgreSQL 路径只保留给迁移、兼容回归与评估对照。
 
@@ -113,6 +113,12 @@ WebView profile 持久化到用户数据目录的 `webview/`，因此浏览器�
 
 该阶段只验证源码形态的整条链路。`desktop` 是可选依赖，Windows 快捷方式在需要时构建 `frontend/dist`，再用 `pythonw -m app.desktop` 隐藏启动；运行机器仍需要 Python、源码和 Node.js。正式发布仍需把 Python 后端、前端产物、SQLite schema 升级和壳一起封装，并在无开发环境的干净机器验证。pywebview 原型提供是否继续冻结 Python 或改用 Tauri sidecar 的实测依据，不等于已经完成发行包。
 
+### 本地诊断边界
+
+桌面程序没有常驻终端，因此诊断基础设施独立放在 `app.diagnostics`：`local_logging` 只负责 SQLite 日常运行的滚动文件与凭据脱敏，`context`/`middleware` 只负责请求 ID、响应头和请求总耗时，`stages` 为模型/检索/索引提供不含正文的阶段计时，`report` 只组装允许复制的字段。日志配置幂等；桌面启动器先启用日志以覆盖运行时准备，ASGI lifespan 在 Uvicorn 完成自己的 logging 配置后再次确认 handler 仍挂载。
+
+`knowbase.log` 每个文件 2 MiB、4 份备份。日志不记录 HTTP body 与 query string，阶段维度限于库 ID、步骤号、字符/块数量和配置上限；formatter 还会遮盖当前模型 Key、Bearer、常见凭据字段和 URL userinfo。完整异常留在本机，500 响应只返回 request ID。复制报告进一步排除服务地址、知识库/文档名称、问题、回答、原文与绝对路径，仅保留版本、平台、方言/schema、状态计数、模型指纹和构建状态。完整日志仍可能包含现有业务 logger 写出的路径或标题，用户分享前必须检查。
+
 ## 6. 后续阶段与验收门
 
 1. **已完成：数据迁移**。PostgreSQL/文件系统到 SQLite 的一次性导入、指纹核对、逐表摘要和失败保护已有真实 PostgreSQL 集成测试。
@@ -120,6 +126,7 @@ WebView profile 持久化到用户数据目录的 `webview/`，因此浏览器�
 3. **已完成：文件系统可重建基础**。严格 Vault 清单、事务补偿、数据库删除后候选重建、pending 提升、失败和并发发布保护均有真 SQLite 回归测试。
 4. **已完成：外部编辑同步**。mtime/size 廉价筛选、SHA-256 最终判定、单文档索引替换、模型等待期间二次保存保护、Vault 领先后的启动续接和删除/重命名失败关闭均有真 SQLite 回归测试。
 5. **已完成：桌面壳原型**。pywebview 已验证 Windows WebView2、SQLite 准备、启动阶段外部同步、跨进程单实例、后台 API 就绪门、关窗退出和同源写保护；自动化测试不依赖真实 GUI，另有本机原生窗口冒烟验证。
-6. **下一步：可分发桌面包**。先补本地滚动日志与复制诊断信息，再比较 PyInstaller/pywebview 与 Tauri sidecar 的包体、启动时间和维护成本；选定后建立 Windows/macOS/Linux 构建、干净机器安装、schema 升级、签名说明和发布验证。
+6. **已完成：本地诊断**。滚动日志、凭据脱敏、请求 ID、模型/检索/索引阶段耗时、安全 500 和隐私安全复制报告已有 API/文件回归；前端提供单击复制及 Clipboard API 失败回退。
+7. **下一步：可分发桌面包**。先完成可恢复的后台任务记录，再比较 PyInstaller/pywebview 与 Tauri sidecar 的包体、启动时间和维护成本；选定后建立 Windows/macOS/Linux 构建、干净机器安装、schema 升级、签名说明和发布验证。
 
 每一阶段都必须跑 PostgreSQL 全回归、SQLite 真文件集成测试以及相关前端检查；检索或存储语义变化还必须通过 v2 质量门。可分发安装包完成前，不删除 PostgreSQL 实现与迁移文件。

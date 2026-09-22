@@ -6,6 +6,7 @@ from collections.abc import Iterable
 
 from app import chunking, embedding
 from app.core.config import Settings, settings
+from app.diagnostics import timed_stage
 from app.embedding import EmbeddingError
 
 
@@ -16,12 +17,13 @@ def split_source(
     protected_spans: Iterable[tuple[int, int]] = (),
 ) -> list[chunking.Chunk]:
     """按统一参数切分原文，上传入库与外部编辑同步共用。"""
-    return chunking.split_markdown(
-        text,
-        max_chars=config.chunk_max_chars,
-        overlap_chars=config.chunk_overlap_chars,
-        protected_spans=tuple(protected_spans),
-    )
+    with timed_stage("index.chunking", characters=len(text)):
+        return chunking.split_markdown(
+            text,
+            max_chars=config.chunk_max_chars,
+            overlap_chars=config.chunk_overlap_chars,
+            protected_spans=tuple(protected_spans),
+        )
 
 
 def embed_chunks(
@@ -30,15 +32,20 @@ def embed_chunks(
     config: Settings = settings,
 ) -> list[list[float]]:
     """向量化全部块，并拒绝数量或维度不完整的 provider 响应。"""
-    vectors = embedding.get_embedding_provider(config).embed_texts(
-        [chunk.text for chunk in chunks]
-    )
-    validate_vectors(
-        vectors,
-        expected_count=len(chunks),
-        expected_dimension=config.embedding_dimension,
-    )
-    return vectors
+    with timed_stage(
+        "index.embedding",
+        chunks=len(chunks),
+        dimension=config.embedding_dimension,
+    ):
+        vectors = embedding.get_embedding_provider(config).embed_texts(
+            [chunk.text for chunk in chunks]
+        )
+        validate_vectors(
+            vectors,
+            expected_count=len(chunks),
+            expected_dimension=config.embedding_dimension,
+        )
+        return vectors
 
 
 def validate_vectors(

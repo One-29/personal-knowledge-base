@@ -151,3 +151,10 @@ export interface UploadResult {
   document: KnowledgeDocument;
   content_changed: boolean;
 }
+
+export interface DiagnosticsResponse {
+  request_id: string;
+  report: string;
+  log_path: string | null;
+  privacy_notice: string;
+}

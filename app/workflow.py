@@ -21,6 +21,7 @@ from . import ask as ask_service
 from . import generation
 from .ask import CitationData
 from .core.config import settings
+from .diagnostics import timed_stage
 from .generation import LLMError, LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -139,13 +140,17 @@ def run_workflow(
     limit = min(settings.workflow_max_steps, requested_limit)
     if limit < 1:
         raise ValueError("max_steps 必须大于 0")
-    ask_service.validate_kb(db, kb_id)
-    plans = plan_steps(task, limit, provider=llm)
+    scope = kb_id if kb_id is not None else "all"
+    with timed_stage("workflow.validate_scope", kb_id=scope):
+        ask_service.validate_kb(db, kb_id)
+    with timed_stage("workflow.planning", max_steps=limit):
+        plans = plan_steps(task, limit, provider=llm)
 
     steps: list[WorkflowStepData] = []
     for index, plan in enumerate(plans, start=1):
         try:
-            answer = ask_service.answer_question(db, plan.query, kb_id, llm=llm)
+            with timed_stage("workflow.step", step=index, kb_id=scope):
+                answer = ask_service.answer_question(db, plan.query, kb_id, llm=llm)
         except ask_service.KnowledgeBaseNotFound:
             db.rollback()
             raise                                     # 库不存在是整体性错误，不降级为单步故障
@@ -189,7 +194,8 @@ def run_workflow(
                 )
             )
 
-    answer_text, citations = synthesize(task, steps)
+    with timed_stage("workflow.synthesis", steps=len(steps)):
+        answer_text, citations = synthesize(task, steps)
     return WorkflowResultData(task=task, steps=steps, answer=answer_text, citations=citations)
 
 

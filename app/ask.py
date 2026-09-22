@@ -30,6 +30,7 @@ from . import (
     session,
 )
 from .core.config import settings
+from .diagnostics import timed_stage
 from .embedding import EmbeddingError
 from .generation import LLMError, LLMProvider
 from .models import Document
@@ -116,9 +117,12 @@ def answer_question(
         刷新页面或重启服务都不会丢失追问上下文（也不必把会话落库）。
     """
     store = session_store or session.store
-    validate_kb(db, kb_id)
+    scope = kb_id if kb_id is not None else "all"
+    with timed_stage("ask.validate_scope", kb_id=scope):
+        validate_kb(db, kb_id)
     try:
-        embedding_profile.ensure_embedding_profile(db)
+        with timed_stage("ask.embedding_profile", kb_id=scope):
+            embedding_profile.ensure_embedding_profile(db)
     except embedding_profile.EmbeddingProfileError as exc:
         logger.warning("embedding 模型指纹不兼容: %s", exc)
         return _finish(
@@ -137,12 +141,14 @@ def answer_question(
     search_query = question
     if context:
         try:
-            search_query = generation.rewrite_query(question, context, provider=llm)
+            with timed_stage("ask.query_rewrite", history_turns=len(context)):
+                search_query = generation.rewrite_query(question, context, provider=llm)
         except LLMError as exc:
             logger.warning("追问改写失败，退化为原问题检索: %s", exc)
 
     try:
-        query_vector = _embed_query(search_query)
+        with timed_stage("ask.query_embedding", query_chars=len(search_query)):
+            query_vector = _embed_query(search_query)
     except EmbeddingError as exc:
         logger.warning("查询向量化失败: %s", exc)
         return _finish(
@@ -153,13 +159,21 @@ def answer_question(
         )
     # 本服务使用只读会话：把候选与标题都复制成普通数据后结束事务。
     # 生成阶段不再访问 ORM，避免长时间等待模型时占用连接池。
-    try:
-        candidates = retrieval.retrieve(
-            db, search_query, query_vector, kb_id, top_k=settings.retrieval_top_k
-        )
-        candidate_citations = _build_citations(db, list(enumerate(candidates, start=1)))
-    finally:
-        db.rollback()
+    with timed_stage(
+        "ask.retrieval",
+        kb_id=scope,
+        top_k=settings.retrieval_top_k,
+    ):
+        try:
+            candidates = retrieval.retrieve(
+                db, search_query, query_vector, kb_id, top_k=settings.retrieval_top_k
+            )
+            candidate_citations = _build_citations(
+                db,
+                list(enumerate(candidates, start=1)),
+            )
+        finally:
+            db.rollback()
 
     # L1-a：无候选
     if not candidates:
@@ -174,7 +188,8 @@ def answer_question(
 
     # 生成
     try:
-        content = generation.generate_answer(question, candidates, provider=llm)
+        with timed_stage("ask.answer_generation", candidates=len(candidates)):
+            content = generation.generate_answer(question, candidates, provider=llm)
     except LLMError as exc:
         logger.warning("生成失败: %s", exc)
         return _finish(store, session_id, _refuse(question, REFUSAL_LLM_UNAVAILABLE), search_query)

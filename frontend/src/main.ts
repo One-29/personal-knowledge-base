@@ -1,6 +1,7 @@
 import "./styles/app.css";
 
 import { ConversationStore } from "./conversations";
+import { initDiagnostics } from "./diagnostics";
 import { initEvidence } from "./evidence";
 import { friendlyError } from "./format";
 import { initGraph, loadGraph } from "./graph";
@@ -12,6 +13,7 @@ import { initTasks } from "./tasks";
 
 async function start(): Promise<void> {
   initEvidence();
+  initDiagnostics();
   initGraph();
   initLibrary();
   initNavigation({ docs: loadDocuments, map: loadGraph });

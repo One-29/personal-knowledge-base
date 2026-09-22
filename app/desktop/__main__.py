@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import logging
 import os
 from pathlib import Path
 import sys
+
+logger = logging.getLogger(__name__)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -52,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
             check_only=args.check,
         )
     except Exception as exc:
+        logger.exception("KnowBase 桌面启动失败")
         _show_error(str(exc) or exc.__class__.__name__)
         return 1
 

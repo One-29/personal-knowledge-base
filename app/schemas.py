@@ -220,3 +220,12 @@ class GraphOut(BaseModel):
     nodes: list[GraphNodeOut] = []
     edges: list[GraphEdgeOut] = []
     truncated: bool = False   # 块数超过计算上限时为 True（结果不完整，诚实标注）
+
+
+class DiagnosticsOut(BaseModel):
+    """可复制摘要与仅供本机定位的日志路径。"""
+
+    request_id: str
+    report: str
+    log_path: str | None = None
+    privacy_notice: str

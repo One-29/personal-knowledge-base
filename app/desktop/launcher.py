@@ -4,16 +4,23 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 from app.core.config import Settings, settings
+from app.diagnostics.local_logging import (
+    configure_runtime_logging,
+    shutdown_local_logging,
+)
 from app.runtime import prepare_runtime
 from app.runtime.configuration import resolve_runtime_paths
 
 from .instance_lock import SingleInstanceLock, lock_path
 from .server import ManagedServer
+
+logger = logging.getLogger(__name__)
 
 
 class DesktopLaunchError(RuntimeError):
@@ -42,44 +49,54 @@ def run_desktop(
 ) -> DesktopRun:
     """运行一个桌面实例；check_only 会走通服务器但不创建 GUI。"""
     root = project_root.expanduser().resolve()
-    _require_frontend(root)
-    paths = resolve_runtime_paths(config)
+    log_path = configure_runtime_logging(config)
+    try:
+        paths = resolve_runtime_paths(config)
+        _require_frontend(root)
 
-    with SingleInstanceLock(lock_path(paths.database)):
-        initialized = prepare_runtime(config=config, project_root=root)
-        server_type = server_factory or ManagedServer
-        with server_type(port=port) as server:
-            if check_only:
+        with SingleInstanceLock(lock_path(paths.database)):
+            logger.info("桌面实例启动 port=%d check_only=%s", port, check_only)
+            initialized = prepare_runtime(config=config, project_root=root)
+            server_type = server_factory or ManagedServer
+            with server_type(port=port) as server:
+                if check_only:
+                    return DesktopRun(
+                        url=server.app_url,
+                        database=initialized.paths.database,
+                        storage=initialized.paths.storage,
+                        window_opened=False,
+                    )
+
+                webview = webview_module or _load_webview()
+                webview.create_window(
+                    "KnowBase · 个人知识库",
+                    server.app_url,
+                    width=width,
+                    height=height,
+                    min_size=(960, 640),
+                    background_color="#f4f1ea",
+                    text_select=True,
+                )
+                profile_dir = initialized.paths.database.parent / "webview"
+                profile_dir.mkdir(parents=True, exist_ok=True)
+                webview.start(
+                    debug=debug,
+                    private_mode=False,
+                    storage_path=str(profile_dir),
+                )
+                logger.info("桌面窗口已关闭")
                 return DesktopRun(
                     url=server.app_url,
                     database=initialized.paths.database,
                     storage=initialized.paths.storage,
-                    window_opened=False,
+                    window_opened=True,
                 )
-
-            webview = webview_module or _load_webview()
-            webview.create_window(
-                "KnowBase · 个人知识库",
-                server.app_url,
-                width=width,
-                height=height,
-                min_size=(960, 640),
-                background_color="#f4f1ea",
-                text_select=True,
-            )
-            profile_dir = initialized.paths.database.parent / "webview"
-            profile_dir.mkdir(parents=True, exist_ok=True)
-            webview.start(
-                debug=debug,
-                private_mode=False,
-                storage_path=str(profile_dir),
-            )
-            return DesktopRun(
-                url=server.app_url,
-                database=initialized.paths.database,
-                storage=initialized.paths.storage,
-                window_opened=True,
-            )
+    except Exception:
+        logger.exception("桌面实例运行失败")
+        raise
+    finally:
+        if log_path is not None:
+            shutdown_local_logging()
 
 
 def _require_frontend(project_root: Path) -> None:

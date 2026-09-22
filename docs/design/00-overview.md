@@ -3,10 +3,10 @@
 | 字段 | 内容 |
 |---|---|
 | 状态 | 已确认（既有事实汇总） |
-| 版本 | v0.4 |
+| 版本 | v0.5 |
 | 日期 | 2026-09-22 |
 | 上游 | `01-requirements.md` |
-| 变更 | v0.4：加入 pywebview 桌面壳原型与本地生命周期边界；v0.3：日常存储切换为用户目录 SQLite；v0.2：加入 Markdown 本地图片包能力、API 与边界 |
+| 变更 | v0.5：加入本地滚动日志、请求关联与隐私安全诊断摘要；v0.4：加入 pywebview 桌面壳原型与本地生命周期边界；v0.3：日常存储切换为用户目录 SQLite；v0.2：加入 Markdown 本地图片包能力、API 与边界 |
 | 关联 | GitHub 总功能 Issue |
 
 > 本文是**项目总览**：给第一次打开仓库的人一份几分钟能读完的全貌，细节一律指向对应设计文档。
@@ -47,6 +47,7 @@
 | 关联图 | Obsidian 式 graph view：节点是笔记、连线是语义关联强度（悬停看关联文档、可拖动、可调阈值） |
 | 可评估 | 内置评估集与指标（recall@k / MRR / 拒答率 / τ 扫描），参数由数据校准 |
 | 原生桌面窗口 | pywebview 承载同一套 TypeScript 界面；单实例、API 就绪门与关窗退出已经接通，正式独立安装包仍在后续阶段 |
+| 可诊断 | 本地滚动日志用请求 ID 串起总耗时和模型/检索/索引阶段；界面一键复制不含密钥与知识正文的摘要 |
 
 ## 4. 怎么做到「不编造」
 
@@ -90,6 +91,9 @@ flowchart LR
     M3 --> LLM[LLM API]
     M4 -->|逐步调 M3| M3
     G -->|块级近邻聚合| DB
+    DIAG[本地诊断<br/>request ID + rolling log] -.观察元数据.-> M1
+    DIAG -.阶段耗时.-> M3
+    DIAG -.阶段耗时.-> M4
 ```
 
 图注：依赖只向下、无环。前端只消费 HTTP 契约；M4 只编排不检索；M3 是检索与判定的唯一入口；M2 不感知 HTTP；M1 只管元数据与原文。
@@ -118,6 +122,7 @@ flowchart LR
 | GET | `/api/v1/citations/{chunk_id}` | 引用溯源（原文片段 + 字符区间） |
 | **POST** | **`/api/v1/workflow`** | **多步综合任务（拆步、缺料可见、汇总）** |
 | GET | `/api/v1/graph` | 关联图数据（节点 = 文档，边 = 语义关联强度） |
+| GET | `/api/v1/diagnostics` | 可复制诊断摘要（无密钥、问题、回答、标题或原文） |
 | GET | `/health` · `/ready` | 存活探针（仅 API）/ 就绪探针（API + 数据库） |
 
 交互式契约文档：`http://127.0.0.1:8000/docs`。
@@ -133,6 +138,7 @@ flowchart LR
 | Embedding | OpenAI 兼容 API（默认 `BAAI/bge-m3`，1024 维） | 全项目模型唯一 |
 | 生成 | OpenAI 兼容 Chat API（默认 `deepseek-ai/DeepSeek-V4-Flash`） | 供应商可配 |
 | 桌面宿主 | pywebview 6.x · 系统 WebView | 源码原型已接通；独立安装包和三平台发布尚未完成 |
+| 本地诊断 | Python logging · RotatingFileHandler · ASGI middleware | 用户目录轮转、凭据脱敏、请求 ID 与阶段耗时；无远程遥测 |
 | 测试 / CI | pytest · GitHub Actions（pgvector service container） | 测试不依赖真实密钥 |
 
 ## 9. 边界与已知取舍
@@ -175,7 +181,8 @@ flowchart LR
 | CI/CD | GitHub Actions 自动化测试 | ✅ 完成 |
 | M5 前端 | 库/文档管理、问答与溯源高亮、工作流进度 | ✅ 完成（TypeScript 模块化单页，Vite 构建） |
 | 桌面壳原型 | pywebview、单实例、后台 API 生命周期、同源写保护 | ✅ 完成（源码运行） |
-| V1.0 | 可分发桌面包、本地诊断、任务恢复、PDF/Word 导入 | 规划 |
+| 本地诊断 | 滚动日志、脱敏、请求关联、阶段耗时、复制摘要 | ✅ 完成 |
+| V1.0 | 可分发桌面包、任务恢复、PDF/Word 导入 | 规划 |
 
 ## 12. 文档索引
 
