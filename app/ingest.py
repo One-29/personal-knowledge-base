@@ -17,7 +17,7 @@ from pathlib import Path
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from . import chunking, crud, embedding, embedding_profile, package_storage, storage
+from . import crud, document_index, embedding, embedding_profile, package_storage, storage
 from .core.config import settings
 from .db import SessionLocal
 from .embedding import EmbeddingError
@@ -152,10 +152,9 @@ def process_document(
             )
             return
 
-        chunks = chunking.split_markdown(
+        chunks = document_index.split_source(
             text,
-            max_chars=config.chunk_max_chars,
-            overlap_chars=config.chunk_overlap_chars,
+            config=config,
             protected_spans=tuple(
                 (int(item["char_start"]), int(item["char_end"]))
                 for item in (package_manifest or {}).get("occurrences", [])
@@ -175,14 +174,7 @@ def process_document(
             return
 
         try:
-            vectors = embedding.get_embedding_provider(config).embed_texts(
-                [c.text for c in chunks]
-            )
-            _validate_vectors(
-                vectors,
-                expected_count=len(chunks),
-                expected_dimension=config.embedding_dimension,
-            )
+            vectors = document_index.embed_chunks(chunks, config=config)
         except EmbeddingError as exc:
             _mark_failure(
                 db,
@@ -356,6 +348,14 @@ def _mark_failure(
     logger.warning("文档处理失败: doc_id=%s code=%s kept_old=%s", doc.id, code, has_old_chunks)
 
 
+def _safe_delete(rel_path: str, *, storage_root: Path | None = None) -> None:
+    """提交后的旧文件清理失败只记录日志，不反转已经成功的数据库切换。"""
+    try:
+        storage.delete(rel_path, storage_root=storage_root)
+    except OSError:
+        logger.warning("清理旧原文失败: path=%s", rel_path, exc_info=True)
+
+
 def _delete_if_unreferenced(
     db: Session,
     rel_path: str,
@@ -374,34 +374,3 @@ def _delete_if_unreferenced(
     db.rollback()
     if not referenced:
         _safe_delete(rel_path, storage_root=storage_root)
-
-
-def _safe_delete(rel_path: str, *, storage_root: Path | None = None) -> None:
-    """提交后的旧文件清理失败只记录日志，不反转已经成功的数据库切换。"""
-    try:
-        storage.delete(rel_path, storage_root=storage_root)
-    except OSError:
-        logger.warning("清理旧原文失败: path=%s", rel_path, exc_info=True)
-
-
-def _validate_vectors(
-    vectors: list[list[float]],
-    expected_count: int,
-    expected_dimension: int | None = None,
-) -> None:
-    """拒绝不完整或维度错误的 provider 响应，避免 zip 静默少写知识块。"""
-    if len(vectors) != expected_count:
-        raise EmbeddingError(
-            f"embedding 返回数量不匹配：期望 {expected_count}，实际 {len(vectors)}"
-        )
-    dimension = expected_dimension or settings.embedding_dimension
-    invalid = [
-        index
-        for index, vector in enumerate(vectors)
-        if len(vector) != dimension
-    ]
-    if invalid:
-        raise EmbeddingError(
-            f"embedding 维度不匹配：期望 {dimension}，"
-            f"异常位置 {invalid[:5]}"
-        )

@@ -50,6 +50,17 @@ def main(argv: list[str] | None = None) -> int:
         "vault-rebuilt": "已从原文 Vault 完整重建用户数据库",
     }
     print(f"[KnowBase Runtime] {status_messages[initialized.project_import.status]}")
+    if (
+        initialized.external_sync.refreshed
+        or initialized.external_sync.reindexed
+        or initialized.external_sync.resumed
+    ):
+        print(
+            "[KnowBase Runtime] 已同步外部原文："
+            f"重建索引 {initialized.external_sync.reindexed}，"
+            f"续接 {initialized.external_sync.resumed}，"
+            f"刷新观察值 {initialized.external_sync.refreshed}"
+        )
     print(f"  database: {initialized.paths.database}")
     print(f"  storage: {initialized.paths.storage}")
     return 0

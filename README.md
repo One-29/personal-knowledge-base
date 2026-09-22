@@ -12,7 +12,7 @@
 - 含图片 Markdown 会保留原始图片字节、出现顺序与字符位置；完整原文和引用侧栏均可查看原图，图片本身不参与 OCR 或向量化。
 - v2 检索基线覆盖 5 个库、20 篇文档、60 条分层样本：PostgreSQL recall@8 = **1.000（50/50）**、MRR = **0.987**；SQLite recall@8 = **1.000（50/50）**、MRR = **1.000**，已通过自动迁移质量门。
 - L1 拒答阈值由 v2 相似度分布重新校准为 **τ=0.50**：10 条库外问题拒答率 100%，50 条库内问题误拒率 0%。
-- 桌面化存储迁移已完成默认 SQLite 运行时和文件系统可重建的第一步：原文目录带有校验清单，日常数据库被删除后可从原文重新切分、向量化并生成；一键启动不依赖 WSL、Docker、PostgreSQL 或 Alembic。PostgreSQL 只保留给旧数据迁移、双方言回归和评估对照。
+- 桌面化存储迁移已完成默认 SQLite 运行时、文件系统重建和已登记普通文本的外部编辑同步：日常数据库被删除后可从原文重新生成；Markdown/TXT 在应用外保存后，下次启动只重建受影响文档。一键启动不依赖 WSL、Docker、PostgreSQL 或 Alembic，PostgreSQL 只保留给旧数据迁移、双方言回归和评估对照。
 - 数据库会持久化 embedding 服务地址、模型和维度的指纹；配置变化且仍有旧块时，问答会明确提示重建，入库会保留旧块并记录可诊断错误，避免不同语义空间静默混用。
 - 已知边界：当前只支持单 worker——会话与后台入库任务都在进程内存里，加 worker 拿不到可靠的跨进程会话与任务恢复。
 - 评估已能比较多库与难度层级，但仍是固定的 60 条基线，不能替代真实用户语料上的持续评估；完整口径见 docs/design/06-evaluation.md。
@@ -37,11 +37,13 @@ Copy-Item .env.example .env
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 ```
 
-启动器先核对端口和 Node.js 版本，根据 `package-lock.json` 安装锁定的前端依赖，并仅在源码变化时重建 `frontend/dist`；随后初始化 SQLite schema、WAL、外键、FTS5、embedding 指纹与原文 Vault 清单，再以单 worker 启动 API。`/ready` 通过后打开 <http://127.0.0.1:8000/ui/>。首次安装 npm 依赖需要联网，之后未改变依赖与前端源码时会直接复用。可加 `-Port 9000` 换端口，`-NoBrowser` 不自动开浏览器。
+启动器先核对端口和 Node.js 版本，根据 `package-lock.json` 安装锁定的前端依赖，并仅在源码变化时重建 `frontend/dist`；随后初始化 SQLite schema、WAL、外键、FTS5、embedding 指纹与原文 Vault 清单，检查已登记原文的外部变化，再以单 worker 启动 API。`/ready` 通过后打开 <http://127.0.0.1:8000/ui/>。首次安装 npm 依赖需要联网，之后未改变依赖与前端源码时会直接复用。可加 `-Port 9000` 换端口，`-NoBrowser` 不自动开浏览器。
 
 若仓库的 `data/knowbase.db` 是旧 PostgreSQL 数据的已验证迁移产物，首次启动会通过 SQLite backup API 把数据库和完整 `data/storage` 复制到用户数据目录。候选库通过原文、chunk 锚点、外键、FTS 与摘要复核后才发布；源文件不会移动或删除，已有用户数据库绝不会被覆盖。
 
 日常 `storage/.knowbase-vault.json` 保存知识库、文档、活动/候选原文的稳定元数据与校验和，不保存密钥、回答、chunk 或向量。若 `knowbase.db` 不存在而清单仍在，启动器会先完整校验原文，在候选 SQLite 中重新切分和调用 embedding，全部文档进入 `ready` 并通过外键、FTS、溯源区间和 `quick_check` 后才发布。失败不会留下半成品数据库；恢复需要当前 embedding 配置和可用的模型服务。
+
+需要用其它编辑器修改已入库的普通 Markdown/TXT 时，建议先停止 KnowBase，保存原文件，再重新启动。启动器先用大小和 mtime 筛选，再用 SHA-256 判断内容是否真的改变；内容改变时只重新切分、向量化并替换这一篇的索引，模型调用期间再次保存会中止本次同步。若 Vault 已记录新版本而 SQLite 提交被中断，下次启动会自动续接且不会重复增加版本。直接修改图片包、删除或重命名已登记文件都会停止启动并给出恢复指引；图片包请通过 ZIP 重传，新放入 `storage/` 的散文件请通过界面导入。应用运行期间的外部修改在下一次启动时生效。
 
 启动脚本从自身位置解析项目根目录，代码和数据路径都没有写死当前电脑的盘符或用户名。因此其他人从 GitHub 下载到不同目录时不会因绝对路径报错，目录包含空格或中文也可以；每个用户的数据仍进入自己的系统用户目录，不会跟随仓库位置变化。
 
@@ -126,11 +128,12 @@ wsl.exe -d Ubuntu -- docker exec knowbase-pg createdb -U postgres knowbase_test
 ```
 
 SQLite 集成测试使用临时真文件，覆盖建库、WAL/外键、入库、FTS5 触发器、
-混合检索、关联图、级联删除、Vault 原子清单、删除数据库后全量重建、失败保护
-和重启持久化；迁移集成测试还会从隔离的 PostgreSQL 生成最终 SQLite，验证失败不覆盖：
+混合检索、关联图、级联删除、Vault 原子清单、删除数据库后全量重建、外部编辑
+的单篇增量重建与中断续接、失败保护和重启持久化；迁移集成测试还会从隔离的
+PostgreSQL 生成最终 SQLite，验证失败不覆盖：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q tests/test_vault.py tests/test_sqlite_storage.py tests/test_sqlite_migration.py
+.\.venv\Scripts\python.exe -m pytest -q tests/test_vault.py tests/test_external_sync.py tests/test_sqlite_storage.py tests/test_sqlite_migration.py
 ```
 
 评估支持隔离的 PostgreSQL `knowbase_eval` 或固定 SQLite 文件，脚本只在子进程内覆盖环境变量，不碰日常数据：
