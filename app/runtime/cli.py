@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
+
+from app.core.config import settings
+from app.diagnostics.local_logging import (
+    configure_runtime_logging,
+    shutdown_local_logging,
+)
 
 from .configuration import RuntimeConfigurationError
 from .initializer import RuntimeInitializationError, prepare_runtime
 from .project_import import ProjectDataImportError
+
+logger = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,38 +38,44 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    log_path = configure_runtime_logging(settings)
     try:
-        initialized = prepare_runtime(
-            project_root=args.project_root,
-            import_existing_project_data=not args.skip_project_import,
-        )
-    except (
-        ProjectDataImportError,
-        RuntimeConfigurationError,
-        RuntimeInitializationError,
-    ) as exc:
-        print(f"[KnowBase Runtime] ERROR: {exc}", file=sys.stderr)
-        return 1
+        try:
+            initialized = prepare_runtime(
+                project_root=args.project_root,
+                import_existing_project_data=not args.skip_project_import,
+            )
+        except (
+            ProjectDataImportError,
+            RuntimeConfigurationError,
+            RuntimeInitializationError,
+        ) as exc:
+            logger.exception("KnowBase SQLite 运行时准备失败")
+            print(f"[KnowBase Runtime] ERROR: {exc}", file=sys.stderr)
+            return 1
 
-    status_messages = {
-        "imported": "已把项目迁移数据完整导入用户目录",
-        "target-exists": "复用已有用户数据库",
-        "source-missing": "没有旧迁移数据，已创建新的用户数据库",
-        "disabled": "已跳过项目数据导入",
-        "vault-rebuilt": "已从原文 Vault 完整重建用户数据库",
-    }
-    print(f"[KnowBase Runtime] {status_messages[initialized.project_import.status]}")
-    if (
-        initialized.external_sync.refreshed
-        or initialized.external_sync.reindexed
-        or initialized.external_sync.resumed
-    ):
-        print(
-            "[KnowBase Runtime] 已同步外部原文："
-            f"重建索引 {initialized.external_sync.reindexed}，"
-            f"续接 {initialized.external_sync.resumed}，"
-            f"刷新观察值 {initialized.external_sync.refreshed}"
-        )
-    print(f"  database: {initialized.paths.database}")
-    print(f"  storage: {initialized.paths.storage}")
-    return 0
+        status_messages = {
+            "imported": "已把项目迁移数据完整导入用户目录",
+            "target-exists": "复用已有用户数据库",
+            "source-missing": "没有旧迁移数据，已创建新的用户数据库",
+            "disabled": "已跳过项目数据导入",
+            "vault-rebuilt": "已从原文 Vault 完整重建用户数据库",
+        }
+        print(f"[KnowBase Runtime] {status_messages[initialized.project_import.status]}")
+        if (
+            initialized.external_sync.refreshed
+            or initialized.external_sync.reindexed
+            or initialized.external_sync.resumed
+        ):
+            print(
+                "[KnowBase Runtime] 已同步外部原文："
+                f"重建索引 {initialized.external_sync.reindexed}，"
+                f"续接 {initialized.external_sync.resumed}，"
+                f"刷新观察值 {initialized.external_sync.refreshed}"
+            )
+        print(f"  database: {initialized.paths.database}")
+        print(f"  storage: {initialized.paths.storage}")
+        return 0
+    finally:
+        if log_path is not None:
+            shutdown_local_logging()

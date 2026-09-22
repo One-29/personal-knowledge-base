@@ -15,6 +15,7 @@ from app.core.config import Settings
 from app.desktop.instance_lock import SingleInstanceError, SingleInstanceLock
 from app.desktop.launcher import DesktopLaunchError, run_desktop
 from app.desktop.server import DesktopServerError, ManagedServer
+from app.diagnostics.local_logging import get_log_path
 
 
 def _config(root: Path) -> Settings:
@@ -170,6 +171,7 @@ def test_desktop_launcher_prepares_runtime_and_owns_window_lifecycle(tmp_path):
     assert (result.database.parent / ".knowbase-instance.lock").read_bytes().startswith(
         b"\0"
     )
+    assert get_log_path() is None
 
 
 def test_desktop_check_skips_gui_and_missing_frontend_fails_early(tmp_path):
@@ -190,3 +192,4 @@ def test_desktop_check_skips_gui_and_missing_frontend_fails_early(tmp_path):
         server_factory=_FakeServer,
     )
     assert result.window_opened is False
+    assert get_log_path() is None

@@ -7,20 +7,20 @@
 docs/
 ├── README.md              # 本文件：文档地图 + 写作规范（先读这里）
 ├── workflow.md            # 开发流程规范：步骤/DoD/内容归属表/简洁原则
-├── operations.md          # 桌面/浏览器启动、SQLite 数据迁移、卡住排查与旧文档重建
+├── operations.md          # 桌面/浏览器启动、本地诊断、SQLite 数据迁移与卡住排查
 ├── demo.md                # 高等数学演示库：问答/工作流示例与关联图阈值
 ├── image-packages.md      # Markdown 本地图片 ZIP：格式、限制、存储和排错
 ├── design/                # 设计文档（按思考顺序编号，向下依赖）
 │   ├── 00-overview.md     # 项目总览：定位/能力/边界/进度（冷读者入口）
 │   ├── 01-requirements.md # 产品需求 PRD：定位/范围/NFR/用户故事/流程/决策（v0.4 已拍板）
-│   ├── 02-modules.md      # 模块拆分：业务边界 / 桌面宿主 / 依赖方向 / 时序（v0.6）
+│   ├── 02-modules.md      # 模块拆分：业务边界 / 桌面宿主 / 诊断基础设施 / 时序（v0.7）
 │   ├── 03-data-model.md   # 数据模型：ER / DDL / 状态机 / 双方言存储（v0.7）
 │   ├── 04-retrieval.md    # 检索链路：切分 / embedding / 混合检索 / 防幻 / 拒答（v0.2 已拍板）
 │   ├── 05-agent-workflow.md   # Agent 多步工作流：规划 / 执行 / 缺料 / 汇总（v0.2 已拍板）
 │   ├── 06-evaluation.md   # 评估方案：多库分层基线 / recall@k / τ 校准（v0.4）
 │   ├── 07-frontend-design.md  # 前端界面设计：token 系统 / 关键决策（v0.1）
 │   ├── 08-graph-view.md   # 关联图：边的计算 / 权重合成 / 决策（v0.1）
-│   └── 09-sqlite-desktop-migration.md # SQLite 桌面化：迁移 / 文件真相 / pywebview 原型 / 发布阶段门
+│   └── 09-sqlite-desktop-migration.md # SQLite 桌面化：迁移 / 文件真相 / 桌面壳 / 本地诊断 / 发布门
 ├── templates/
 │   └── module-design.md   # 模块设计模板（= GitHub 子 Issue 模板）
 └── issue-map.md           # 本地文档 → GitHub Issue 的映射（建仓后维护，待写）

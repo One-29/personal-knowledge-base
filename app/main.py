@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.requests import Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
@@ -18,9 +19,20 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import settings  # noqa: F401  （供后续装配读取配置）
 from app.database import initialize_database
 from app.db import engine
+from app.diagnostics.context import current_request_id
+from app.diagnostics.local_logging import configure_runtime_logging
+from app.diagnostics.middleware import RequestDiagnosticsMiddleware
 from app.http_client import close_http_client
 from app.http_security import local_browser_write_guard
-from app.routers import ask, document_content, documents, graph, kbs, workflow
+from app.routers import (
+    ask,
+    diagnostics,
+    document_content,
+    documents,
+    graph,
+    kbs,
+    workflow,
+)
 
 API_PREFIX = "/api/v1"
 FRONTEND_SOURCE_DIR = Path(__file__).resolve().parent.parent / "frontend"
@@ -31,11 +43,14 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """准备嵌入式 schema；退出时统一释放 HTTP 连接池。"""
-    initialize_database(engine)
+    configure_runtime_logging(settings)
+    logger.info("KnowBase API 启动 backend=%s", engine.dialect.name)
     try:
+        initialize_database(engine)
         yield
     finally:
         close_http_client()
+        logger.info("KnowBase API 已停止")
 
 
 app = FastAPI(
@@ -45,6 +60,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.middleware("http")(local_browser_write_guard)
+app.add_middleware(RequestDiagnosticsMiddleware)
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, _exc: Exception) -> JSONResponse:
+    """未处理异常只返回关联 ID，不把路径、SQL 或供应商响应暴露给界面。"""
+    request_id = getattr(request.state, "request_id", current_request_id())
+    logger.exception("未处理的请求异常", extra={"request_id": request_id})
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "服务内部错误，请复制诊断信息后重试",
+            "request_id": request_id,
+        },
+        headers={"X-Request-ID": request_id},
+    )
 
 # 版本前缀在装配层统一管理（单点修改）；各 router 只声明业务前缀
 app.include_router(kbs.router, prefix=API_PREFIX)
@@ -54,6 +85,7 @@ app.include_router(document_content.router, prefix=API_PREFIX)
 app.include_router(ask.router, prefix=API_PREFIX)
 app.include_router(workflow.router, prefix=API_PREFIX)
 app.include_router(graph.router, prefix=API_PREFIX)
+app.include_router(diagnostics.router, prefix=API_PREFIX)
 
 
 @app.get("/health")

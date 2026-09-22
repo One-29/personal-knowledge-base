@@ -14,6 +14,7 @@
 - L1 拒答阈值由 v2 相似度分布重新校准为 **τ=0.50**：10 条库外问题拒答率 100%，50 条库内问题误拒率 0%。
 - 桌面化存储迁移已完成默认 SQLite 运行时、文件系统重建和已登记普通文本的外部编辑同步：日常数据库被删除后可从原文重新生成；Markdown/TXT 在应用外保存后，下次启动只重建受影响文档。一键启动不依赖 WSL、Docker、PostgreSQL 或 Alembic，PostgreSQL 只保留给旧数据迁移、双方言回归和评估对照。
 - pywebview 桌面壳原型已经接通：Windows 快捷方式会打开系统 WebView 原生窗口，后台 API 通过真实 `/ready` 后才显示界面；同一用户数据目录只允许一个桌面实例，关闭窗口会停止随它启动的 API。当前仍是源码运行原型，尚未提供无需 Python/Node.js 的独立安装包。
+- 本地诊断链路已经接通：SQLite 日常运行把脱敏日志写入用户数据目录并自动轮转，每个 HTTP 请求返回关联 ID，问答、工作流、检索和向量化记录分阶段耗时；左下角可一键复制不含密钥与知识内容的诊断摘要。
 - 数据库会持久化 embedding 服务地址、模型和维度的指纹；配置变化且仍有旧块时，问答会明确提示重建，入库会保留旧块并记录可诊断错误，避免不同语义空间静默混用。
 - 已知边界：当前只支持单 worker——会话与后台入库任务都在进程内存里，加 worker 拿不到可靠的跨进程会话与任务恢复。
 - 评估已能比较多库与难度层级，但仍是固定的 60 条基线，不能替代真实用户语料上的持续评估；完整口径见 docs/design/06-evaluation.md。
@@ -52,6 +53,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-sh
 桌面壳只负责窗口、单实例锁和本地 API 生命周期，业务仍经过同一组 FastAPI REST 接口。它绑定回环地址 `127.0.0.1`，默认端口为 8000；非受信网站发出的浏览器写请求会在进入业务路由前被拒绝，命令行中不带 `Origin` 的本地 API 调用保持兼容。可给快捷方式安装器加 `-Port 9000` 更换端口。
 
 当前原型仍从源码目录运行，并在需要时调用 Node.js 构建前端；它验证的是 Python、系统 WebView、SQLite、单实例和窗口生命周期。面向无 Python 环境的独立安装包、自动更新与正式签名属于后续发布阶段。
+
+### 诊断与本地日志
+
+界面左下角的 **复制诊断信息** 会复制版本、系统、数据库后端与状态计数、模型指纹、前端构建状态和本次请求 ID。摘要不包含 API Key、服务地址、问题、回答、知识库/文档标题或原文，适合直接粘贴到 Issue。
+
+详细日志位于用户数据目录的 `logs/knowbase.log`。单个文件上限 2 MiB，保留 4 份历史文件；日志使用 UTC 时间，包含请求 ID、请求总耗时以及改写、Embedding、检索、生成、工作流步骤和入库索引的阶段耗时。已知模型密钥、Bearer、常见凭据字段与 URL userinfo 会脱敏；错误摘要仍可能含本地文件路径或供应商返回文本，分享日志文件前应自行检查。日志目录不可写时应用继续运行，并把诊断报告标为日志未启用。
 
 ### 浏览器与开发模式
 
@@ -148,11 +155,12 @@ wsl.exe -d Ubuntu -- docker exec knowbase-pg createdb -U postgres knowbase_test
 SQLite 集成测试使用临时真文件，覆盖建库、WAL/外键、入库、FTS5 触发器、
 混合检索、关联图、级联删除、Vault 原子清单、删除数据库后全量重建、外部编辑
 的单篇增量重建与中断续接、失败保护和重启持久化；迁移集成测试还会从隔离的
-PostgreSQL 生成最终 SQLite，验证失败不覆盖。桌面测试还覆盖跨进程单实例锁、
-后台 API 就绪与退出、窗口编排、端口冲突，以及回环 Web UI 的异源写请求保护：
+PostgreSQL 生成最终 SQLite，验证失败不覆盖。桌面与诊断测试还覆盖跨进程单实例锁、
+后台 API 就绪与退出、窗口编排、端口冲突、回环 Web UI 的异源写请求保护、
+请求 ID、日志轮转/脱敏和隐私安全诊断摘要：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q tests/test_vault.py tests/test_external_sync.py tests/test_sqlite_storage.py tests/test_sqlite_migration.py tests/test_desktop.py tests/test_http_security.py
+.\.venv\Scripts\python.exe -m pytest -q tests/test_vault.py tests/test_external_sync.py tests/test_sqlite_storage.py tests/test_sqlite_migration.py tests/test_desktop.py tests/test_http_security.py tests/test_diagnostics.py
 ```
 
 评估支持隔离的 PostgreSQL `knowbase_eval` 或固定 SQLite 文件，脚本只在子进程内覆盖环境变量，不碰日常数据：

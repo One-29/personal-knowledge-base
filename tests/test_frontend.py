@@ -42,6 +42,7 @@ def test_ui_serves_index_page():
         assert 'id="activity-trace"' in resp.text # 工作流独立运行状态
         assert 'id="docs-status-filter"' in resp.text
         assert 'id="margin-open"' in resp.text
+        assert 'id="copy-diagnostics"' in resp.text
         assert '<script type="module"' in resp.text
 
 
