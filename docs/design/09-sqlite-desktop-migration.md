@@ -2,9 +2,9 @@
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 已实现（核心双方言、数据迁移、默认运行时、Vault 可重建） |
-| 版本 | v0.5 |
-| 日期 | 2026-09-21 |
+| 状态 | 已实现（核心双方言、数据迁移、默认运行时、Vault 可重建、外部编辑同步） |
+| 版本 | v0.6 |
+| 日期 | 2026-09-22 |
 | 上游 | `02-modules.md`（模块边界）· `03-data-model.md`（数据模型）· `04-retrieval.md`（检索） |
 | 关联 | 桌面 App 化：核心双方言、模型指纹、质量门、迁移、默认运行时与文件真相 |
 
@@ -95,7 +95,7 @@ embedding 指纹。`app_metadata.schema_version` 由 SQLite 初始化器管理�
 | macOS | `~/Library/Application Support/KnowBase` |
 | Linux | `$XDG_DATA_HOME/knowbase` 或 `~/.local/share/knowbase` |
 
-`app.runtime` 在 API 启动前幂等创建 v1 schema、启用 WAL、创建 FTS5 索引与同步触发器，并核对 embedding 指纹、Vault 清单、外键和 `quick_check`。数据库版本高于当前程序时拒绝打开，防止旧应用改坏新格式；低于当前版本时也明确要求升级。后续每次 schema 变化必须提供按版本顺序执行、事务化且可重复验证的升级函数，不能用 `create_all()` 假装完成字段迁移。
+`app.runtime` 在 API 启动前幂等创建 v1 schema、启用 WAL、创建 FTS5 索引与同步触发器，并核对 embedding 指纹、Vault 清单、外键和 `quick_check`；数据库存在时还会同步已登记普通原文的外部修改。数据库版本高于当前程序时拒绝打开，防止旧应用改坏新格式；低于当前版本时也明确要求升级。后续每次 schema 变化必须提供按版本顺序执行、事务化且可重复验证的升级函数，不能用 `create_all()` 假装完成字段迁移。
 
 旧 PostgreSQL 迁移产物先落在仓库 `data/knowbase.db`，普通首次启动再通过 SQLite backup API 与原文树双重摘要复制到用户目录。复制使用候选文件/目录，校验活动原文、图片包、chunk 锚点、外键、FTS 和逻辑摘要后才发布；失败清理候选，源文件与已有用户库保持不变。目标库一旦存在，后续启动只复用它，不会再次导入或覆盖。
 
@@ -103,12 +103,14 @@ embedding 指纹。`app_metadata.schema_version` 由 SQLite 初始化器管理�
 
 数据库文件缺失但 Vault 存在时，启动器不会回退导入仓库中的旧快照。它先验证所有普通原文或图片包，再用保留的业务主键建立同目录候选 SQLite；每篇文档重新切分并调用当前 embedding 服务，候选库通过活动原文、chunk 锚点、外键、FTS、摘要和 `quick_check` 后，清单中的候选原文才提升为活动原文，数据库再以“不覆盖既有目标”的硬链接发布。任一文档失败、清单损坏或并发进程先发布目标时，本进程清理自己的候选，不删除另一进程的文件。已有 SQLite 与清单的用户元数据不一致时启动会停止，防止静默选择错误副本；仅 mtime 改变且内容未变时可刷新观察值。
 
+已有数据库启动时，`app.vault.external_sync` 编排同步，`external_source` 先用 mtime/size 筛选已登记来源，再以 SHA-256 判定普通文本的实际变化；内容未变时只刷新观察值，内容改变时通过共享的 `app.document_index` 切分和向量化，再由 `external_index` 只替换该文档的 chunk 与 FTS 索引。模型调用完成后再次读取原文，避免把调用期间新保存的文本和旧向量组合。新 SourceRecord 和 `ingest_version` 先写入 Vault，SQLite 在随后事务中校验数据库指纹、溯源区间、向量维度和 FTS 完整性；中途退出会留下“数据库落后于 Vault”的唯一可恢复状态，下次启动使用 Vault 版本继续，不重复递增。图片包仍要求 ZIP 重传；来源缺失、重命名、空内容、候选版本冲突与未登记散文件均不猜测用户意图。同步当前只发生在启动阶段，运行中修改在下次启动生效。
+
 ## 6. 后续阶段与验收门
 
 1. **已完成：数据迁移**。PostgreSQL/文件系统到 SQLite 的一次性导入、指纹核对、逐表摘要和失败保护已有真实 PostgreSQL 集成测试。
 2. **已完成：默认运行时切换**。默认连接串改为用户目录 SQLite；启动器、演示库和快捷方式移除 PostgreSQL、WSL、Docker 与 Alembic 用户路径。首次导入覆盖 WAL、失败回滚、目标不覆盖和跨平台路径测试。
 3. **已完成：文件系统可重建基础**。严格 Vault 清单、事务补偿、数据库删除后候选重建、pending 提升、失败和并发发布保护均有真 SQLite 回归测试。
-4. **下一步：外部编辑同步**。以 mtime/size 做廉价筛选、内容摘要做最终判定；内容变化后更新清单并只重建受影响文档，删除与重命名采用明确策略。
-5. **桌面壳**：先用 pywebview 验证 Python、WebView、SQLite、文件监听和单实例锁，再决定 Tauri sidecar 的正式打包。
+4. **已完成：外部编辑同步**。mtime/size 廉价筛选、SHA-256 最终判定、单文档索引替换、模型等待期间二次保存保护、Vault 领先后的启动续接和删除/重命名失败关闭均有真 SQLite 回归测试。
+5. **下一步：桌面壳**。先用 pywebview 验证 Python、WebView、SQLite、文件监听和单实例锁，再决定 Tauri sidecar 的正式打包。
 
-每一阶段都必须跑 PostgreSQL 全回归、SQLite 真文件集成测试以及 v2 检索基线。外部编辑同步和桌面壳完成前，不删除 PostgreSQL 实现与迁移文件。
+每一阶段都必须跑 PostgreSQL 全回归、SQLite 真文件集成测试以及 v2 检索基线。桌面壳与安装包完成前，不删除 PostgreSQL 实现与迁移文件。

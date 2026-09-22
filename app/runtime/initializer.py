@@ -19,9 +19,10 @@ from app.embedding_profile import (
     EmbeddingProfileError,
     ensure_embedding_profile,
 )
+from app.vault.external_sync import ExternalSourceSync, reconcile_external_sources
 from app.vault.rebuild import VaultRebuildError, rebuild_database
 from app.vault.store import VaultError, VaultStore
-from app.vault.sync import ensure_snapshot, verify_database_matches_snapshot
+from app.vault.sync import ensure_snapshot
 
 from .configuration import RuntimePaths, resolve_runtime_paths
 from .project_import import ProjectDataImport, import_project_data
@@ -35,6 +36,7 @@ class RuntimeInitializationError(RuntimeError):
 class RuntimeInitialization:
     paths: RuntimePaths
     project_import: ProjectDataImport
+    external_sync: ExternalSourceSync
 
 
 def prepare_runtime(
@@ -77,6 +79,7 @@ def prepare_runtime(
         raise RuntimeInitializationError(f"SQLite 启动前重建失败：{exc}") from exc
 
     engine = None
+    external_sync = ExternalSourceSync()
     try:
         paths.storage.mkdir(parents=True, exist_ok=True)
         assert config.database_url is not None
@@ -91,7 +94,12 @@ def prepare_runtime(
         with Session(engine, expire_on_commit=False) as db:
             ensure_embedding_profile(db, EmbeddingProfile.configured(config))
             snapshot = ensure_snapshot(db, store=vault)
-            verify_database_matches_snapshot(db, snapshot, store=vault)
+            _snapshot, external_sync = reconcile_external_sources(
+                db,
+                snapshot,
+                store=vault,
+                config=config,
+            )
         with engine.connect() as connection:
             quick_check = connection.exec_driver_sql("PRAGMA quick_check").scalar_one()
             foreign_keys = connection.exec_driver_sql(
@@ -117,4 +125,8 @@ def prepare_runtime(
         if engine is not None:
             engine.dispose()
 
-    return RuntimeInitialization(paths=paths, project_import=project_import)
+    return RuntimeInitialization(
+        paths=paths,
+        project_import=project_import,
+        external_sync=external_sync,
+    )

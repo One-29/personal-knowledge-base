@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy import func, select, text
 
-from app import ingest, storage
+from app import document_index, ingest, storage
 from app.core.config import settings
 from app.embedding import EmbeddingError
 from app.models import Chunk, Document
@@ -39,7 +39,11 @@ def test_embedding_batch_contract_rejects_silent_chunk_loss(
     """provider 少返回向量或维度错误时立即失败，不能让 zip 静默少写块。"""
     monkeypatch.setattr(settings, "embedding_dimension", 3)
     with pytest.raises(EmbeddingError, match=expected_message):
-        ingest._validate_vectors(vectors, expected_count=2)
+        document_index.validate_vectors(
+            vectors,
+            expected_count=2,
+            expected_dimension=settings.embedding_dimension,
+        )
 
 
 def _create_doc(db, kb_id: int, title: str = "tcp.md") -> Document:
