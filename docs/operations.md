@@ -57,6 +57,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-sh
 
 安装脚本先复用 `scripts/build-frontend.ps1` 准备 Vite 生产资源，再把快捷方式指向隐藏运行的 `start-knowbase-app.ps1`。该启动器用 `pythonw` 进入 `app.desktop`，因此窗口打开后不依赖一个可见终端。默认端口是 8000；需要改端口时，安装快捷方式时传 `-Port 9000`。桌面模式和浏览器模式不要同时使用同一端口。
 
+快捷方式显式调用 Windows PowerShell 5.1；它会把没有 BOM 的 UTF-8 脚本按系统代码页读取，因此 `start-knowbase-app.ps1` 必须保持纯 ASCII，面向用户的中文由应用层负责。Windows CI 会先检查该文件没有非 ASCII 字节，再通过 `powershell.exe` 执行 `-Check -Port 0`，完整覆盖前端准备、桌面依赖、本地 API 启停和脚本解析。
+
 `app.desktop` 在用户数据库旁持有 `.knowbase-instance.lock` 的操作系统文件锁，同一用户数据目录只允许一个桌面实例。锁文件可以在崩溃后保留，实际所有权由操作系统锁决定，进程退出会自动释放。取得锁后，启动器准备 schema、Vault 与外部编辑同步，在后台线程预绑定回环端口并运行单 worker Uvicorn；只有真实 `/ready` 返回 200 后才把 `/ui/` 交给主线程中的 pywebview。关闭最后一个窗口会请求 API 正常退出并释放 HTTP 连接池、端口和单实例锁。WebView 的持久化 profile 位于用户数据目录的 `webview/`。
 
 本地服务器只监听 `127.0.0.1`。对于带 `Origin` 的浏览器写请求，中间件要求请求目标是明确的回环主机，并只接受与 API 同源的窗口页面或固定的本地 Vite 开发源 `127.0.0.1:5173` / `localhost:5173`；其它网站和 DNS 重绑定域名不能借用户浏览器调用本地修改接口。没有 `Origin` 的本机脚本和命令行请求保持兼容。这个检查不能替代将服务绑定到回环地址，也不能把当前 API 变成可安全暴露到局域网的多用户服务。

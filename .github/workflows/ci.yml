@@ -127,6 +127,21 @@ jobs:
           python -m pip install -e ".[package]"
           npm ci --no-audit --no-fund
 
+      - name: Validate Windows PowerShell 5.1 source launcher
+        shell: powershell
+        run: |
+          $launcher = Resolve-Path ".\scripts\start-knowbase-app.ps1"
+          $bytes = [System.IO.File]::ReadAllBytes($launcher)
+          if ($bytes.Where({ $_ -gt 127 }).Count -gt 0) {
+            throw "The Windows PowerShell 5.1 launcher must remain ASCII encoded."
+          }
+          python -m venv --system-site-packages .venv
+          Copy-Item ".env.example" ".env"
+          & $launcher -Check -Port 0
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
       - name: Build and verify standalone app
         shell: pwsh
         run: ./scripts/build-windows-app.ps1 -SkipArchive

@@ -2,8 +2,9 @@
 
 [CmdletBinding()]
 param(
-    [ValidateRange(1, 65535)]
-    [int]$Port = 8000
+    [ValidateRange(0, 65535)]
+    [int]$Port = 8000,
+    [switch]$Check
 )
 
 Set-StrictMode -Version Latest
@@ -16,7 +17,7 @@ function Show-LaunchError {
         Add-Type -AssemblyName PresentationFramework
         [void][System.Windows.MessageBox]::Show(
             $Message,
-            "KnowBase 启动失败",
+            "KnowBase startup failed",
             [System.Windows.MessageBoxButton]::OK,
             [System.Windows.MessageBoxImage]::Error
         )
@@ -35,29 +36,34 @@ try {
 
     if (-not (Test-Path -LiteralPath $pythonExe -PathType Leaf) -or
         -not (Test-Path -LiteralPath $pythonwExe -PathType Leaf)) {
-        throw "缺少 .venv。请按 README 创建虚拟环境并安装 desktop 依赖。"
+        throw "Missing .venv. Follow the README to create it and install the desktop dependencies."
     }
     if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
-        throw "缺少 .env。请复制 .env.example 并配置模型 API Key。"
+        throw "Missing .env. Copy .env.example and configure the model API keys."
     }
     if (-not (Test-Path -LiteralPath $frontendBuilder -PathType Leaf)) {
-        throw "找不到前端构建脚本：$frontendBuilder"
+        throw "Frontend build script not found: $frontendBuilder"
     }
 
     & $pythonExe -c "import webview" *> $null
     if ($LASTEXITCODE -ne 0) {
-        throw '桌面组件未安装。请运行：.\.venv\Scripts\python.exe -m pip install -e ".[desktop]"'
+        throw 'Desktop dependency missing. Run: .\.venv\Scripts\python.exe -m pip install -e ".[desktop]"'
     }
 
     Set-Location -LiteralPath $projectRoot
     & $frontendBuilder
     if ($LASTEXITCODE -ne 0) {
-        throw "前端生产资源准备失败。"
+        throw "Frontend preparation failed."
+    }
+
+    $desktopArguments = @("-m", "app.desktop", "--port", $Port)
+    if ($Check) {
+        $desktopArguments += "--check"
     }
 
     $process = Start-Process `
         -FilePath $pythonwExe `
-        -ArgumentList @("-m", "app.desktop", "--port", $Port) `
+        -ArgumentList $desktopArguments `
         -WorkingDirectory $projectRoot `
         -WindowStyle Hidden `
         -Wait `
@@ -67,6 +73,11 @@ try {
     }
 }
 catch {
-    Show-LaunchError -Message $_.Exception.Message
+    if ($Check) {
+        [Console]::Error.WriteLine("KnowBase startup failed: {0}", $_.Exception.Message)
+    }
+    else {
+        Show-LaunchError -Message $_.Exception.Message
+    }
     exit 1
 }
