@@ -2,8 +2,8 @@
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 已实现（核心双方言、数据迁移、默认运行时、Vault 可重建、外部编辑同步、可恢复入库任务、pywebview 壳与本地诊断） |
-| 版本 | v0.9 |
+| 状态 | 已实现（核心双方言、数据迁移、默认运行时、Vault 可重建、外部编辑同步、可恢复入库任务、Windows 冻结包与本地诊断） |
+| 版本 | v1.0 |
 | 日期 | 2026-09-25 |
 | 上游 | `02-modules.md`（模块边界）· `03-data-model.md`（数据模型）· `04-retrieval.md`（检索） |
 | 关联 | 桌面 App 化：核心双方言、模型指纹、质量门、迁移、默认运行时、文件真相、本地窗口与诊断生命周期 |
@@ -111,13 +111,15 @@ embedding 指纹。`app_metadata.schema_version` 由 SQLite 初始化器管理�
 任务终态；其余任务按文档顺序恢复，普通单篇失败继续下一篇。Vault 一致性故障仍会停止
 启动，避免任务状态提交掩盖内容真相问题。任务表属于可重建运行信息，不写入 Vault。
 
-### pywebview 桌面壳原型
+### pywebview 桌面壳与 Windows 冻结包
 
 桌面宿主位于独立的 `app.desktop` 包，不把窗口技术侵入业务层。`instance_lock` 在用户数据库目录持有跨进程操作系统文件锁；`server` 预绑定 `127.0.0.1` 端口，在后台线程启动单 worker Uvicorn，并轮询真实 `/ready`；`launcher` 在持锁期间先调用 `prepare_runtime`，就绪后才在主线程创建 pywebview 窗口。pywebview 的事件循环返回时，托管服务器会执行正常退出并释放 HTTP 连接池、端口和实例锁。启动失败、端口冲突、重复实例与前端构建产物缺失均在创建业务窗口前转成明确错误。
 
 WebView profile 持久化到用户数据目录的 `webview/`，因此浏览器会话不会跟随源码 clone。窗口只加载回环 `/ui/`，TypeScript 前端仍通过原 REST 契约工作。由于回环 HTTP 接口可能被其它网站从浏览器发起请求，应用层增加本地浏览器写保护：请求目标必须是明确的回环主机，带 `Origin` 的非安全方法只接受 API 同源页面或固定的 Vite 开发源 `127.0.0.1:5173` / `localhost:5173`；无 `Origin` 的本机 CLI 继续可用。显式主机白名单同时阻断仅靠 Origin/Host 相等无法识别的 DNS 重绑定域名。这个保护和只监听回环地址共同组成当前本地边界，不代表支持局域网或多用户暴露。
 
-该阶段只验证源码形态的整条链路。`desktop` 是可选依赖，Windows 快捷方式在需要时构建 `frontend/dist`，再用 `pythonw -m app.desktop` 隐藏启动；运行机器仍需要 Python、源码和 Node.js。正式发布仍需把 Python 后端、前端产物、SQLite schema 升级和壳一起封装，并在无开发环境的干净机器验证。pywebview 原型提供是否继续冻结 Python 或改用 Tauri sidecar 的实测依据，不等于已经完成发行包。
+源码形态继续由 `desktop` 可选依赖和快捷方式服务开发调试；Windows 发布物使用 PyInstaller 单目录模式，把 Python、后端、Vite 产物、空白配置模板和 pywebview/.NET 桥接资源冻结到同一目录。入口在导入全局 Settings 前以独占创建方式准备用户目录 `config.env`，升级程序不会覆盖密钥；发布物拒绝包含 `.env`、`config.env` 或用户数据。Uvicorn 复用应用滚动日志配置，避免 windowed 进程没有标准流时默认 formatter 崩溃。
+
+本阶段选择 PyInstaller/pywebview，而没有切换 Tauri sidecar。现有壳已经验证 REST、单实例、WebView2 与 API 生命周期，冻结后约 65 MiB；Tauri 会新增 Rust 工具链、第二进程协议和 sidecar 更新一致性，却不减少 Python/FastAPI 核心运行时。单目录也优先于 onefile：资源结构可检查、启动不需要每次解压，杀毒软件误报与临时目录故障面更小。构建脚本在收缩 PATH、清空 Python 环境变量后，用临时数据目录分别执行 API/SQLite 与隐藏 WebView 页面加载检查，并输出 ZIP 和 SHA-256。真实 Windows Sandbox/独立 VM 的安装升级仍保留为 Releases 门。
 
 ### 本地诊断边界
 
@@ -134,6 +136,7 @@ WebView profile 持久化到用户数据目录的 `webview/`，因此浏览器�
 5. **已完成：桌面壳原型**。pywebview 已验证 Windows WebView2、SQLite 准备、启动阶段外部同步、跨进程单实例、后台 API 就绪门、关窗退出和同源写保护；自动化测试不依赖真实 GUI，另有本机原生窗口冒烟验证。
 6. **已完成：本地诊断**。滚动日志、凭据脱敏、请求 ID、模型/检索/索引阶段耗时、安全 500 和隐私安全复制报告已有 API/文件回归；前端提供单击复制及 Clipboard API 失败回退。
 7. **已完成：可恢复入库任务**。任务身份、原子领取、五阶段进度、重复调度、重传竞态、处理中退出、发布后退出、单篇失败隔离和 v1→v2 SQLite 升级均有回归测试。
-8. **下一步：可分发桌面包**。比较 PyInstaller/pywebview 与 Tauri sidecar 的包体、启动时间和维护成本；选定后建立 Windows/macOS/Linux 构建、干净机器安装、schema 升级、签名说明和发布验证。
+8. **已完成：Windows 可分发桌面包**。PyInstaller 单目录包、版本/图标资源、用户配置隔离、无标准流日志兼容、API 与真实 WebView 双冒烟、Windows CI 和 ZIP 校验和均已落地。
+9. **下一步：正式 Releases 与跨平台发布**。在 Windows Sandbox/独立 VM 验证首次安装和旧 schema 升级，建立 tag 驱动的 Releases 上传与签名说明，再分别设计 macOS 签名/notarization 和 Linux GTK/Qt 产物；不能把 Windows 冻结包直接宣称为三平台完成。
 
 每一阶段都必须跑 PostgreSQL 全回归、SQLite 真文件集成测试以及相关前端检查；检索或存储语义变化还必须通过 v2 质量门。可分发安装包完成前，不删除 PostgreSQL 实现与迁移文件。

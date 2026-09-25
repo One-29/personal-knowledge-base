@@ -75,6 +75,10 @@ class ManagedServer:
             port=self.port,
             workers=1,
             log_level=self.log_level,
+            # PyInstaller 的 windowed 进程没有 sys.stdout/sys.stderr；Uvicorn
+            # 默认 formatter 会调用 isatty() 并在监听前崩溃。桌面入口已经配置
+            # 统一滚动日志，因此这里直接复用现有 logging 树。
+            log_config=None,
             access_log=False,
             timeout_graceful_shutdown=self.shutdown_timeout,
         )

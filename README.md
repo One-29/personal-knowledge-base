@@ -13,16 +13,30 @@
 - v2 检索基线覆盖 5 个库、20 篇文档、60 条分层样本：PostgreSQL recall@8 = **1.000（50/50）**、MRR = **0.987**；SQLite recall@8 = **1.000（50/50）**、MRR = **1.000**，已通过自动迁移质量门。
 - L1 拒答阈值由 v2 相似度分布重新校准为 **τ=0.50**：10 条库外问题拒答率 100%，50 条库内问题误拒率 0%。
 - 桌面化存储迁移已完成默认 SQLite 运行时、文件系统重建和已登记普通文本的外部编辑同步：日常数据库被删除后可从原文重新生成；Markdown/TXT 在应用外保存后，下次启动只重建受影响文档。一键启动不依赖 WSL、Docker、PostgreSQL 或 Alembic，PostgreSQL 只保留给旧数据迁移、双方言回归和评估对照。
-- pywebview 桌面壳原型已经接通：Windows 快捷方式会打开系统 WebView 原生窗口，后台 API 通过真实 `/ready` 后才显示界面；同一用户数据目录只允许一个桌面实例，关闭窗口会停止随它启动的 API。当前仍是源码运行原型，尚未提供无需 Python/Node.js 的独立安装包。
+- Windows 独立桌面包已经接通：PyInstaller 单目录包包含 Python、FastAPI、前端产物和 pywebview 运行时，在隔离目录中通过 API 与真实 WebView2 双重启动检查；使用包时不需要安装 Python、Node.js、Docker 或源码。源码快捷方式仍保留给开发与调试。
 - 本地诊断链路已经接通：SQLite 日常运行把脱敏日志写入用户数据目录并自动轮转，每个 HTTP 请求返回关联 ID，问答、工作流、检索和向量化记录分阶段耗时；左下角可一键复制不含密钥与知识内容的诊断摘要。
 - 文档入库任务已经落库：文档页展示校验、读取、切分、索引生成和发布进度；应用退出后，下一次启动会先核对 Vault，再续跑遗留的 `pending` / `processing` 文档。任务按文档版本原子领取，重复调度和较早重传不能覆盖新版本。
 - 数据库会持久化 embedding 服务地址、模型和维度的指纹；配置变化且仍有旧块时，问答会明确提示重建，入库会保留旧块并记录可诊断错误，避免不同语义空间静默混用。
 - 已知边界：当前只支持单 worker。兼容用 `session_id` 会话仍在进程内；入库任务状态和重启恢复虽已持久化，执行承载仍是当前进程的 FastAPI `BackgroundTasks`，尚未设计多 worker 的租约、心跳与跨进程抢占。
 - 评估已能比较多库与难度层级，但仍是固定的 60 条基线，不能替代真实用户语料上的持续评估；完整口径见 docs/design/06-evaluation.md。
 
-## 本地运行
+## Windows 独立应用包
 
-当前源码运行需要 Python 3.12+ 和 Node.js 22.12+，不需要 Docker Desktop、WSL、Docker Engine 或独立数据库服务。Node.js 只负责构建前端，不作为应用运行时服务；问答必须配置模型 Key，任何 OpenAI 兼容的 embedding 与 chat 服务都可以。Windows 原生窗口使用 WebView2 Runtime；Linux 源码运行还需按 [pywebview 安装说明](https://pywebview.flowrl.com/guide/installation)准备 GTK 或 Qt GUI 后端。
+发布包解压后必须保留完整的 `KnowBase/` 目录，直接双击 `KnowBase.exe`。首次使用问答前，双击同目录的 `Configure KnowBase.cmd`，在打开的 `config.env` 中填写 `EMBEDDING_API_KEY` 与 `LLM_API_KEY`，保存后重新启动。配置、SQLite、原文、WebView profile 和日志都在 `%LOCALAPPDATA%\KnowBase`，替换程序目录不会覆盖个人数据。
+
+仓库维护者在 64 位 Windows 上构建发布 ZIP：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[package]"
+npm ci --no-audit --no-fund
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows-app.ps1
+```
+
+产物位于 `artifacts/windows/`，包含版本化 ZIP 和对应 `.sha256`。构建脚本先生成 Vite 资源和多尺寸应用图标，再冻结单目录包；随后清空 `PYTHONHOME/PYTHONPATH`、把 `PATH` 收缩为 Windows 系统目录，在全新临时用户目录中分别验证 SQLite/API 启动与隐藏 WebView2 页面加载。任何一步失败都不会生成可接受的发布结果。当前包未做商业代码签名，Windows SmartScreen 可能提示确认；正式下载应只使用本仓库 Releases 并核对 SHA-256。
+
+## 从源码运行
+
+源码运行需要 Python 3.12+ 和 Node.js 22.12+，不需要 Docker Desktop、WSL、Docker Engine 或独立数据库服务。Node.js 只负责构建前端，不作为应用运行时服务；问答必须配置模型 Key，任何 OpenAI 兼容的 embedding 与 chat 服务都可以。Windows 原生窗口和独立包使用 WebView2 Runtime；Linux 源码运行还需按 [pywebview 安装说明](https://pywebview.flowrl.com/guide/installation)准备 GTK 或 Qt GUI 后端。
 
 准备虚拟环境与依赖。命令都在项目根执行；PowerShell 不支持 `&&`，分两行或改用 `;`。不需要激活 venv，直接用它的解释器：
 
@@ -51,9 +65,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-sh
 .\.venv\Scripts\python.exe -m app.desktop --check
 ```
 
-桌面壳只负责窗口、单实例锁和本地 API 生命周期，业务仍经过同一组 FastAPI REST 接口。它绑定回环地址 `127.0.0.1`，默认端口为 8000；非受信网站发出的浏览器写请求会在进入业务路由前被拒绝，命令行中不带 `Origin` 的本地 API 调用保持兼容。可给快捷方式安装器加 `-Port 9000` 更换端口。
+桌面壳只负责窗口、单实例锁和本地 API 生命周期，业务仍经过同一组 FastAPI REST 接口。它绑定回环地址 `127.0.0.1`；独立包和直接运行默认自动选择空闲端口，源码快捷方式默认固定为 8000，可给安装器加 `-Port 9000` 更换。非受信网站发出的浏览器写请求会在进入业务路由前被拒绝，命令行中不带 `Origin` 的本地 API 调用保持兼容。
 
-当前原型仍从源码目录运行，并在需要时调用 Node.js 构建前端；它验证的是 Python、系统 WebView、SQLite、单实例和窗口生命周期。面向无 Python 环境的独立安装包、自动更新与正式签名属于后续发布阶段。
+源码快捷方式会在前端变化后调用 Node.js 重建资源；独立包已经带齐冻结资源，运行时不会回到源码目录或调用构建工具。自动更新、正式代码签名以及 macOS/Linux 二进制仍属于后续发布阶段。
 
 ### 诊断与本地日志
 
@@ -177,7 +191,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Back
 `eval/baselines/postgresql-bge-m3-v2.json` 与
 `eval/baselines/sqlite-bge-m3-v2.json`；评估脚本只会替换专用评估库/文件。
 
-CI 在 pgvector service container 上跑双方言 pytest，另外执行 TypeScript 严格类型检查、Vitest、Vite 生产构建，并在空 PostgreSQL 库里执行 `alembic upgrade head` 与 `alembic check`，同时校验兼容用 Compose、Shell 和 PowerShell 脚本。
+CI 在 pgvector service container 上跑双方言 pytest，另外执行 TypeScript 严格类型检查、Vitest、Vite 生产构建，并在空 PostgreSQL 库里执行 `alembic upgrade head` 与 `alembic check`，同时校验兼容用 Compose、Shell 和 PowerShell 脚本。独立的 Windows job 还会从源码冻结应用，并在无 Python/Node 路径的隔离环境中验证 API 和 WebView2 启动链。
 
 用户目录中的日常 SQLite、PostgreSQL 测试库 `knowbase_test`、评估库 `knowbase_eval` 与各自的原文目录互不可见，对照表见 docs/operations.md。
 

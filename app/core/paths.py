@@ -13,6 +13,8 @@ from pathlib import Path
 
 APP_DIRECTORY_NAME = "KnowBase"
 DATABASE_FILE_NAME = "knowbase.db"
+CONFIG_FILE_NAME = "config.env"
+CONFIG_FILE_OVERRIDE = "KNOWBASE_CONFIG_FILE"
 
 
 def default_user_data_dir(
@@ -40,3 +42,32 @@ def default_user_data_dir(
 def sqlite_database_url(path: Path) -> str:
     """把绝对文件路径编码成 SQLAlchemy pysqlite URL。"""
     return "sqlite+pysqlite:///" + path.expanduser().resolve().as_posix()
+
+
+def runtime_config_file(
+    *,
+    environ: Mapping[str, str] | None = None,
+    packaged: bool | None = None,
+    platform_name: str | None = None,
+    home: Path | None = None,
+) -> Path:
+    """返回当前运行形态应读取的配置文件。
+
+    源码运行继续读取项目根目录的 ``.env``；冻结后的桌面包读取用户数据
+    目录中的 ``config.env``，因此升级或替换程序目录不会覆盖模型密钥。环境
+    变量始终由 pydantic-settings 以更高优先级处理；显式配置文件覆盖主要供
+    自动化验证和便携部署使用。
+    """
+    env = os.environ if environ is None else environ
+    override = env.get(CONFIG_FILE_OVERRIDE, "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+
+    frozen = bool(getattr(sys, "frozen", False)) if packaged is None else packaged
+    if not frozen:
+        return Path(".env")
+    return default_user_data_dir(
+        environ=env,
+        platform_name=platform_name,
+        home=home,
+    ) / CONFIG_FILE_NAME

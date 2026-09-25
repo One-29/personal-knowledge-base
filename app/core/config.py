@@ -9,12 +9,17 @@ from pathlib import Path
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .paths import DATABASE_FILE_NAME, default_user_data_dir, sqlite_database_url
+from .paths import (
+    DATABASE_FILE_NAME,
+    default_user_data_dir,
+    runtime_config_file,
+    sqlite_database_url,
+)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=runtime_config_file(),
         env_file_encoding="utf-8",
         env_ignore_empty=True,
         populate_by_name=True,

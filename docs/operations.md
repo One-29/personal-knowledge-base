@@ -2,8 +2,8 @@
 
 | 字段 | 内容 |
 |---|---|
-| 状态 | 已实现（SQLite 默认运行时、Vault 重建、外部编辑同步、可恢复入库任务、pywebview 桌面壳、本地诊断、旧数据迁移与隔离测试） |
-| 版本 | v1.0 |
+| 状态 | 已实现（SQLite 默认运行时、Vault 重建、外部编辑同步、可恢复入库任务、Windows 独立桌面包、本地诊断、旧数据迁移与隔离测试） |
+| 版本 | v1.1 |
 | 日期 | 2026-09-25 |
 | 上游 | `design/03-data-model.md` · `design/04-retrieval.md` · `design/05-agent-workflow.md` |
 | 关联 | A1–A2、B1–B4、C1–C7 修复 · SQLite 桌面化、文件系统重建、外部编辑同步、本地窗口与诊断生命周期 |
@@ -28,6 +28,26 @@
 
 ### 原生桌面窗口
 
+面向普通 Windows 用户的发布物是 PyInstaller 单目录包。完整解压后双击
+`KnowBase.exe`；首次使用模型前双击 `Configure KnowBase.cmd`，填写用户目录中的
+`config.env`。程序资源可以整体移动或替换，配置、SQLite、原文和日志仍位于
+`%LOCALAPPDATA%\KnowBase`。发布 ZIP 带独立 SHA-256 文件；当前没有付费代码签名，
+SmartScreen 提示属于已知发布边界。
+
+维护者使用下面的命令构建。`package` extra 只增加构建期 PyInstaller 与桌面依赖，
+不改变服务端业务边界：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[package]"
+npm ci --no-audit --no-fund
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows-app.ps1
+```
+
+脚本输出 `artifacts/windows/KnowBase-<version>-windows-x64.zip` 及 `.sha256`，并在
+临时用户目录完成两级验证：先以 `--check` 启动 SQLite 与 `/ready`，再创建隐藏
+WebView2、等待 `/ui/` 加载并正常销毁。验证进程看不到开发机的 Python/Node 路径，
+发布目录也会拒绝 `.env` 或 `config.env`；只有空白 `.env.example` 被封装用于首次配置。
+
 源码环境安装 `desktop` 可选依赖后，Windows 可以创建 **KnowBase** 快捷方式：
 
 ```powershell
@@ -48,7 +68,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-sh
 .\.venv\Scripts\python.exe -m app.desktop --check
 ```
 
-当前阶段是源码桌面壳原型：Windows WebView2 链路已经做过原生窗口冒烟测试，但运行机器仍需 Python、源码目录和构建前端所需的 Node.js。无 Python 干净机器安装包、代码签名、自动更新和三平台打包尚未完成；Linux 还需显式选择 GTK 或 Qt pywebview 后端。
+独立包使用自动分配的回环端口，避免与浏览器开发服务冲突；源码快捷方式继续显式使用 8000。Windows 冻结包和 CI 构建门已经完成，尚未完成的发布工作是 GitHub Releases 自动上传、正式代码签名、自动更新，以及 macOS/Linux 原生包；Linux 源码运行仍需显式选择 GTK 或 Qt pywebview 后端。
 
 ### 浏览器与开发模式
 
@@ -279,6 +299,7 @@ PostgreSQL 兼容后端仍先用 `content % :query` 预过滤，再按 `similari
 |---|---|---|
 | 完成 | 启动时同步已登记普通原文的外部编辑 | mtime/size 廉价筛选、SHA-256 最终判定；只重建变化文档，并覆盖模型等待期间二次保存、模型失败、Vault 已推进后 SQLite 失败与下次续接 |
 | 完成 | pywebview 桌面壳原型与单实例生命周期 | 原生窗口只在真实 `/ready` 后打开；窗口关闭后 API、端口、HTTP 连接池和文件锁均释放；跨进程锁、端口冲突、GUI 编排和异源写保护有自动化测试 |
+| 完成 | Windows 单目录发布包与隔离启动门 | 冻结 Python/前端/WebView 资源；不封装密钥和用户数据；缩减 PATH 后验证 SQLite、API、真实 WebView 加载及正常退出，生成 ZIP 与 SHA-256 |
 | 完成 | 本地滚动日志、请求 ID、分阶段耗时与可复制诊断摘要 | 请求总耗时和模型/检索/索引阶段可关联；日志自动轮转并脱敏，500 不泄漏异常，复制报告排除密钥与知识内容 |
 | 1 | 给模型链路增加跨阶段总耗时预算 | 现有 provider 各自有超时，工作流仍可能把多次合法等待串成很长总时长；验收需区分单次超时与任务总预算，并保持已完成步骤可诊断 |
 | 完成 | 重传采用不可变候选原文与单调版本，处理成功后统一切换 | Embedding 失败继续使用匹配的旧原文和旧块；处理中再次重传时，较早任务的结果与错误均不会覆盖新版本 |
@@ -286,7 +307,7 @@ PostgreSQL 兼容后端仍先用 `content % :query` 预过滤，再按 `similari
 | 2 | 继续扩大真实中文多库评估集 | v2 已扩到 5 库/20 文档/60 条分层样本，并据此把 τ 校准为 0.50；下一步扩到至少 10 库/100 条，增加同义改写、短术语、同名概念与更强对抗问题 |
 | 完成 | 给大文档 Embedding 分批并校验供应商响应 | 默认每批 32 块；限流、5xx 与传输故障只重试当前批次。HTTP 200 的 JSON 结构、数量、index、数值有效性和维度均在 provider 边界校验；测试覆盖中途批次失败与退避重试 |
 | 完成 | 给入库任务增加可恢复的任务记录和可见进度 | 当前版本任务与文档登记同事务；原子领取及版本守卫覆盖重复调度/重传竞态，启动可处理运行中退出与发布后退出，单篇失败继续，前端显示五阶段进度 |
-| 3 | 验证干净安装与构建产物 | CI 已同时验证 SQLite 真文件与空 PostgreSQL 迁移链；后续仍需构建桌面安装包，并在无 Python、无源码目录的干净环境验证前端资源、schema 升级与启动链是否齐全 |
+| 3 | 建立正式 Releases 与跨平台安装验证 | Windows CI 已构建并隔离运行冻结包；下一步自动上传版本化 ZIP/校验和，并在 Windows Sandbox 或独立 VM 验证首次安装和旧 schema 升级，再补 macOS/Linux 原生包 |
 | 3 | 按规模优化列表与图 | `selectinload` 解决库列表 N+1 后，可用聚合计数避免加载全部文档；前端力模拟现已在收敛、页面隐藏或离开关联图时停止 RAF，下一步仍应针对大节点数用浏览器 Performance 验证 O(n²) 斥力，并按索引版本缓存图请求 |
 
-当前日常技术栈是 SQLite + FTS5 + FastAPI + TypeScript/Vite + pywebview，并由版本化 JSON Vault 保证原文可重建和外部编辑可续接，由 SQLAlchemy 任务表保证入库进度与重启恢复；PostgreSQL + pgvector 保留为迁移和质量对照。本地诊断和可恢复入库任务已经完成；下一步用干净机器打包验证决定正式壳和发布流水线。只有真实规模与测量证明精确向量扫描不足时，再引入可选向量扩展。
+当前日常技术栈是 SQLite + FTS5 + FastAPI + TypeScript/Vite + pywebview/PyInstaller，并由版本化 JSON Vault 保证原文可重建和外部编辑可续接，由 SQLAlchemy 任务表保证入库进度与重启恢复；PostgreSQL + pgvector 保留为迁移和质量对照。Windows 正式壳已经定为 pywebview 单目录冻结包；下一步建立 Releases、独立虚拟机安装门和跨平台产物。只有真实规模与测量证明精确向量扫描不足时，再引入可选向量扩展。

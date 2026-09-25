@@ -82,7 +82,7 @@ flowchart LR
 - **属于**：库/文档管理页（含真实入库阶段、图片数与重传入口）；问答页（库选择、引用点击 → 原文及原图核对、拒答呈现）；综合任务页（步骤进度展示）；导入失败提示；复制诊断摘要；本机单实例、窗口、本地 API 启停和系统 WebView profile 生命周期。
 - **不属于**：任何业务判定（排序/阈值/拒答/溯源拼接都在后端，前端只渲染契约对象）；桌面壳也不直接访问 ORM、Vault 或模型服务。
 - **边界规则**：TypeScript 界面只消费 REST 契约；后端 OpenAPI 可独立走通全流程（答辩与联调双通道）。源码内部按 `api / state / conversations / navigation / library / tasks / graph / evidence` 拆分，`main.ts` 只负责装配；FastAPI 只托管 Vite 的 `dist` 产物，不读取源码模块。
-- **桌面宿主拆包**：`app.desktop.instance_lock` 只负责操作系统单实例锁，`app.desktop.server` 只负责回环 Uvicorn 的就绪与退出，`app.desktop.launcher` 只编排运行时和 pywebview 主线程。宿主把 `/ui/` 当作不透明页面，不复制 API 客户端或业务状态；未来替换为 Tauri 时仍保留同一 REST 边界。
+- **桌面宿主拆包**：`app.desktop.environment` 只解析冻结资源与用户配置，`instance_lock` 只负责操作系统单实例锁，`server` 只负责回环 Uvicorn 的就绪与退出，`launcher` 只编排运行时和 pywebview 主线程；`packaging/windows` 与构建脚本只描述冻结物，不承载业务规则。宿主把 `/ui/` 当作不透明页面，不复制 API 客户端或业务状态；以后更换壳仍保留同一 REST 边界。
 
 ### 横切诊断基础设施
 
