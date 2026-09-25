@@ -1,15 +1,20 @@
 import { api } from "./api";
+import { streamAnswer } from "./ask-stream";
 import { ConversationStore } from "./conversations";
 import { byId, isAbortError, queryAll } from "./dom";
 import { bindCitations } from "./evidence";
-import { escapeHtml, friendlyError, questionHeader } from "./format";
+import { escapeHtml, friendlyError, questionHeader, renderRichText } from "./format";
 import { notify } from "./notifications";
 import { controllerFor, setController, state } from "./state";
 import { focusLatest, initComposer, mountRunState, resizeComposer, setTaskBusy } from "./task-runtime";
-import { renderAnswerEntry, renderWorkflowEntry } from "./task-rendering";
+import {
+  renderAnswerEntry,
+  renderStreamingAnswerEntry,
+  renderWorkflowEntry,
+} from "./task-rendering";
 import type {
   ActivityOutcome,
-  AnswerResponse,
+  AskStreamMetadata,
   WorkflowResponse,
 } from "./types";
 let conversations: ConversationStore;
@@ -109,16 +114,57 @@ async function submitQuestion(): Promise<void> {
   setTaskBusy("ask", true);
   const startedAt = Date.now();
   let outcome: ActivityOutcome = "done";
+  let metadata: AskStreamMetadata | null = null;
+  let streamedContent = "";
+  let streamMounted = false;
+  let streamFrame: number | null = null;
+
+  const flushStream = (): void => {
+    streamFrame = null;
+    if (!entry.isConnected || !streamMounted) return;
+    const content = entry.querySelector<HTMLElement>("[data-stream-content]");
+    if (content !== null) content.innerHTML = renderRichText(streamedContent, false);
+  };
+  const queueStreamRender = (): void => {
+    if (streamFrame === null) streamFrame = window.requestAnimationFrame(flushStream);
+  };
   try {
-    const answer = await api<AnswerResponse>("/ask", {
-      method: "POST",
-      signal: controller.signal,
-      body: JSON.stringify({
+    const answer = await streamAnswer(
+      {
         question,
         kb_id: state.askKbId,
         history: conversations.history(conversation),
-      }),
-    });
+      },
+      {
+        signal: controller.signal,
+        handlers: {
+          onMetadata: (value) => {
+            metadata = value;
+            const phase = entry.querySelector<HTMLElement>("[data-run-phase]");
+            if (phase !== null) phase.textContent = "已完成检索，正在连接回答生成…";
+          },
+          onDelta: (content) => {
+            streamedContent += content;
+            if (!streamMounted) {
+              stopRunState();
+              streamMounted = true;
+              entry.innerHTML = renderStreamingAnswerEntry(
+                question,
+                metadata?.search_query ?? null,
+                streamedContent,
+              );
+              focusLatest(entry);
+              return;
+            }
+            queueStreamRender();
+          },
+        },
+      },
+    );
+    if (streamFrame !== null) {
+      window.cancelAnimationFrame(streamFrame);
+      streamFrame = null;
+    }
     const durationMs = Date.now() - startedAt;
     entry.innerHTML = renderAnswerEntry(question, answer, durationMs);
     bindCitations(entry, answer.citations);
@@ -137,6 +183,10 @@ async function submitQuestion(): Promise<void> {
     }
     if (entry.isConnected) focusLatest(entry);
   } catch (error) {
+    if (streamFrame !== null) {
+      window.cancelAnimationFrame(streamFrame);
+      streamFrame = null;
+    }
     if (isAbortError(error)) {
       outcome = "stopped";
       entry.innerHTML = `${questionHeader(question)}

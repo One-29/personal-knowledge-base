@@ -98,6 +98,11 @@ export interface AnswerResponse {
   refusal_reason: string | null;
 }
 
+export interface AskStreamMetadata {
+  question: string;
+  search_query: string;
+}
+
 export type WorkflowStepStatus = "answered" | "insufficient" | "error";
 
 export interface WorkflowStep {

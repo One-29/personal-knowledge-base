@@ -1,8 +1,10 @@
-"""问答端点测试（M3）：POST /ask 与 GET /citations/{chunk_id} 的 HTTP 契约。"""
+"""问答端点测试（M3）：同步/流式问答与引用溯源的 HTTP 契约。"""
+
+import json
 
 import pytest
 
-from app import generation, ingest, storage
+from app import generation, ingest, session, storage
 from app.core.config import settings
 from app.models import Document
 
@@ -17,6 +19,25 @@ class _FakeLLM:
 
     def complete(self, system: str, user: str) -> str:
         return self.reply
+
+
+class _StreamingFakeLLM(_FakeLLM):
+    def __init__(self, *parts: str) -> None:
+        super().__init__("".join(parts))
+        self.parts = parts
+
+    def stream(self, system: str, user: str):
+        yield from self.parts
+
+
+def _sse_events(response) -> list[tuple[str, dict]]:
+    events = []
+    for frame in response.text.strip().split("\n\n"):
+        lines = frame.splitlines()
+        event = next(line[7:] for line in lines if line.startswith("event: "))
+        data = next(line[6:] for line in lines if line.startswith("data: "))
+        events.append((event, json.loads(data)))
+    return events
 
 
 @pytest.fixture()
@@ -71,6 +92,147 @@ def test_ask_returns_answer_with_citations(client, db, fake_llm, no_l1_threshold
     assert citation["doc_title"] == "tcp.md"
     assert citation["char_start"] == 0
     assert citation["chunk_id"] > 0
+
+
+def test_ask_stream_returns_deltas_then_validated_result(
+    client, db, no_l1_threshold, monkeypatch
+):
+    kb_id = client.post("/api/v1/kbs", json={"name": "流式网络库"}).json()["id"]
+    _add_doc(db, kb_id, "tcp.md", DOC_TCP)
+    monkeypatch.setattr(
+        generation,
+        "get_llm_provider",
+        lambda: _StreamingFakeLLM("三次握手", "确认收发能力 [1]。"),
+    )
+
+    response = client.post(
+        "/api/v1/ask/stream",
+        json={"question": "三次握手的作用？", "kb_id": kb_id},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["cache-control"] == "no-cache, no-transform"
+    events = _sse_events(response)
+    assert [kind for kind, _ in events] == ["metadata", "delta", "delta", "result"]
+    assert events[0][1]["search_query"] == "三次握手的作用？"
+    assert [event[1]["content"] for event in events[1:3]] == [
+        "三次握手",
+        "确认收发能力 [1]。",
+    ]
+    result = events[-1][1]
+    assert result["content"] == "三次握手确认收发能力 [1]。"
+    assert result["refused"] is False
+    assert result["citations"][0]["doc_title"] == "tcp.md"
+
+
+def test_ask_stream_l1_refusal_sends_no_untrusted_delta(client):
+    kb_id = client.post("/api/v1/kbs", json={"name": "流式空库"}).json()["id"]
+
+    response = client.post(
+        "/api/v1/ask/stream",
+        json={"question": "这里有什么？", "kb_id": kb_id},
+    )
+
+    events = _sse_events(response)
+    assert [kind for kind, _ in events] == ["metadata", "result"]
+    assert events[-1][1]["refused"] is True
+    assert events[-1][1]["refusal_reason"] == "empty_kb"
+
+
+def test_ask_stream_replaces_invalid_citation_draft_with_refusal(
+    client, db, no_l1_threshold, monkeypatch
+):
+    kb_id = client.post("/api/v1/kbs", json={"name": "流式引用校验"}).json()["id"]
+    _add_doc(db, kb_id, "tcp.md", DOC_TCP)
+    monkeypatch.setattr(
+        generation,
+        "get_llm_provider",
+        lambda: _StreamingFakeLLM("尚未校验的内容 [9]。"),
+    )
+
+    response = client.post(
+        "/api/v1/ask/stream",
+        json={"question": "三次握手？", "kb_id": kb_id},
+    )
+
+    events = _sse_events(response)
+    assert [kind for kind, _ in events] == ["metadata", "delta", "result"]
+    assert events[1][1]["content"] == "尚未校验的内容 [9]。"
+    assert events[-1][1]["refused"] is True
+    assert events[-1][1]["refusal_reason"] == "invalid_citation"
+    assert "[9]" not in events[-1][1]["content"]
+
+
+def test_ask_stream_provider_failure_after_delta_finishes_as_refusal(
+    client, db, no_l1_threshold, monkeypatch
+):
+    kb_id = client.post("/api/v1/kbs", json={"name": "流式供应商失败"}).json()["id"]
+    _add_doc(db, kb_id, "tcp.md", DOC_TCP)
+
+    class _FailingStream:
+        def complete(self, system: str, user: str) -> str:
+            raise AssertionError("流式路径不应调用 complete")
+
+        def stream(self, system: str, user: str):
+            yield "未完成草稿"
+            raise generation.LLMError("模拟流中断")
+
+    monkeypatch.setattr(generation, "get_llm_provider", lambda: _FailingStream())
+    response = client.post(
+        "/api/v1/ask/stream",
+        json={"question": "三次握手？", "kb_id": kb_id},
+    )
+
+    events = _sse_events(response)
+    assert [kind for kind, _ in events] == ["metadata", "delta", "result"]
+    assert events[-1][1]["refused"] is True
+    assert events[-1][1]["refusal_reason"] == "llm_unavailable"
+
+
+def test_ask_stream_unexpected_failure_returns_safe_correlated_event_without_history(
+    client, db, no_l1_threshold, monkeypatch
+):
+    kb_id = client.post("/api/v1/kbs", json={"name": "流式内部失败"}).json()["id"]
+    _add_doc(db, kb_id, "tcp.md", DOC_TCP)
+    session_id = "stream-internal-error"
+    session.store.clear(session_id)
+
+    class _BrokenStream:
+        def complete(self, system: str, user: str) -> str:
+            raise AssertionError("流式路径不应调用 complete")
+
+        def stream(self, system: str, user: str):
+            yield "草稿"
+            raise ValueError("不得回显的内部细节")
+
+    monkeypatch.setattr(generation, "get_llm_provider", lambda: _BrokenStream())
+    response = client.post(
+        "/api/v1/ask/stream",
+        json={
+            "question": "三次握手？",
+            "kb_id": kb_id,
+            "session_id": session_id,
+        },
+    )
+
+    events = _sse_events(response)
+    assert [kind for kind, _ in events] == ["metadata", "delta", "error"]
+    assert events[-1][1] == {
+        "detail": "流式回答中断，请复制诊断信息后重试",
+        "request_id": response.headers["x-request-id"],
+    }
+    assert "不得回显" not in response.text
+    assert session.store.history(session_id) == []
+
+
+def test_ask_stream_unknown_kb_is_regular_404(client):
+    response = client.post(
+        "/api/v1/ask/stream",
+        json={"question": "问题", "kb_id": 999999},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "知识库不存在"
 
 
 def test_ask_with_history_rewrites_followup(client, db, no_l1_threshold, monkeypatch):

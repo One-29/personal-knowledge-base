@@ -172,6 +172,84 @@ def test_provider_translates_http_failures(kind, failure):
                 provider.complete("system", "question")
 
 
+def test_llm_stream_parses_openai_sse_and_requests_streaming():
+    """角色帧、注释和结束帧不混入正文，中文增量按原顺序返回。"""
+    requests = []
+    body = (
+        'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
+        ': keep-alive\n\n'
+        'data: {"choices":[{"delta":{"content":"第一段"}}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"与第二段 [1]"}}]}\n\n'
+        'data: [DONE]\n\n'
+    ).encode()
+
+    def respond(request):
+        assert request.headers["Accept"] == "text/event-stream"
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            content=body,
+            headers={"content-type": "text/event-stream; charset=utf-8"},
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        provider = OpenAICompatibleLLM(
+            "test-key", "https://example.test/v1", "test-model", client=client,
+        )
+        assert list(provider.stream("system", "question")) == ["第一段", "与第二段 [1]"]
+
+    assert requests == [{
+        "model": "test-model",
+        "messages": [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "question"},
+        ],
+        "temperature": 0,
+        "stream": True,
+    }]
+
+
+def test_llm_stream_falls_back_to_single_json_completion():
+    """部分 OpenAI 兼容服务忽略 stream=true 时仍能返回最终回答。"""
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "完整回答 [1]"}}]},
+        ))
+    ) as client:
+        provider = OpenAICompatibleLLM(
+            "test-key", "https://example.test/v1", "test-model", client=client,
+        )
+        assert list(provider.stream("system", "question")) == ["完整回答 [1]"]
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(
+            200,
+            content=b"data: not-json\n\n",
+            headers={"content-type": "text/event-stream"},
+        ),
+        httpx.Response(
+            200,
+            content=b'data: {"choices":[{"delta":{"content":7}}]}\n\n',
+            headers={"content-type": "text/event-stream"},
+        ),
+        httpx.Response(401, text="unauthorized"),
+    ],
+)
+def test_llm_stream_translates_protocol_and_http_failures(response):
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _request: response)
+    ) as client:
+        provider = OpenAICompatibleLLM(
+            "test-key", "https://example.test/v1", "test-model", client=client,
+        )
+        with pytest.raises(LLMError):
+            list(provider.stream("system", "question"))
+
+
 def test_missing_api_key_fails_loud(monkeypatch):
     """未配置 key → 立刻报错，不静默降级。"""
     from app.core import config

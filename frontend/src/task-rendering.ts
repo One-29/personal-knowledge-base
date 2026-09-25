@@ -1,6 +1,7 @@
 import {
   escapeHtml,
   questionHeader,
+  renderRichText,
   sourceSummary,
   withCitations,
 } from "./format";
@@ -36,6 +37,28 @@ export function renderAnswerEntry(
       ${rewritten}
       <div class="entry-a rich-text">${withCitations(answer.content)}</div>
       ${sourceSummary(answer.citations)}
+    </div>`;
+}
+
+export function renderStreamingAnswerEntry(
+  question: string,
+  searchQuery: string | null,
+  content: string,
+): string {
+  const rewritten = searchQuery && searchQuery !== question
+    ? `<p class="rewrote">按上文改写后检索：<code>${escapeHtml(searchQuery)}</code></p>`
+    : "";
+  const body = content
+    ? renderRichText(content, false)
+    : "<p>已找到相关资料，正在接收回答…</p>";
+  return `${questionHeader(question)}
+    <div class="answer-shell streaming-answer">
+      <div class="answer-meta">
+        <span class="answer-label">KNOWBASE 回答</span>
+        <span class="streaming-status"><i></i>正在生成 · 完成后校验引用</span>
+      </div>
+      ${rewritten}
+      <div class="entry-a rich-text" data-stream-content aria-live="polite">${body}</div>
     </div>`;
 }
 
