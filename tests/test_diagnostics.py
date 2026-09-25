@@ -44,6 +44,7 @@ def test_diagnostics_report_correlates_request_without_knowledge_content(
     assert re.fullmatch(r"[0-9a-f]{16}", request_id)
     assert body["request_id"] == request_id
     assert "knowledge_bases: 1" in report
+    assert "ingest_tasks: queued:0,running:0,succeeded:0,failed:0,superseded:0" in report
     assert "database_backend: postgresql" in report
     assert private_name not in report
     assert "私人说明" not in report

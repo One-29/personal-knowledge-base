@@ -11,7 +11,8 @@ from sqlalchemy.engine import Engine
 
 from .engine import dialect_name
 
-SQLITE_SCHEMA_VERSION = 1
+SQLITE_SCHEMA_VERSION = 2
+OLDEST_UPGRADABLE_SCHEMA_VERSION = 1
 
 
 class UnsupportedSchemaVersion(RuntimeError):
@@ -25,13 +26,15 @@ def initialize_database(engine: Engine) -> None:
 
     # 已有库必须先读版本再执行任何 DDL，避免旧应用用 create_all() 触碰由
     # 新版应用创建的数据库。
-    _validate_schema_version(_read_schema_version(engine))
+    existing_version = _parse_schema_version(_read_schema_version(engine))
 
     # 延迟导入可避免 db.Base -> database -> models -> db.Base 的循环。
     from app import models  # noqa: F401
     from app.db import Base
 
     _enable_wal(engine)
+    if existing_version is not None:
+        _upgrade_schema(engine, existing_version)
     Base.metadata.create_all(engine)
 
     with engine.begin() as connection:
@@ -48,9 +51,14 @@ def initialize_database(engine: Engine) -> None:
             """),
             {"version": str(SQLITE_SCHEMA_VERSION)},
         )
-        _validate_schema_version(connection.scalar(text(
+        current_version = _parse_schema_version(connection.scalar(text(
             "SELECT value FROM app_metadata WHERE key = 'schema_version'"
         )))
+        if current_version != SQLITE_SCHEMA_VERSION:
+            raise UnsupportedSchemaVersion(
+                "知识库数据库升级未完成："
+                f"数据库版本 {current_version}，当前版本 {SQLITE_SCHEMA_VERSION}"
+            )
 
         fts_exists = bool(connection.scalar(text("""
             SELECT 1
@@ -79,9 +87,9 @@ def _read_schema_version(engine: Engine) -> str | None:
         ))
 
 
-def _validate_schema_version(version: str | None) -> None:
+def _parse_schema_version(version: str | None) -> int | None:
     if version is None:
-        return
+        return None
     try:
         parsed = int(version)
     except (TypeError, ValueError):
@@ -93,10 +101,35 @@ def _validate_schema_version(version: str | None) -> None:
             "知识库数据库由更高版本的 KnowBase 创建："
             f"数据库版本 {parsed}，当前支持 {SQLITE_SCHEMA_VERSION}"
         )
-    if parsed < SQLITE_SCHEMA_VERSION:
+    if parsed < OLDEST_UPGRADABLE_SCHEMA_VERSION:
         raise UnsupportedSchemaVersion(
             "知识库数据库需要升级："
             f"数据库版本 {parsed}，当前版本 {SQLITE_SCHEMA_VERSION}"
+        )
+    return parsed
+
+
+def _upgrade_schema(engine: Engine, version: int) -> None:
+    """按单调版本逐级升级；每一级的 DDL 与版本写入处于同一事务。"""
+    current = version
+    while current < SQLITE_SCHEMA_VERSION:
+        if current == 1:
+            from app.models import IngestTask
+
+            with engine.begin() as connection:
+                IngestTask.__table__.create(connection, checkfirst=True)
+                connection.execute(
+                    text("""
+                        UPDATE app_metadata
+                        SET value = :version
+                        WHERE key = 'schema_version'
+                    """),
+                    {"version": "2"},
+                )
+            current = 2
+            continue
+        raise UnsupportedSchemaVersion(
+            f"没有从 SQLite schema {current} 升级到 {current + 1} 的迁移"
         )
 
 

@@ -11,6 +11,7 @@
 """
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,6 +45,7 @@ def process_document(
     *,
     expected_version: int | None = None,
     candidate_path: str | None = None,
+    progress: Callable[[str], None] | None = None,
     config=settings,
     storage_root: Path | None = None,
 ) -> None:
@@ -53,6 +55,7 @@ def process_document(
         （后台任务路径：请求级会话在响应后已关闭，不能复用）。
     :param expected_version: 上传登记时固定的版本；版本变化表示任务已经过期。
     :param candidate_path: 上传登记时固定的不可变候选文件路径。
+    :param progress: 可选阶段回调；记录失败不会中断入库主流程。
 
     捕获处理异常并尽力更新文档状态与 last_error，避免任务停留在 processing。
     若数据库持续不可用导致状态恢复也失败，记录完整异常以供排查。
@@ -62,8 +65,9 @@ def process_document(
         db = SessionLocal()
     version = expected_version
     source_path = candidate_path
-    task_is_bound = expected_version is not None or candidate_path is not None
+    candidate_is_bound = candidate_path is not None
     try:
+        _notify_progress(progress, "validating", db, doc_id)
         doc = crud.get_document(db, doc_id)
         if doc is None:
             logger.warning("处理任务找不到文档: doc_id=%s", doc_id)
@@ -72,7 +76,7 @@ def process_document(
         version = doc.ingest_version if version is None else version
         source_path = source_path or doc.pending_file_path or doc.file_path
         if doc.ingest_version != version or (
-            task_is_bound and doc.pending_file_path != source_path
+            candidate_is_bound and doc.pending_file_path != source_path
         ):
             logger.info(
                 "跳过过期文档任务: doc_id=%s task_version=%s current_version=%s",
@@ -112,7 +116,7 @@ def process_document(
                 source_path,
                 ERROR_EMBED_PROFILE_MISMATCH,
                 str(exc),
-                require_pending_candidate=task_is_bound,
+                require_pending_candidate=candidate_is_bound,
                 storage_root=storage_root,
             )
             return
@@ -120,6 +124,7 @@ def process_document(
         doc.status = STATUS_PROCESSING
         db.commit()
 
+        _notify_progress(progress, "reading", db, doc_id)
         try:
             text = storage.read(source_path, storage_root=storage_root)
             package_manifest = package_storage.load_package_manifest(
@@ -135,7 +140,7 @@ def process_document(
                 source_path,
                 ERROR_PARSE_FAILED,
                 "原文文件缺失",
-                require_pending_candidate=task_is_bound,
+                require_pending_candidate=candidate_is_bound,
                 storage_root=storage_root,
             )
             return
@@ -147,11 +152,12 @@ def process_document(
                 source_path,
                 ERROR_PARSE_FAILED,
                 str(exc),
-                require_pending_candidate=task_is_bound,
+                require_pending_candidate=candidate_is_bound,
                 storage_root=storage_root,
             )
             return
 
+        _notify_progress(progress, "chunking", db, doc_id)
         chunks = document_index.split_source(
             text,
             config=config,
@@ -168,12 +174,13 @@ def process_document(
                 source_path,
                 ERROR_PARSE_FAILED,
                 "切分后无有效内容",
-                require_pending_candidate=task_is_bound,
+                require_pending_candidate=candidate_is_bound,
                 storage_root=storage_root,
             )
             return
 
         try:
+            _notify_progress(progress, "embedding", db, doc_id)
             vectors = document_index.embed_chunks(chunks, config=config)
         except EmbeddingError as exc:
             _mark_failure(
@@ -183,11 +190,12 @@ def process_document(
                 source_path,
                 ERROR_EMBED_FAILED,
                 str(exc),
-                require_pending_candidate=task_is_bound,
+                require_pending_candidate=candidate_is_bound,
                 storage_root=storage_root,
             )
             return
 
+        _notify_progress(progress, "publishing", db, doc_id)
         doc = crud.get_document(db, doc_id, for_update=True)
         if doc is None:
             logger.warning("处理完成前文档已删除: doc_id=%s", doc_id)
@@ -195,7 +203,7 @@ def process_document(
             _safe_delete(source_path, storage_root=storage_root)
             return
         if doc.ingest_version != version or (
-            task_is_bound and doc.pending_file_path != source_path
+            candidate_is_bound and doc.pending_file_path != source_path
         ):
             logger.info(
                 "放弃过期文档任务结果: doc_id=%s task_version=%s current_version=%s",
@@ -265,7 +273,7 @@ def process_document(
                 source_path,
                 ERROR_PROCESS_FAILED,
                 f"{type(exc).__name__}: {exc}",
-                require_pending_candidate=task_is_bound,
+                require_pending_candidate=candidate_is_bound,
                 storage_root=storage_root,
             )
         except Exception:
@@ -277,6 +285,27 @@ def process_document(
     finally:
         if own_session:
             db.close()
+
+
+def _notify_progress(
+    callback: Callable[[str], None] | None,
+    stage: str,
+    db: Session,
+    doc_id: int,
+) -> None:
+    """进度是附加可观测信息，写入失败不能破坏文档事务。"""
+    if callback is None:
+        return
+    try:
+        callback(stage)
+    except Exception:
+        db.rollback()
+        logger.warning(
+            "文档入库进度回调失败: doc_id=%s stage=%s",
+            doc_id,
+            stage,
+            exc_info=True,
+        )
 
 
 def _mark_failure(

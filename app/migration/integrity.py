@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Connection
 
 from app.db import Base
-from app.models import AppMetadata, Chunk, Document, KnowledgeBase
+from app.models import AppMetadata, Chunk, Document, IngestTask, KnowledgeBase
 
 from .errors import IntegrityError
 from .report import DatabaseDigest
@@ -63,6 +63,25 @@ TABLE_SPECS = (
             "updated_at",
         ),
         ("id",),
+    ),
+    TableSpec(
+        "ingest_tasks",
+        IngestTask.__table__,
+        (
+            "doc_id",
+            "ingest_version",
+            "candidate_path",
+            "status",
+            "stage",
+            "attempt_count",
+            "recovery_count",
+            "last_error_code",
+            "started_at",
+            "finished_at",
+            "created_at",
+            "updated_at",
+        ),
+        ("doc_id",),
     ),
     TableSpec(
         "chunks",

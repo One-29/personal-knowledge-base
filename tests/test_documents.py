@@ -80,6 +80,8 @@ def test_upload_201_pending(client):
     assert doc["status"] == "pending"
     assert doc["char_count"] == len("# TCP\n三次握手与四次挥手")
     assert doc["kb_id"] == kb_id
+    assert doc["task"]["status"] == "queued"
+    assert doc["task"]["stage"] == "queued"
 
 
 def test_upload_404_kb_not_found(client):

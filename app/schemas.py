@@ -37,6 +37,22 @@ class KnowledgeBaseOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class IngestTaskOut(BaseModel):
+    """当前文档版本的入库进度；不暴露本机候选文件路径。"""
+
+    ingest_version: int
+    status: str
+    stage: str
+    attempt_count: int = 0
+    recovery_count: int = 0
+    last_error_code: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class DocumentOut(BaseModel):
     """文档视图：列表/详情展示 + 状态机可见（不暴露 file_path/content_hash）。"""
 
@@ -47,6 +63,7 @@ class DocumentOut(BaseModel):
     char_count: int = 0
     chunk_count: int = 0
     image_count: int = 0
+    task: IngestTaskOut | None = None
     last_error_code: str | None = None
     last_error_message: str | None = None
     processed_at: datetime | None = None

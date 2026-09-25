@@ -1,12 +1,12 @@
-# 03-数据模型（v0.7）
+# 03-数据模型（v0.8）
 
 | 字段 | 内容 |
 |---|---|
 | 状态 | 已实现 |
-| 版本 | v0.7 |
-| 日期 | 2026-09-22 |
+| 版本 | v0.8 |
+| 日期 | 2026-09-25 |
 | 上游 | `01-requirements.md`（PRD v0.5，决策 D1–D7）· `02-modules.md`（v0.5，模块边界） |
-| 变更 | v0.7：定义外部编辑时 Vault 领先、SQLite 可续接的提交语义；v0.6：增加文件系统 Vault 清单与 SQLite 可重建边界 |
+| 变更 | v0.8：增加当前版本入库任务表、阶段状态与重启恢复语义；v0.7：定义外部编辑时 Vault 领先、SQLite 可续接的提交语义；v0.6：增加文件系统 Vault 清单与 SQLite 可重建边界 |
 | 关联 | M1/M2 子 Issue（建仓后建立） |
 
 > 本文回答：需求落成哪几张表、字段与约束怎么定、存储与索引选型、如何映射到 SQLAlchemy。
@@ -20,6 +20,7 @@
 |---|---|---|
 | `knowledge_bases` | M1 | D2 多知识库；US-M1-01 |
 | `documents` | M1（M2 写状态字段） | D2/D3/D6；US-M1-02~06 |
+| `ingest_tasks` | M2 运行状态 | D4 持久状态、原子领取、阶段进度与重启恢复 |
 | `chunks` | M2 产物 | D3 全量重建；US-M3-03 溯源 |
 | `app_metadata` | 基础设施 | SQLite schema 版本；embedding 服务/模型/维度指纹 |
 | `.knowbase-vault.json` | 文件系统基础设施 | 稳定业务元数据与原文校验；SQLite 丢失后的重建输入；外部编辑同步的提交真相 |
@@ -39,6 +40,7 @@
 ```mermaid
 erDiagram
     KNOWLEDGE_BASES ||--o{ DOCUMENTS : "1 库含 N 文档"
+    DOCUMENTS ||--o| INGEST_TASKS : "1 文档至多 1 个当前任务"
     DOCUMENTS ||--o{ CHUNKS : "1 文档产生 N 块"
     KNOWLEDGE_BASES ||--o{ CHUNKS : "冗余归属 检索免join"
 
@@ -70,6 +72,20 @@ erDiagram
         integer char_count
         integer chunk_count "冗余 列表展示免聚合"
         timestamptz processed_at
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    INGEST_TASKS {
+        bigint doc_id PK,FK
+        integer ingest_version "任务版本"
+        varchar candidate_path "候选原文 可空"
+        varchar status "queued/running/终态"
+        varchar stage "当前工序"
+        integer attempt_count
+        integer recovery_count
+        varchar last_error_code
+        timestamptz started_at
+        timestamptz finished_at
         timestamptz created_at
         timestamptz updated_at
     }
@@ -125,6 +141,25 @@ CREATE TABLE documents (
 );
 CREATE INDEX idx_documents_kb ON documents (kb_id);
 
+-- 每篇文档只保存当前入库版本的运行状态；删除文档时级联清理
+CREATE TABLE ingest_tasks (
+    doc_id          bigint PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    ingest_version  integer NOT NULL,
+    candidate_path  varchar(500),
+    status           varchar(16) NOT NULL DEFAULT 'queued'
+                     CHECK (status IN ('queued','running','succeeded','failed','superseded')),
+    stage            varchar(32) NOT NULL DEFAULT 'queued'
+                     CHECK (stage IN ('queued','validating','reading','chunking','embedding','publishing','complete')),
+    attempt_count    integer NOT NULL DEFAULT 0,
+    recovery_count   integer NOT NULL DEFAULT 0,
+    last_error_code  varchar(32),
+    started_at       timestamptz,
+    finished_at      timestamptz,
+    created_at       timestamptz NOT NULL DEFAULT now(),
+    updated_at       timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_ingest_tasks_status_updated ON ingest_tasks (status, updated_at);
+
 -- 切块：检索单元 + 溯源锚点（M2 的唯一产物表）
 CREATE TABLE chunks (
     id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -148,7 +183,9 @@ CREATE TABLE app_metadata (
 ```
 
 `app_metadata` 不存用户内容。PostgreSQL 由 Alembic 建表；SQLite 还用其中的
-`schema_version` 驱动桌面数据库升级。`embedding_profile_v1` 保存规范化的服务地址、
+`schema_version` 驱动桌面数据库升级。当前版本为 **2**；v1 数据库会在同一事务中
+创建 `ingest_tasks` 并写入 v2，原有业务行保持不变，重复初始化幂等。
+`embedding_profile_v1` 保存规范化的服务地址、
 模型和维度，并对 JSON 取 SHA-256 作为诊断指纹。有现有块时不允许直接改写该值。
 
 SQLite 方言把 bigint 主键映射为 `INTEGER PRIMARY KEY`，把 `vector(1024)` 映射为 JSON
@@ -175,6 +212,11 @@ storage/                      # 根路径可配置（如 ./data/storage）
 
 Vault 清单记录知识库/文档 ID、标题与活动/候选原文元数据，不记录 chunks、向量或密钥。日常 SQLite 业务写入先原子更新清单，再提交数据库；提交失败后按回滚结果补偿清单。数据库级联与物理文件删除仍不是同一事务：清单和数据库确认删除后再清理目录，文件删除失败只留下无引用孤儿，不反向恢复已经删除的业务记录。编排由 `app.vault.coordinator` 与 M1 共同负责。
 
+`ingest_tasks` 是可丢弃并可从文档状态补建的运行信息，不进入 Vault。上传/重传会在
+同一个数据库事务中登记文档候选与任务行；任务领取及每次阶段更新都同时核对
+`doc_id`、`ingest_version` 和 `candidate_path`。新重传覆盖当前任务身份后，旧执行者的
+更新条件不再命中。`attempt_count` 记录实际领取次数，`recovery_count` 记录启动续跑次数。
+
 外部普通文本已经由用户保存到原路径时，文件字节本身是最新真相，不能在 SQLite 提交失败后把 Vault 补偿回旧摘要。启动同步因此先写入包含新 `SourceRecord` 与单调 `ingest_version` 的 Vault，再事务化替换该文档的 chunk 与索引；两步之间中断时允许 SQLite 暂时落后一个已解释版本，下一次启动从 Vault 重做派生索引。除此之外的版本倒退、候选状态冲突或身份元数据差异仍视为不可解释状态并停止启动。
 
 ## 4. 文档状态机
@@ -199,16 +241,20 @@ stateDiagram-v2
     end note
 ```
 
+任务状态与文档可用性分开：`queued → running → succeeded/failed` 表达执行生命周期，
+`superseded` 表示候选被更新版本替代。任务阶段依次为
+`validating / reading / chunking / embedding / publishing`，终态统一写 `complete`。重传失败但旧索引仍可用时，文档回到
+`ready`，任务仍为 `failed` 并保留错误码，界面因此能同时表达“可检索”和“更新失败”。
+
 ## 5. SQLAlchemy 映射骨架（2.x 声明式）
 
-> 与 §3 DDL 一一对应，是 `app/models.py` 的底稿（M1 骨架阶段落成完整版）。
+> 下面保留核心字段作为映射示意；可执行事实以 `app/models.py` 为准。
 > 教学注：`mapped_column` 是 2.x 的声明写法，`server_default` 让默认值由数据库生成而非应用。
-> **工程实现注记（2026-09-07，防照抄踩坑）**：
+> **工程实现注记（更新于 2026-09-25，防照抄踩坑）**：
 > ① `Base` 实际由 `app/db.py` 提供（engine/session/Base 同文件），models.py 应 `from app.db import Base`——
 >    重复定义 Base 会产生两个 metadata，Alembic 迁移发现不了表；
-> ② 本骨架含 Chunk 仅为完整参照——**M1 迁移只建 knowledge_bases + documents 两表**，
->    Chunk 模型与 embedding 列随 M2 里程碑引入（模块 PR 粒度原则）；
-> ③ 勿漏 `updated_at`（两表均有）、documents 的 `last_error_message`/`processed_at`/`chunk_count`（对照 §3 DDL 逐字段检查）。
+> ② SQLite 主键与向量类型通过方言 variant 映射，不能直接照抄这里的 PostgreSQL 类型；
+> ③ `IngestTask` 是当前任务而非历史流水，一篇文档只保留一行，并由数据库外键级联删除。
 
 ```python
 from datetime import datetime
@@ -250,6 +296,17 @@ class Document(Base):
     chunks: Mapped[list["Chunk"]] = relationship(
         back_populates="doc", cascade="all, delete-orphan")
 
+class IngestTask(Base):
+    __tablename__ = "ingest_tasks"
+    doc_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True)
+    ingest_version: Mapped[int]
+    candidate_path: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    stage: Mapped[str] = mapped_column(String(32), default="queued")
+    attempt_count: Mapped[int] = mapped_column(default=0)
+    recovery_count: Mapped[int] = mapped_column(default=0)
+
 class Chunk(Base):
     __tablename__ = "chunks"
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
@@ -267,11 +324,12 @@ class Chunk(Base):
 | 编号 | 决策（已拍板） | 备选与代价 | 理由 |
 |---|---|---|---|
 | DM1 | 主键 `bigint IDENTITY` | UUID：分布式/防枚举，URL 冗长 | 单用户自托管无分布式需求；自增可读、索引紧凑 |
-| DM2 | 向量存储 pgvector（HNSW/cosine） | 独立向量库（Qdrant/Chroma）：多一套部署与同步；FAISS 文件：无事务 | 单库单事务：向量与元数据一致备份；部署只多一个扩展 |
+| DM2 | 日常 SQLite 以 JSON 保存向量并精确余弦扫描；PostgreSQL 兼容路径用 pgvector | 独立向量库（Qdrant/Chroma）：多一套部署与同步 | 个人规模免扩展、单文件备份；双方言仍由同一 ORM 字段表达 |
 | DM3 | chunks 冗余 `kb_id` | 不冗余：检索每次 join documents | 高频的按库过滤免 join；删除由 FK 级联兜底。代价：V1.0 支持跨库移动文档时需级联更新冗余列（已记录演进条件） |
 | DM4 | 重传语义 = `UNIQUE(kb_id,title)` + sha256 + 文档内单调 `ingest_version` | 独立版本表：保留完整历史，但当前产品只需要活动版和单个候选版 | 同库同名即重传对象；版本与候选路径共同阻止旧任务覆盖新内容 |
 | DM5 | 导入失败保旧：不可变候选原文处理成功后才切换；无旧块→failed，有旧块→ready + `last_error` | 直接覆盖活动文件：失败时旧块偏移与新原文错位 | 原文、字符偏移和块始终属于同一版本 |
 | DM6 | 状态承载 `varchar` + CHECK | PG 原生 enum：演进枚举值需迁移 | 改枚举值免数据库迁移；SQLAlchemy 侧同字段字符串语义简单 |
+| DM7 | 每篇文档一行当前任务，任务身份=`doc_id+ingest_version+candidate_path` | 全历史任务流水：审计更完整，但持续增长且当前产品无查看入口 | 有界存储即可支持原子领取、进度、旧任务隔离与启动恢复 |
 
 ## 7. 移交 04 的待定清单（不影响本层表结构的主体）
 
@@ -284,5 +342,5 @@ class Chunk(Base):
 
 ## 8. 下一步衔接
 
-- 本层决策已全部拍板；根 README 技术栈同步：pgvector 由"评估中"转"已定"。
-- M1 骨架开发前填写 `templates/module-design.md`：数据原型节直接引用本文 DDL 的 `knowledge_bases`/`documents`；本文件 DDL 草案是首个 Alembic 迁移的底稿（`embedding` 维度经 04 确认后落库）。
+- SQLite schema v2 与 PostgreSQL Alembic 迁移都已包含任务表；后续 schema 变化继续提供逐版本升级与空库迁移检查。
+- 可分发桌面包必须验证旧 v1 用户库原地升级、任务恢复、安装包降级拒绝和数据目录备份恢复。

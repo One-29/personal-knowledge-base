@@ -2,6 +2,15 @@ export type ViewName = "ask" | "trace" | "map" | "docs" | "kbs";
 export type TaskScope = "ask" | "trace";
 export type ActivityOutcome = "idle" | "done" | "error" | "stopped";
 export type DocumentStatus = "pending" | "processing" | "ready" | "failed";
+export type IngestTaskStatus = "queued" | "running" | "succeeded" | "failed" | "superseded";
+export type IngestTaskStage =
+  | "queued"
+  | "validating"
+  | "reading"
+  | "chunking"
+  | "embedding"
+  | "publishing"
+  | "complete";
 
 export interface KnowledgeBase {
   id: number;
@@ -9,6 +18,18 @@ export interface KnowledgeBase {
   description: string | null;
   doc_count: number;
   created_at: string;
+}
+
+export interface IngestTask {
+  ingest_version: number;
+  status: IngestTaskStatus;
+  stage: IngestTaskStage;
+  attempt_count: number;
+  recovery_count: number;
+  last_error_code: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
 }
 
 export interface KnowledgeDocument {
@@ -19,6 +40,7 @@ export interface KnowledgeDocument {
   char_count: number;
   chunk_count: number;
   image_count: number;
+  task: IngestTask | null;
   last_error_code: string | null;
   last_error_message: string | null;
   processed_at: string | null;

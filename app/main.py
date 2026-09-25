@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.core.config import settings  # noqa: F401  （供后续装配读取配置）
 from app.database import initialize_database
@@ -24,6 +25,7 @@ from app.diagnostics.local_logging import configure_runtime_logging
 from app.diagnostics.middleware import RequestDiagnosticsMiddleware
 from app.http_client import close_http_client
 from app.http_security import local_browser_write_guard
+from app.ingest_tasks import recover_incomplete_tasks
 from app.routers import (
     ask,
     diagnostics,
@@ -47,6 +49,8 @@ async def lifespan(app: FastAPI):
     logger.info("KnowBase API 启动 backend=%s", engine.dialect.name)
     try:
         initialize_database(engine)
+        with Session(engine, expire_on_commit=False) as db:
+            recover_incomplete_tasks(db)
         yield
     finally:
         close_http_client()

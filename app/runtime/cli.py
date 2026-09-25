@@ -73,6 +73,17 @@ def main(argv: list[str] | None = None) -> int:
                 f"续接 {initialized.external_sync.resumed}，"
                 f"刷新观察值 {initialized.external_sync.refreshed}"
             )
+        if (
+            initialized.ingest_recovery.recovered
+            or initialized.ingest_recovery.reconciled
+        ):
+            print(
+                "[KnowBase Runtime] 已恢复入库任务："
+                f"续跑 {initialized.ingest_recovery.recovered}，"
+                f"成功 {initialized.ingest_recovery.succeeded}，"
+                f"失败 {initialized.ingest_recovery.failed}，"
+                f"补齐状态 {initialized.ingest_recovery.reconciled}"
+            )
         print(f"  database: {initialized.paths.database}")
         print(f"  storage: {initialized.paths.storage}")
         return 0

@@ -13,12 +13,19 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.database import create_database_engine, initialize_database
-from app.models import Chunk, Document, KnowledgeBase
+from app import storage
+from app.ingest_tasks import stage_task
+from app.models import Chunk, Document, IngestTask, KnowledgeBase
 from app.runtime import RuntimeConfigurationError, prepare_runtime
 from app.runtime import project_import as project_import_module
 from app.runtime.configuration import resolve_runtime_paths
 from app.runtime.project_import import ProjectDataImportError, import_project_data
 from app.vault import VaultStore
+from app.vault.coordinator import (
+    bind_managed_store,
+    commit_document,
+    commit_knowledge_base,
+)
 
 
 def _engine(path: Path):
@@ -212,6 +219,84 @@ def test_runtime_preparation_creates_and_reuses_user_sqlite(tmp_path):
         assert connection.execute(
             "SELECT value FROM app_metadata WHERE key = 'embedding_profile_v1'"
         ).fetchone() is not None
+
+
+def test_runtime_recovers_persisted_ingest_task_after_vault_sync(tmp_path):
+    data_dir = tmp_path / "recover-user-data"
+    config = Settings(
+        data_dir=data_dir,
+        database_url=None,
+        storage_dir=None,
+        _env_file=None,
+    )
+    initialized = prepare_runtime(
+        config=config,
+        project_root=tmp_path / "empty-project",
+    )
+    engine = _engine(initialized.paths.database)
+    text_value = "# 恢复任务\n应用退出后继续完成索引。"
+    source_bytes = text_value.encode("utf-8")
+    try:
+        with Session(engine, expire_on_commit=False) as db:
+            store = VaultStore(initialized.paths.storage)
+            bind_managed_store(db, store)
+            kb = KnowledgeBase(name="持久任务恢复")
+            db.add(kb)
+            db.flush()
+            commit_knowledge_base(db, kb)
+            document = Document(
+                kb_id=kb.id,
+                title="recover.md",
+                file_path="placeholder",
+                content_hash=hashlib.sha256(source_bytes).hexdigest(),
+                char_count=len(text_value),
+                status="pending",
+            )
+            db.add(document)
+            db.flush()
+            candidate = storage.save_version(
+                kb.id,
+                document.id,
+                document.ingest_version,
+                document.content_hash,
+                source_bytes,
+                storage_root=initialized.paths.storage,
+            )
+            document.file_path = candidate
+            document.pending_file_path = candidate
+            document.pending_content_hash = document.content_hash
+            document.pending_char_count = document.char_count
+            stage_task(db, document)
+            commit_document(db, document)
+            document_id = document.id
+    finally:
+        engine.dispose()
+
+    recovered = prepare_runtime(
+        config=config,
+        project_root=tmp_path / "empty-project",
+    )
+
+    assert recovered.ingest_recovery.recovered == 1
+    assert recovered.ingest_recovery.succeeded == 1
+    verify_engine = _engine(recovered.paths.database)
+    try:
+        with Session(verify_engine) as db:
+            document = db.get(Document, document_id)
+            task = db.get(IngestTask, document_id)
+            assert document is not None and document.status == "ready"
+            assert document.pending_file_path is None
+            assert task is not None and task.status == "succeeded"
+            assert task.recovery_count == 1
+    finally:
+        verify_engine.dispose()
+
+    clean_restart = prepare_runtime(
+        config=config,
+        project_root=tmp_path / "empty-project",
+    )
+    assert clean_restart.ingest_recovery.recovered == 0
+    assert clean_restart.ingest_recovery.reconciled == 0
 
 
 def test_runtime_rejects_service_database_and_unsafe_layout(tmp_path):

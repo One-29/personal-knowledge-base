@@ -2,6 +2,7 @@ import { api } from "./api";
 import { byId, queryAll, queryOne } from "./dom";
 import { openDocument } from "./evidence";
 import { escapeHtml, formatCount, formatTimestamp, friendlyError } from "./format";
+import { ingestProgress } from "./ingest-progress";
 import { activateView } from "./navigation";
 import { notify } from "./notifications";
 import { state } from "./state";
@@ -172,12 +173,21 @@ function renderDocuments(): void {
   body.innerHTML = filtered.map((document) => {
     const extension = document.title.toLowerCase().endsWith(".md") ? "MD" : "TXT";
     const statusText = DOCUMENT_STATUS[document.status] ?? String(document.status);
+    const progress = ingestProgress(document.task);
+    const progressMarkup = progress === null ? "" : `
+      <div class="ingest-state" title="${escapeHtml(progress.detail)}">
+        <div class="ingest-meter" role="progressbar" aria-label="${escapeHtml(progress.label)}"
+          aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress.percent}">
+          <span style="width: ${progress.percent}%"></span>
+        </div>
+        <span>${escapeHtml(progress.label)} · ${progress.percent}%</span>
+      </div>`;
     return `<tr>
       <td><div class="doc-title">
         <span class="doc-icon">${extension}</span>
         <span title="${escapeHtml(document.title)}">${escapeHtml(document.title)}</span>
       </div></td>
-      <td><span class="status-badge ${escapeHtml(document.status)}">${escapeHtml(statusText)}</span></td>
+      <td><span class="status-badge ${escapeHtml(document.status)}">${escapeHtml(statusText)}</span>${progressMarkup}</td>
       <td class="num">${formatCount(document.chunk_count)}</td>
       <td class="num">${formatCount(document.image_count)}</td>
       <td class="num">${formatCount(document.char_count)}</td>
