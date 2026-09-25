@@ -3,10 +3,10 @@
 | 字段 | 内容 |
 |---|---|
 | 状态 | 已确认（既有事实汇总） |
-| 版本 | v0.7 |
+| 版本 | v0.8 |
 | 日期 | 2026-09-25 |
 | 上游 | `01-requirements.md` |
-| 变更 | v0.7：加入 Windows PyInstaller 单目录包、配置隔离与冻结包启动门；v0.6：加入持久入库任务、真实阶段进度与重启恢复；v0.5：加入本地滚动日志、请求关联与隐私安全诊断摘要；v0.4：加入 pywebview 桌面壳原型与本地生命周期边界；v0.3：日常存储切换为用户目录 SQLite |
+| 变更 | v0.8：普通问答加入 POST SSE 增量传输与最终引用校验门；v0.7：加入 Windows PyInstaller 单目录包、配置隔离与冻结包启动门；v0.6：加入持久入库任务、真实阶段进度与重启恢复；v0.5：加入本地滚动日志、请求关联与隐私安全诊断摘要 |
 | 关联 | GitHub 总功能 Issue |
 
 > 本文是**项目总览**：给第一次打开仓库的人一份几分钟能读完的全貌，细节一律指向对应设计文档。
@@ -40,6 +40,7 @@
 | 结构感知切分 | 按 Markdown 标题边界切块，块记录原文**字符偏移**作为溯源锚点 |
 | 混合检索 | SQLite JSON 精确余弦 + FTS5 trigram 双通道召回，RRF 融合排序；PostgreSQL 后端保留作迁移对照 |
 | 带引用回答 | 先结论、再用资料里的机制/步骤/条件展开，每个论断标注 `[n]` 并可定位原文 |
+| 流式问答 | L1 检索门通过后逐段显示生成草稿，完整内容经 L2 引用校验后才发布为最终回答 |
 | 会话追问 | 指代句自动改写为自包含问题（「那它怎么调？」→「TCP 拥塞窗口如何调整？」） |
 | 会话记录本地保存 | 多会话（新建/切换/删除）存在浏览器本地，刷新不丢；上下文随请求回传 |
 | 可停止等待 | 等待回答或任务时可点「停止」；这是客户端中断，服务端仍继续本次模型调用 |
@@ -59,13 +60,14 @@ sequenceDiagram
     participant A as 问答服务
     participant R as 检索层
     participant G as 生成层
-    U->>A: POST /ask（question、kb_id、history）
+    U->>A: POST /ask/stream（question、kb_id、history）
     A->>G: 有上文时先把追问改写成自包含问题（失败退化为原问题）
     A->>R: 向量 top-20 + 关键词 top-10，RRF 融合取 top-8
     A->>A: 闸门一：无候选，或最高向量相似度 < τ → 拒答
-    A->>G: 带编号资料生成回答，要求逐句标注 [n]
+    A->>G: 带编号资料流式生成，要求逐句标注 [n]
+    G-->>U: delta 草稿（明确标注待校验、引用暂不可点击）
     A->>A: 闸门二：引用越界 / 零引用 → 拒答
-    A-->>U: 200 + 回答与引用列表
+    A-->>U: result 最终回答/拒答 + 已校验引用列表
 ```
 
 图注：**闸门一（素材够不够）是数值判定，闸门二（回答能不能核对）是纯规则判定**。模型生成不可控，校验必须可控——这是全项目的可信性基础。
@@ -81,7 +83,7 @@ sequenceDiagram
 flowchart LR
     HOST[桌面宿主<br/>pywebview] --> FE[前端单页 M5<br/>TypeScript + Vite]
     FE -->|REST| M1[M1 库与文档管理]
-    FE -->|REST| M3[M3 问答·溯源·拒答]
+    FE -->|REST + SSE| M3[M3 问答·溯源·拒答]
     FE -->|REST| M4[M4 Agent 工作流]
     FE -->|REST| G[M5+ 关联图]
     M1 -->|触发| M2[M2 入库管线]
@@ -104,7 +106,7 @@ flowchart LR
 
 前端是单页应用（`frontend/`，HTML5 + CSS Grid/Flexbox + 严格 TypeScript，无运行时框架与外部 CDN），由 Vite 构建后交给 FastAPI 托管。源码按 API、会话、导航、知识库/文档、问答/工作流、关联图和原文核对拆包。三栏研究工作台的左栏显示功能与并发任务状态，中间承载业务视图，右侧用于原文核对。五个视图为 **问答**、**工作流**、**关联图**、**文档**、**知识库**。Windows 源码运行可由 pywebview 打开系统原生窗口；桌面宿主只管理单实例、后台 API 与窗口生命周期，浏览器开发模式继续可用。
 
-普通问答和工作流可各运行一个并同时在途，切换视图后左栏仍显示各自计时状态。桌面端原文栏常驻且可调宽，平板与手机端改为默认收起的按需抽屉。回答内容先进行 HTML 转义，再渲染标题、列表、代码、公式文本与引用，避免执行模型返回的 HTML。设计细节见 `07-frontend-design.md` 与 `08-graph-view.md`。
+普通问答和工作流可各运行一个并同时在途，切换视图后左栏仍显示各自计时状态。普通问答通过 fetch 读取 POST SSE，网络分片先由独立解析器还原事件；模型增量仅按不可点击草稿渲染，最终 `result` 才绑定引用和保存会话。桌面端原文栏常驻且可调宽，平板与手机端改为默认收起的按需抽屉。回答内容先进行 HTML 转义，再渲染标题、列表、代码、公式文本与引用，避免执行模型返回的 HTML。设计细节见 `07-frontend-design.md` 与 `08-graph-view.md`。
 
 ## 7. API 概览
 
@@ -119,6 +121,7 @@ flowchart LR
 | GET | `/api/v1/documents/{doc_id}/content` | 原文读取 |
 | GET | `/api/v1/documents/{doc_id}/versions/{version}/images/{ordinal}` | 读取不可变文档版本中的原图 |
 | **POST** | **`/api/v1/ask`** | **问答（带引用；覆盖不足返回 `refused=true`）** |
+| **POST** | **`/api/v1/ask/stream`** | **SSE 问答（`metadata` → `delta`* → 最终 `result`；同步契约仍保留）** |
 | GET | `/api/v1/citations/{chunk_id}` | 引用溯源（原文片段 + 字符区间） |
 | **POST** | **`/api/v1/workflow`** | **多步综合任务（拆步、缺料可见、汇总）** |
 | GET | `/api/v1/graph` | 关联图数据（节点 = 文档，边 = 语义关联强度） |
@@ -136,7 +139,7 @@ flowchart LR
 | 向量与检索 | JSON 精确余弦 · FTS5 trigram/BM25 | 个人规模零扩展；PostgreSQL + pgvector/pg_trgm 保留作迁移与质量对照 |
 | 文档与图片校验 | Python `zipfile` · Pillow | 限量读取 ZIP，校验路径/CRC/压缩比与静态图片完整性；原图不重编码 |
 | Embedding | OpenAI 兼容 API（默认 `BAAI/bge-m3`，1024 维） | 全项目模型唯一 |
-| 生成 | OpenAI 兼容 Chat API（默认 `deepseek-ai/DeepSeek-V4-Flash`） | 供应商可配 |
+| 生成 | OpenAI 兼容 Chat API + SSE（默认 `deepseek-ai/DeepSeek-V4-Flash`） | 供应商可配；不支持流式的兼容服务退回单段结果 |
 | 桌面宿主 | pywebview 6.x · PyInstaller 6.x · 系统 WebView2 | 源码壳与 Windows 独立包已接通；签名、自动更新和 macOS/Linux 发布尚未完成 |
 | 本地诊断 | Python logging · RotatingFileHandler · ASGI middleware | 用户目录轮转、凭据脱敏、请求 ID 与阶段耗时；无远程遥测 |
 | 入库任务 | SQLAlchemy 状态表 · FastAPI BackgroundTasks | 版本化原子领取、五阶段进度、单 worker 启动恢复 |
@@ -149,7 +152,7 @@ flowchart LR
 | 边界 | 现状与原因 |
 |---|---|
 | 单 worker | 兼容会话仍在进程内；入库状态可跨重启恢复，但执行承载没有多 worker 租约、心跳与抢占协议 |
-| 「停止」按钮 | 是客户端中断，服务端仍会跑完本次模型调用，只是结果不再展示 |
+| 「停止」按钮 | 立即中断客户端读取，但同步供应商调用没有可靠取消令牌；上游请求仍可能继续并计费 |
 | 问答历史 | 存在浏览器本地并随请求回传，服务端不落库（刷新不丢，换设备不通用） |
 | 工作流执行 | MVP 同步执行，无断点恢复；长任务异步化留 V1.0 |
 | 关联图规模 | 参与近邻计算的块最多 400 个，超出时响应里标注 `truncated` |
@@ -176,7 +179,7 @@ flowchart LR
 |---|---|---|
 | M1 知识库与文档管理 | 库/文档 CRUD、原文存储、文档状态机 | ✅ 完成 |
 | M2 入库管线 | 切分、向量化、索引写入与清理 | ✅ 完成 |
-| M3 问答·溯源·拒答 | 混合检索、带引用生成、防幻觉、会话追问 | ✅ 完成 |
+| M3 问答·溯源·拒答 | 混合检索、流式带引用生成、防幻觉、会话追问 | ✅ 完成 |
 | M4 Agent 多步工作流 | 任务拆解、逐步执行、缺料可见、汇总 | ✅ 完成 |
 | 06 检索质量评估 | 评估集、recall/MRR、τ 校准 | ✅ 完成 |
 | CI/CD | GitHub Actions 自动化测试 | ✅ 完成 |

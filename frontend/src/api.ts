@@ -23,7 +23,7 @@ function errorDetail(body: unknown, fallback: string): string {
   return typeof serialized === "string" && serialized.length > 0 ? serialized : fallback;
 }
 
-export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function apiResponse(path: string, options: RequestInit = {}): Promise<Response> {
   let response: Response;
   const headers = new Headers(options.headers);
   if (!(options.body instanceof FormData) && !headers.has("Content-Type")) {
@@ -45,6 +45,11 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     }
     throw new ApiError(response.status, detail);
   }
+  return response;
+}
+
+export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await apiResponse(path, options);
   if (response.status === 204) return undefined as T;
   return await response.json() as T;
 }

@@ -12,6 +12,8 @@
 拒答是正常业务结果（HTTP 200 + refused=true），不是错误。
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -100,6 +102,19 @@ class AnswerData:
     search_query: str | None = None    # 实际用于检索的问题（有会话时可能被改写）
 
 
+@dataclass
+class AnswerPreparation:
+    """已结束数据库读取、可在无连接状态下进入生成阶段的问答快照。"""
+
+    question: str
+    search_query: str
+    candidates: list[retrieval.RetrievedChunk]
+    candidate_citations: list[CitationData]
+    session_id: str | None
+    session_store: SessionStore
+    terminal_result: AnswerData | None = None
+
+
 def answer_question(
     db: Session,
     question: str,
@@ -116,6 +131,32 @@ def answer_question(
         前端把会话持久化在本地并随请求回传，服务端因此保持无状态——
         刷新页面或重启服务都不会丢失追问上下文（也不必把会话落库）。
     """
+    prepared = prepare_answer(
+        db,
+        question,
+        kb_id,
+        session_id=session_id,
+        history=history,
+        llm=llm,
+        session_store=session_store,
+    )
+    return complete_prepared_answer(prepared, llm=llm)
+
+
+def prepare_answer(
+    db: Session,
+    question: str,
+    kb_id: int | None,
+    session_id: str | None = None,
+    history: list[tuple[str, str]] | None = None,
+    llm: LLMProvider | None = None,
+    session_store: SessionStore | None = None,
+) -> AnswerPreparation:
+    """完成生成前的校验与检索，并把 ORM 数据复制为普通对象。
+
+    返回后数据库事务已经回滚。同步问答和 SSE 问答共用这条路径，避免两种
+    传输方式在拒答门、追问改写或引用候选上产生行为漂移。
+    """
     store = session_store or session.store
     scope = kb_id if kb_id is not None else "all"
     with timed_stage("ask.validate_scope", kb_id=scope):
@@ -125,11 +166,12 @@ def answer_question(
             embedding_profile.ensure_embedding_profile(db)
     except embedding_profile.EmbeddingProfileError as exc:
         logger.warning("embedding 模型指纹不兼容: %s", exc)
-        return _finish(
-            store,
-            session_id,
-            _refuse(question, REFUSAL_EMBEDDING_MISMATCH),
-            question,
+        return _terminal_preparation(
+            question=question,
+            search_query=question,
+            session_id=session_id,
+            store=store,
+            result=_refuse(question, REFUSAL_EMBEDDING_MISMATCH),
         )
 
     if history:
@@ -151,11 +193,12 @@ def answer_question(
             query_vector = _embed_query(search_query)
     except EmbeddingError as exc:
         logger.warning("查询向量化失败: %s", exc)
-        return _finish(
-            store,
-            session_id,
-            _refuse(question, REFUSAL_EMBEDDING_UNAVAILABLE),
-            search_query,
+        return _terminal_preparation(
+            question=question,
+            search_query=search_query,
+            session_id=session_id,
+            store=store,
+            result=_refuse(question, REFUSAL_EMBEDDING_UNAVAILABLE),
         )
     # 本服务使用只读会话：把候选与标题都复制成普通数据后结束事务。
     # 生成阶段不再访问 ORM，避免长时间等待模型时占用连接池。
@@ -177,28 +220,76 @@ def answer_question(
 
     # L1-a：无候选
     if not candidates:
-        return _finish(store, session_id, _refuse(question, REFUSAL_EMPTY_KB), search_query)
+        return _terminal_preparation(
+            question=question,
+            search_query=search_query,
+            session_id=session_id,
+            store=store,
+            result=_refuse(question, REFUSAL_EMPTY_KB),
+        )
 
     # L1-b：最高向量相似度低于阈值 τ（素材与问题不够相关）
     similarities = [c.vector_similarity for c in candidates if c.vector_similarity is not None]
     if similarities and max(similarities) < settings.refusal_similarity_threshold:
         logger.info("L1 拒答：最高相似度 %.3f < τ %.2f", max(similarities),
                     settings.refusal_similarity_threshold)
-        return _finish(store, session_id, _refuse(question, REFUSAL_LOW_RELEVANCE), search_query)
+        return _terminal_preparation(
+            question=question,
+            search_query=search_query,
+            session_id=session_id,
+            store=store,
+            result=_refuse(question, REFUSAL_LOW_RELEVANCE),
+        )
+
+    return AnswerPreparation(
+        question=question,
+        search_query=search_query,
+        candidates=candidates,
+        candidate_citations=candidate_citations,
+        session_id=session_id,
+        session_store=store,
+    )
+
+
+def complete_prepared_answer(
+    prepared: AnswerPreparation,
+    llm: LLMProvider | None = None,
+) -> AnswerData:
+    """同步生成并完成 L2 校验；保留原 `/ask` 的完整响应契约。"""
+    if prepared.terminal_result is not None:
+        return finish_prepared_answer(prepared, prepared.terminal_result)
 
     # 生成
     try:
-        with timed_stage("ask.answer_generation", candidates=len(candidates)):
-            content = generation.generate_answer(question, candidates, provider=llm)
+        with timed_stage("ask.answer_generation", candidates=len(prepared.candidates)):
+            content = generation.generate_answer(
+                prepared.question,
+                prepared.candidates,
+                provider=llm,
+            )
     except LLMError as exc:
         logger.warning("生成失败: %s", exc)
-        return _finish(store, session_id, _refuse(question, REFUSAL_LLM_UNAVAILABLE), search_query)
+        return refuse_prepared_answer(prepared, REFUSAL_LLM_UNAVAILABLE)
+
+    return finish_generated_answer(prepared, content)
+
+
+def finish_generated_answer(prepared: AnswerPreparation, content: str) -> AnswerData:
+    """对完整模型输出执行 L2 校验，并且只提交经过校验的最终结果。"""
+    content = content.strip()
 
     # L2：引用越界校验（纯规则，必执行）
-    invalid = generation.find_invalid_citations(content, provided_count=len(candidates))
+    invalid = generation.find_invalid_citations(
+        content,
+        provided_count=len(prepared.candidates),
+    )
     if invalid:
-        logger.warning("L2 拒答：越界引用 %s（提供 %d 块）", invalid, len(candidates))
-        return _finish(store, session_id, _refuse(question, REFUSAL_INVALID_CITATION), search_query)
+        logger.warning(
+            "L2 拒答：越界引用 %s（提供 %d 块）",
+            invalid,
+            len(prepared.candidates),
+        )
+        return refuse_prepared_answer(prepared, REFUSAL_INVALID_CITATION)
 
     # L2-b：零引用（有实质内容却无来源）→ 不可溯源，同样拒答（可信优先）
     cited_indexes = generation.parse_citations(content)
@@ -209,14 +300,55 @@ def answer_question(
             else REFUSAL_NO_CITATION
         )
         logger.info("L2 拒答：回答无有效引用（reason=%s）", reason)
-        return _finish(store, session_id, _refuse(question, reason), search_query)
+        return refuse_prepared_answer(prepared, reason)
 
     result = AnswerData(
-        question=question,
+        question=prepared.question,
         content=content,
-        citations=[c for c in candidate_citations if c.index in cited_indexes],
+        citations=[
+            citation
+            for citation in prepared.candidate_citations
+            if citation.index in cited_indexes
+        ],
     )
-    return _finish(store, session_id, result, search_query)
+    return finish_prepared_answer(prepared, result)
+
+
+def refuse_prepared_answer(prepared: AnswerPreparation, reason: str) -> AnswerData:
+    """把生成阶段故障或 L2 失败转换为与同步接口一致的可信拒答。"""
+    return finish_prepared_answer(prepared, _refuse(prepared.question, reason))
+
+
+def finish_prepared_answer(
+    prepared: AnswerPreparation,
+    result: AnswerData,
+) -> AnswerData:
+    """完成会话记录；流式路径只在最终结果形成后调用。"""
+    return _finish(
+        prepared.session_store,
+        prepared.session_id,
+        result,
+        prepared.search_query,
+    )
+
+
+def _terminal_preparation(
+    *,
+    question: str,
+    search_query: str,
+    session_id: str | None,
+    store: SessionStore,
+    result: AnswerData,
+) -> AnswerPreparation:
+    return AnswerPreparation(
+        question=question,
+        search_query=search_query,
+        candidates=[],
+        candidate_citations=[],
+        session_id=session_id,
+        session_store=store,
+        terminal_result=result,
+    )
 
 
 def validate_kb(db: Session, kb_id: int | None) -> None:

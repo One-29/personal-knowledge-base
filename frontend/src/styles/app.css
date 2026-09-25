@@ -550,6 +550,24 @@ kbd { padding: 1px 4px; background: var(--surface-soft); border: 1px solid var(-
 }
 .answer-label { color: var(--primary); font-weight: 700; letter-spacing: .08em; }
 .answer-meta .meta-dot::before { margin-right: 8px; color: var(--line-strong); content: "•"; }
+.streaming-status { display: inline-flex; gap: 6px; align-items: center; color: var(--ink-soft); }
+.streaming-status i {
+  width: 6px;
+  height: 6px;
+  background: var(--success);
+  border-radius: 50%;
+  animation: busy-pulse 1.25s ease-in-out infinite;
+}
+.streaming-answer .entry-a::after {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 3px;
+  background: var(--primary);
+  content: "";
+  animation: busy-pulse 1s ease-in-out infinite;
+  vertical-align: -.12em;
+}
 .refused {
   display: inline-flex;
   align-items: center;

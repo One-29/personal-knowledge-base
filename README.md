@@ -14,6 +14,7 @@
 - L1 拒答阈值由 v2 相似度分布重新校准为 **τ=0.50**：10 条库外问题拒答率 100%，50 条库内问题误拒率 0%。
 - 桌面化存储迁移已完成默认 SQLite 运行时、文件系统重建和已登记普通文本的外部编辑同步：日常数据库被删除后可从原文重新生成；Markdown/TXT 在应用外保存后，下次启动只重建受影响文档。一键启动不依赖 WSL、Docker、PostgreSQL 或 Alembic，PostgreSQL 只保留给旧数据迁移、双方言回归和评估对照。
 - Windows 独立桌面包已经接通：PyInstaller 单目录包包含 Python、FastAPI、前端产物和 pywebview 运行时，在隔离目录中通过 API 与真实 WebView2 双重启动检查；使用包时不需要安装 Python、Node.js、Docker 或源码。源码快捷方式仍保留给开发与调试。
+- 普通问答已使用 POST SSE 流式输出：检索与 L1 拒答先完成，模型文本随后逐段显示并明确标为待校验草稿；完整内容通过 L2 引用校验后才形成可点击引用并写入会话。原 `/api/v1/ask` 同步契约继续保留给脚本和兼容客户端。
 - 本地诊断链路已经接通：SQLite 日常运行把脱敏日志写入用户数据目录并自动轮转，每个 HTTP 请求返回关联 ID，问答、工作流、检索和向量化记录分阶段耗时；左下角可一键复制不含密钥与知识内容的诊断摘要。
 - 文档入库任务已经落库：文档页展示校验、读取、切分、索引生成和发布进度；应用退出后，下一次启动会先核对 Vault，再续跑遗留的 `pending` / `processing` 文档。任务按文档版本原子领取，重复调度和较早重传不能覆盖新版本。
 - 数据库会持久化 embedding 服务地址、模型和维度的指纹；配置变化且仍有旧块时，问答会明确提示重建，入库会保留旧块并记录可诊断错误，避免不同语义空间静默混用。
@@ -143,6 +144,8 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask \
 
 上传登记即返回，切分与向量化在后台执行；文档页约每 2.2 秒刷新真实任务阶段，完成或失败后停止轮询。进程在处理中退出时，下一次启动会自动续跑；提问若覆盖不足会返回 `refused=true`。
 
+界面使用 `POST /api/v1/ask/stream` 接收 `metadata`、`delta` 和最终 `result` 事件；最终结果仍是与同步 `/ask` 相同的结构。SSE 草稿中的引用在完成前不可点击，若最终发现越界或零引用，界面会用可信拒答替换草稿。
+
 含本地图片的笔记需打成 ZIP：包内必须恰有一篇 `.md`，图片使用相对路径引用，支持静态 PNG/JPEG/WebP。系统校验 ZIP 路径、CRC、压缩比、图片格式与尺寸，并原样保存图片；具体目录示例、限制和版本保留策略见 [Markdown 图片包说明](docs/image-packages.md)。
 
 ## 测试
@@ -172,7 +175,8 @@ SQLite 集成测试使用临时真文件，覆盖建库、v1→v2 原地升级�
 的单篇增量重建与中断续接、入库任务跨重启恢复、单篇失败隔离、失败保护和重启持久化；迁移集成测试还会从隔离的
 PostgreSQL 生成最终 SQLite，验证失败不覆盖。桌面与诊断测试还覆盖跨进程单实例锁、
 后台 API 就绪与退出、窗口编排、端口冲突、回环 Web UI 的异源写请求保护、
-请求 ID、日志轮转/脱敏和隐私安全诊断摘要：
+请求 ID、日志轮转/脱敏和隐私安全诊断摘要；问答测试还覆盖供应商 SSE、任意网络分片、
+非流式供应商回退、L1 无草稿拒答与 L2 最终覆盖：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q tests/test_vault.py tests/test_external_sync.py tests/test_sqlite_storage.py tests/test_sqlite_migration.py tests/test_desktop.py tests/test_http_security.py tests/test_diagnostics.py

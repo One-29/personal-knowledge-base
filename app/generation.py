@@ -7,8 +7,10 @@
 拒答（04 §6）：L1 阈值判定在服务层（素材够不够格），L2 自检在此层提供接口。
 """
 
+import json
 import logging
 import re
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Protocol
 
 import httpx
@@ -61,6 +63,14 @@ class LLMProvider(Protocol):
         ...
 
 
+class StreamingLLMProvider(Protocol):
+    """可逐段返回文本的可选生成能力。"""
+
+    def stream(self, system: str, user: str) -> Iterator[str]:
+        """按供应商返回顺序产生文本增量。"""
+        ...
+
+
 class OpenAICompatibleLLM:
     """OpenAI 兼容 /chat/completions 客户端（httpx 直连）。"""
 
@@ -85,14 +95,7 @@ class OpenAICompatibleLLM:
             response = client.post(
                 self._url,
                 headers={"Authorization": f"Bearer {self._api_key}"},
-                json={
-                    "model": self._model,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    "temperature": 0,          # 问答要稳定，不要发挥
-                },
+                json=self._request_payload(system, user),
                 timeout=self._timeout,
             )
             response.raise_for_status()
@@ -103,22 +106,73 @@ class OpenAICompatibleLLM:
         except httpx.HTTPError as exc:
             raise LLMError(f"LLM 请求失败: {exc}") from None
 
+        return _completion_content(_response_json(response))
+
+    def stream(self, system: str, user: str) -> Iterator[str]:
+        """读取 OpenAI 兼容 SSE；不支持流式的兼容服务退回单段 JSON。"""
+        client = self._client if self._client is not None else get_http_client()
         try:
-            payload = response.json()
-        except ValueError:
-            raise LLMError("LLM 服务返回的内容不是有效 JSON") from None
-        if not isinstance(payload, dict):
-            raise LLMError("LLM 服务响应格式无效")
-        choices = payload.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise LLMError("LLM 服务响应缺少 choices")
-        first = choices[0]
-        if not isinstance(first, dict) or not isinstance(first.get("message"), dict):
-            raise LLMError("LLM 服务响应缺少 message")
-        content = first["message"].get("content")
-        if not isinstance(content, str):
-            raise LLMError("LLM 服务响应缺少文本 content")
-        return content
+            with client.stream(
+                "POST",
+                self._url,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Accept": "text/event-stream",
+                },
+                json=self._request_payload(system, user, stream=True),
+                timeout=self._timeout,
+            ) as response:
+                if response.is_error:
+                    response.read()
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "").lower()
+                if "text/event-stream" not in content_type:
+                    response.read()
+                    content = _completion_content(_response_json(response))
+                    if content:
+                        yield content
+                    return
+
+                for line in response.iter_lines():
+                    if not line or line.startswith(":"):
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        return
+                    try:
+                        payload = json.loads(data)
+                    except json.JSONDecodeError:
+                        raise LLMError("LLM 流式响应包含无效 JSON") from None
+                    delta = _stream_delta(payload)
+                    if delta:
+                        yield delta
+        except httpx.HTTPStatusError as exc:
+            raise LLMError(
+                f"LLM 服务返回 {exc.response.status_code}: {_safe_response_text(exc.response)[:200]}"
+            ) from None
+        except httpx.HTTPError as exc:
+            raise LLMError(f"LLM 请求失败: {exc}") from None
+
+    def _request_payload(
+        self,
+        system: str,
+        user: str,
+        *,
+        stream: bool = False,
+    ) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0,          # 问答要稳定，不要发挥
+        }
+        if stream:
+            payload["stream"] = True
+        return payload
 
 
 def get_llm_provider() -> LLMProvider:
@@ -172,6 +226,73 @@ def generate_answer(
     llm = provider or get_llm_provider()
     system = build_system_prompt(len(chunks))
     return llm.complete(system, build_user_prompt(question, chunks)).strip()
+
+
+def stream_answer(
+    question: str,
+    chunks: list[RetrievedChunk],
+    provider: LLMProvider | None = None,
+) -> Iterator[str]:
+    """逐段生成回答；旧式 provider 自动退回单段输出，保持可替换性。"""
+    llm = provider or get_llm_provider()
+    system = build_system_prompt(len(chunks))
+    user = build_user_prompt(question, chunks)
+    stream = getattr(llm, "stream", None)
+    if callable(stream):
+        yield from stream(system, user)
+        return
+    content = llm.complete(system, user)
+    if content:
+        yield content
+
+
+def _response_json(response: httpx.Response) -> object:
+    try:
+        return response.json()
+    except ValueError:
+        raise LLMError("LLM 服务返回的内容不是有效 JSON") from None
+
+
+def _completion_content(payload: object) -> str:
+    if not isinstance(payload, dict):
+        raise LLMError("LLM 服务响应格式无效")
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise LLMError("LLM 服务响应缺少 choices")
+    first = choices[0]
+    if not isinstance(first, dict) or not isinstance(first.get("message"), dict):
+        raise LLMError("LLM 服务响应缺少 message")
+    content = first["message"].get("content")
+    if not isinstance(content, str):
+        raise LLMError("LLM 服务响应缺少文本 content")
+    return content
+
+
+def _stream_delta(payload: object) -> str:
+    if not isinstance(payload, dict):
+        raise LLMError("LLM 流式响应格式无效")
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise LLMError("LLM 流式响应缺少 choices")
+    first = choices[0]
+    if not isinstance(first, dict):
+        raise LLMError("LLM 流式响应 choice 格式无效")
+    delta = first.get("delta")
+    if not isinstance(delta, dict):
+        raise LLMError("LLM 流式响应缺少 delta")
+    content = delta.get("content")
+    if content is None:                 # role / finish_reason 等非文本事件
+        return ""
+    if not isinstance(content, str):
+        raise LLMError("LLM 流式响应 content 格式无效")
+    return content
+
+
+def _safe_response_text(response: httpx.Response) -> str:
+    try:
+        return response.text
+    except (httpx.ResponseNotRead, httpx.StreamClosed):
+        return ""
 
 
 # ── 追问改写（04 DR5） ───────────────────────────────────────
