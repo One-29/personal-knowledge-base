@@ -18,7 +18,20 @@ if ($env:OS -ne "Windows_NT") {
 
 $projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 if ([string]::IsNullOrWhiteSpace($PythonPath)) {
-    $PythonPath = Join-Path $projectRoot ".venv\Scripts\python.exe"
+    $venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+    if (Test-Path -LiteralPath $venvPython -PathType Leaf) {
+        $PythonPath = $venvPython
+    }
+    else {
+        $pythonCommand = Get-Command python.exe -ErrorAction SilentlyContinue
+        if ($null -eq $pythonCommand) {
+            $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+        }
+        if ($null -eq $pythonCommand) {
+            throw "Python was not found. Create .venv or pass -PythonPath explicitly."
+        }
+        $PythonPath = $pythonCommand.Source
+    }
 }
 $python = (Resolve-Path -LiteralPath $PythonPath -ErrorAction Stop).Path
 
