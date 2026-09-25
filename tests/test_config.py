@@ -5,7 +5,7 @@ from pathlib import Path
 from sqlalchemy.engine import make_url
 
 from app.core.config import Settings
-from app.core.paths import default_user_data_dir
+from app.core.paths import default_user_data_dir, runtime_config_file
 
 
 def test_default_model_configuration_matches_documented_runtime(monkeypatch):
@@ -58,6 +58,26 @@ def test_user_data_paths_follow_each_platform_convention():
         platform_name="linux",
         home=home,
     ) == Path("/data/example/knowbase")
+
+
+def test_runtime_config_is_project_local_in_source_and_user_local_when_packaged(
+    tmp_path,
+):
+    windows_env = {"LOCALAPPDATA": str(tmp_path / "Local")}
+
+    assert runtime_config_file(environ={}, packaged=False) == Path(".env")
+    assert runtime_config_file(
+        environ=windows_env,
+        packaged=True,
+        platform_name="win32",
+        home=tmp_path,
+    ) == tmp_path / "Local" / "KnowBase" / "config.env"
+
+    override = tmp_path / "portable" / "settings.env"
+    assert runtime_config_file(
+        environ={"KNOWBASE_CONFIG_FILE": str(override)},
+        packaged=True,
+    ) == override.resolve()
 
 
 def test_data_dir_override_derives_database_and_storage(monkeypatch, tmp_path):

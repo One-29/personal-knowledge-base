@@ -44,6 +44,7 @@ def run_desktop(
     height: int = 820,
     debug: bool = False,
     check_only: bool = False,
+    window_check: bool = False,
     webview_module: Any | None = None,
     server_factory: Callable[..., ManagedServer] | None = None,
 ) -> DesktopRun:
@@ -68,7 +69,7 @@ def run_desktop(
                     )
 
                 webview = webview_module or _load_webview()
-                webview.create_window(
+                window = webview.create_window(
                     "KnowBase · 个人知识库",
                     server.app_url,
                     width=width,
@@ -76,14 +77,29 @@ def run_desktop(
                     min_size=(960, 640),
                     background_color="#f4f1ea",
                     text_select=True,
+                    hidden=window_check,
                 )
+                if window is None:
+                    raise DesktopLaunchError("桌面窗口创建失败")
                 profile_dir = initialized.paths.database.parent / "webview"
                 profile_dir.mkdir(parents=True, exist_ok=True)
-                webview.start(
-                    debug=debug,
-                    private_mode=False,
-                    storage_path=str(profile_dir),
-                )
+                start_options = {
+                    "debug": debug,
+                    "private_mode": False,
+                    "storage_path": str(profile_dir),
+                }
+                if window_check:
+                    loaded: list[bool] = []
+
+                    def close_probe_window() -> None:
+                        loaded.append(bool(window.events.loaded.wait(10)))
+                        window.destroy()
+
+                    webview.start(close_probe_window, **start_options)
+                    if loaded != [True]:
+                        raise DesktopLaunchError("桌面窗口未能在 10 秒内完成加载")
+                else:
+                    webview.start(**start_options)
                 logger.info("桌面窗口已关闭")
                 return DesktopRun(
                     url=server.app_url,

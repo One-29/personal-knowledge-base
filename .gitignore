@@ -9,6 +9,7 @@ pytest-cache-files-*/
 .mypy_cache/
 *.egg-info/
 build/
+artifacts/
 
 # 环境与密钥（密钥只走 .env，绝不入库）
 .env

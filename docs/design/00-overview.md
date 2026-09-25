@@ -3,10 +3,10 @@
 | 字段 | 内容 |
 |---|---|
 | 状态 | 已确认（既有事实汇总） |
-| 版本 | v0.6 |
+| 版本 | v0.7 |
 | 日期 | 2026-09-25 |
 | 上游 | `01-requirements.md` |
-| 变更 | v0.6：加入持久入库任务、真实阶段进度与重启恢复；v0.5：加入本地滚动日志、请求关联与隐私安全诊断摘要；v0.4：加入 pywebview 桌面壳原型与本地生命周期边界；v0.3：日常存储切换为用户目录 SQLite |
+| 变更 | v0.7：加入 Windows PyInstaller 单目录包、配置隔离与冻结包启动门；v0.6：加入持久入库任务、真实阶段进度与重启恢复；v0.5：加入本地滚动日志、请求关联与隐私安全诊断摘要；v0.4：加入 pywebview 桌面壳原型与本地生命周期边界；v0.3：日常存储切换为用户目录 SQLite |
 | 关联 | GitHub 总功能 Issue |
 
 > 本文是**项目总览**：给第一次打开仓库的人一份几分钟能读完的全貌，细节一律指向对应设计文档。
@@ -46,7 +46,7 @@
 | Agent 多步工作流 | 跨文档综合任务自动拆步执行，**缺料步骤显式标注**，引用全局统一编号 |
 | 关联图 | Obsidian 式 graph view：节点是笔记、连线是语义关联强度（悬停看关联文档、可拖动、可调阈值） |
 | 可评估 | 内置评估集与指标（recall@k / MRR / 拒答率 / τ 扫描），参数由数据校准 |
-| 原生桌面窗口 | pywebview 承载同一套 TypeScript 界面；单实例、API 就绪门与关窗退出已经接通，正式独立安装包仍在后续阶段 |
+| 原生桌面窗口 | pywebview 承载同一套 TypeScript 界面；单实例、API 就绪门与关窗退出已经接通，Windows 单目录包无需本机 Python/Node.js |
 | 可诊断 | 本地滚动日志用请求 ID 串起总耗时和模型/检索/索引阶段；界面一键复制不含密钥与知识正文的摘要 |
 
 ## 4. 怎么做到「不编造」
@@ -137,7 +137,7 @@ flowchart LR
 | 文档与图片校验 | Python `zipfile` · Pillow | 限量读取 ZIP，校验路径/CRC/压缩比与静态图片完整性；原图不重编码 |
 | Embedding | OpenAI 兼容 API（默认 `BAAI/bge-m3`，1024 维） | 全项目模型唯一 |
 | 生成 | OpenAI 兼容 Chat API（默认 `deepseek-ai/DeepSeek-V4-Flash`） | 供应商可配 |
-| 桌面宿主 | pywebview 6.x · 系统 WebView | 源码原型已接通；独立安装包和三平台发布尚未完成 |
+| 桌面宿主 | pywebview 6.x · PyInstaller 6.x · 系统 WebView2 | 源码壳与 Windows 独立包已接通；签名、自动更新和 macOS/Linux 发布尚未完成 |
 | 本地诊断 | Python logging · RotatingFileHandler · ASGI middleware | 用户目录轮转、凭据脱敏、请求 ID 与阶段耗时；无远程遥测 |
 | 入库任务 | SQLAlchemy 状态表 · FastAPI BackgroundTasks | 版本化原子领取、五阶段进度、单 worker 启动恢复 |
 | 测试 / CI | pytest · GitHub Actions（pgvector service container） | 测试不依赖真实密钥 |
@@ -155,7 +155,7 @@ flowchart LR
 | 关联图规模 | 参与近邻计算的块最多 400 个，超出时响应里标注 `truncated` |
 | 评估结论 | v2 固定基线为 5 库 / 20 文档 / 60 条样本；可用于回归对比，仍不能替代真实用户语料 |
 | 文档格式 | 支持 Markdown / txt，以及“单篇 Markdown + 本地静态图片”的 ZIP；PDF、Word、OCR 与图片语义解析留给后续版本 |
-| 桌面发布 | 当前桌面窗口从源码环境启动，仍需要 Python 和用于构建前端的 Node.js；无开发环境安装包、签名与自动更新尚未完成 |
+| 桌面发布 | Windows 单目录 ZIP 已可构建并通过隔离启动门；尚无正式签名、自动更新、Releases 自动上传或 macOS/Linux 二进制 |
 
 ## 10. 评估结论摘要
 
@@ -181,9 +181,9 @@ flowchart LR
 | 06 检索质量评估 | 评估集、recall/MRR、τ 校准 | ✅ 完成 |
 | CI/CD | GitHub Actions 自动化测试 | ✅ 完成 |
 | M5 前端 | 库/文档管理、问答与溯源高亮、工作流进度 | ✅ 完成（TypeScript 模块化单页，Vite 构建） |
-| 桌面壳原型 | pywebview、单实例、后台 API 生命周期、同源写保护 | ✅ 完成（源码运行） |
+| Windows 桌面发布 | pywebview、单实例、冻结运行时、配置隔离、API/WebView 双启动门 | ✅ 完成（单目录 ZIP） |
 | 本地诊断 | 滚动日志、脱敏、请求关联、阶段耗时、复制摘要 | ✅ 完成 |
-| V1.0 | 可分发桌面包、任务恢复、PDF/Word 导入 | 规划 |
+| V1.0 | Windows Releases、跨平台包、PDF/Word 导入 | 规划 |
 
 ## 12. 文档索引
 
