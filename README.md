@@ -23,6 +23,8 @@
 
 ## Windows 独立应用包
 
+> 当前仓库尚未创建正式 GitHub Release，仓库页面暂时没有可直接下载的安装包。普通用户目前请按下文从源码运行；维护者可以在本机构建 Windows ZIP。正式 Release 建立后，只从本仓库 [Releases](https://github.com/One-29/personal-knowledge-base/releases) 下载 ZIP，并核对同版本的 SHA-256。
+
 发布包解压后必须保留完整的 `KnowBase/` 目录，直接双击 `KnowBase.exe`。首次使用问答前，双击同目录的 `Configure KnowBase.cmd`，在打开的 `config.env` 中填写 `EMBEDDING_API_KEY` 与 `LLM_API_KEY`，保存后重新启动。配置、SQLite、原文、WebView profile 和日志都在 `%LOCALAPPDATA%\KnowBase`，替换程序目录不会覆盖个人数据。
 
 仓库维护者在 64 位 Windows 上构建发布 ZIP：
@@ -38,6 +40,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-windows-app.
 ## 从源码运行
 
 源码运行需要 Python 3.12+ 和 Node.js 22.12+，不需要 Docker Desktop、WSL、Docker Engine 或独立数据库服务。Node.js 只负责构建前端，不作为应用运行时服务；问答必须配置模型 Key，任何 OpenAI 兼容的 embedding 与 chat 服务都可以。Windows 原生窗口和独立包使用 WebView2 Runtime；Linux 源码运行还需按 [pywebview 安装说明](https://pywebview.flowrl.com/guide/installation)准备 GTK 或 Qt GUI 后端。
+
+首次从 GitHub 获取项目：
+
+```powershell
+git clone https://github.com/One-29/personal-knowledge-base.git
+Set-Location personal-knowledge-base
+```
 
 准备虚拟环境与依赖。命令都在项目根执行；PowerShell 不支持 `&&`，分两行或改用 `;`。不需要激活 venv，直接用它的解释器：
 
@@ -59,7 +68,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-sh
 
 安装器会准备前端生产资源，并创建一个没有常驻终端窗口的启动入口。以后双击 **KnowBase** 即可打开原生窗口；关闭窗口会正常停止它拥有的本地 API。重复双击不会同时写同一份 SQLite，而会提示切换到已经打开的窗口。旧版快捷方式仍指向浏览器启动器时，重新执行安装命令即可更新。
 
-也可以不安装快捷方式，直接运行或执行完整启动自检：
+不安装快捷方式时，可以直接运行快捷方式使用的同一个源码启动器：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase-app.ps1
+```
+
+命令会一直等待到 KnowBase 窗口关闭，这是正常行为；关闭最后一个窗口后，本地 API、端口和单实例锁会正常释放。开发和排障时也可以直接调用桌面模块，`--check` 会完成运行时准备、API 就绪验证和正常关闭，但不会创建窗口：
 
 ```powershell
 .\.venv\Scripts\python.exe -m app.desktop
@@ -69,6 +84,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-sh
 桌面壳只负责窗口、单实例锁和本地 API 生命周期，业务仍经过同一组 FastAPI REST 接口。它绑定回环地址 `127.0.0.1`；独立包和直接运行默认自动选择空闲端口，源码快捷方式默认固定为 8000，可给安装器加 `-Port 9000` 更换。非受信网站发出的浏览器写请求会在进入业务路由前被拒绝，命令行中不带 `Origin` 的本地 API 调用保持兼容。
 
 源码快捷方式会在前端变化后调用 Node.js 重建资源；独立包已经带齐冻结资源，运行时不会回到源码目录或调用构建工具。自动更新、正式代码签名以及 macOS/Linux 二进制仍属于后续发布阶段。
+
+### Windows 启动排查
+
+| 提示或症状 | 处理方法 |
+| --- | --- |
+| `Missing .venv` | 在项目根执行 `python -m venv .venv`，再用 `.\.venv\Scripts\python.exe` 安装 `.[dev,desktop]`。 |
+| `Missing .env` | 执行 `Copy-Item .env.example .env`，填写模型 API Key 后重新启动。 |
+| `Desktop dependency missing` | 执行 `.\.venv\Scripts\python.exe -m pip install -e ".[dev,desktop]"`。 |
+| 提示端口 8000 被占用 | 先检查 KnowBase 是否已经打开；也可以重新安装快捷方式并传入 `-Port 9000`。 |
+| 出现 `缂哄皯` 等乱码或 PowerShell 解析错误 | 执行 `git pull` 更新到最新 `main`，然后重新运行快捷方式安装脚本。当前 CI 会用 Windows PowerShell 5.1 检查源码启动器。 |
+| 双击后没有窗口 | 先运行 `.\.venv\Scripts\python.exe -m app.desktop --check`，再查看 `%LOCALAPPDATA%\KnowBase\logs\knowbase.log`。 |
+| 问答提示模型不可用 | 检查 `.env` 中的 API Key、模型名、服务地址、网络连接和账户额度。 |
 
 ### 诊断与本地日志
 
@@ -195,7 +222,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-eval.ps1 -Back
 `eval/baselines/postgresql-bge-m3-v2.json` 与
 `eval/baselines/sqlite-bge-m3-v2.json`；评估脚本只会替换专用评估库/文件。
 
-CI 在 pgvector service container 上跑双方言 pytest，另外执行 TypeScript 严格类型检查、Vitest、Vite 生产构建，并在空 PostgreSQL 库里执行 `alembic upgrade head` 与 `alembic check`，同时校验兼容用 Compose、Shell 和 PowerShell 脚本。独立的 Windows job 还会从源码冻结应用，并在无 Python/Node 路径的隔离环境中验证 API 和 WebView2 启动链。
+CI 在 pgvector service container 上跑双方言 pytest，另外执行 TypeScript 严格类型检查、Vitest、Vite 生产构建，并在空 PostgreSQL 库里执行 `alembic upgrade head` 与 `alembic check`，同时校验兼容用 Compose、Shell 和 PowerShell 脚本。独立的 Windows job 会先创建与用户源码安装一致的 `.venv`，通过 Windows PowerShell 5.1 执行源码启动器的无窗口自检，再冻结应用，并在无 Python/Node 路径的隔离环境中验证 API 和 WebView2 启动链。
 
 用户目录中的日常 SQLite、PostgreSQL 测试库 `knowbase_test`、评估库 `knowbase_eval` 与各自的原文目录互不可见，对照表见 docs/operations.md。
 
