@@ -16,7 +16,7 @@ from app.embedding_profile import EmbeddingProfile, PROFILE_KEY
 from app.migration import MigrationError, migrate_postgresql_to_sqlite
 from app.migration.errors import IntegrityError
 from app.migration.snapshot_validation import audit_storage
-from app.models import AppMetadata, Chunk, Document, KnowledgeBase
+from app.models import AppMetadata, Chunk, Document, IngestTask, KnowledgeBase
 
 
 def _sqlite_engine(path):
@@ -88,6 +88,18 @@ def test_postgresql_snapshot_is_atomically_migrated_and_verified(db, tmp_path):
                 embedding=[0.0, 1.0, *([0.0] * 1022)],
             ),
         ])
+        source.add(
+            IngestTask(
+                doc_id=doc.id,
+                ingest_version=doc.ingest_version,
+                candidate_path=None,
+                status="succeeded",
+                stage="complete",
+                attempt_count=1,
+                recovery_count=0,
+                finished_at=datetime.now(timezone.utc),
+            )
+        )
         source.commit()
         kb_id = kb.id
 
@@ -105,6 +117,7 @@ def test_postgresql_snapshot_is_atomically_migrated_and_verified(db, tmp_path):
             "app_metadata": 1,
             "knowledge_bases": 1,
             "documents": 1,
+            "ingest_tasks": 1,
             "chunks": 2,
         }
         assert report.files.documents == 1
@@ -129,6 +142,9 @@ def test_postgresql_snapshot_is_atomically_migrated_and_verified(db, tmp_path):
                     source_text[6:16],
                 ]
                 assert chunks[0].embedding == [1.0, *([0.0] * 1023)]
+                migrated_task = migrated.get(IngestTask, doc.id)
+                assert migrated_task is not None
+                assert migrated_task.status == "succeeded"
             with migrated_engine.connect() as connection:
                 assert connection.scalar(text(
                     "SELECT count(*) FROM chunks_fts WHERE chunks_fts MATCH 'alpha'"

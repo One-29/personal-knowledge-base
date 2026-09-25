@@ -9,13 +9,24 @@ from uuid import uuid4
 from app.core.config import settings
 
 
-def _abs_path(kb_id: int, doc_id: int) -> Path:
-    return settings.storage_dir / f"{kb_id}/{doc_id}.md"
+def _abs_path(
+    kb_id: int,
+    doc_id: int,
+    *,
+    storage_root: Path | None = None,
+) -> Path:
+    return (storage_root or settings.storage_dir) / f"{kb_id}/{doc_id}.md"
 
 
-def save(kb_id: int, doc_id: int, content: bytes) -> str:
+def save(
+    kb_id: int,
+    doc_id: int,
+    content: bytes,
+    *,
+    storage_root: Path | None = None,
+) -> str:
     """写入旧式原文路径；保留此入口供现有维护与测试代码使用。"""
-    path = _abs_path(kb_id, doc_id)
+    path = _abs_path(kb_id, doc_id, storage_root=storage_root)
     _write_atomic(path, content)
     return f"{kb_id}/{doc_id}.md"
 
@@ -26,10 +37,12 @@ def save_version(
     version: int,
     content_hash: str,
     content: bytes,
+    *,
+    storage_root: Path | None = None,
 ) -> str:
     """把普通文本上传写成不可变候选版本。"""
     rel_path = f"{kb_id}/{doc_id}/v{version}-{content_hash[:16]}.md"
-    _write_atomic(resolve_relative(rel_path), content)
+    _write_atomic(resolve_relative(rel_path, storage_root=storage_root), content)
     return rel_path
 
 

@@ -15,8 +15,9 @@
 - 桌面化存储迁移已完成默认 SQLite 运行时、文件系统重建和已登记普通文本的外部编辑同步：日常数据库被删除后可从原文重新生成；Markdown/TXT 在应用外保存后，下次启动只重建受影响文档。一键启动不依赖 WSL、Docker、PostgreSQL 或 Alembic，PostgreSQL 只保留给旧数据迁移、双方言回归和评估对照。
 - pywebview 桌面壳原型已经接通：Windows 快捷方式会打开系统 WebView 原生窗口，后台 API 通过真实 `/ready` 后才显示界面；同一用户数据目录只允许一个桌面实例，关闭窗口会停止随它启动的 API。当前仍是源码运行原型，尚未提供无需 Python/Node.js 的独立安装包。
 - 本地诊断链路已经接通：SQLite 日常运行把脱敏日志写入用户数据目录并自动轮转，每个 HTTP 请求返回关联 ID，问答、工作流、检索和向量化记录分阶段耗时；左下角可一键复制不含密钥与知识内容的诊断摘要。
+- 文档入库任务已经落库：文档页展示校验、读取、切分、索引生成和发布进度；应用退出后，下一次启动会先核对 Vault，再续跑遗留的 `pending` / `processing` 文档。任务按文档版本原子领取，重复调度和较早重传不能覆盖新版本。
 - 数据库会持久化 embedding 服务地址、模型和维度的指纹；配置变化且仍有旧块时，问答会明确提示重建，入库会保留旧块并记录可诊断错误，避免不同语义空间静默混用。
-- 已知边界：当前只支持单 worker——会话与后台入库任务都在进程内存里，加 worker 拿不到可靠的跨进程会话与任务恢复。
+- 已知边界：当前只支持单 worker。兼容用 `session_id` 会话仍在进程内；入库任务状态和重启恢复虽已持久化，执行承载仍是当前进程的 FastAPI `BackgroundTasks`，尚未设计多 worker 的租约、心跳与跨进程抢占。
 - 评估已能比较多库与难度层级，但仍是固定的 60 条基线，不能替代真实用户语料上的持续评估；完整口径见 docs/design/06-evaluation.md。
 
 ## 本地运行
@@ -68,7 +69,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-desktop-sh
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-knowbase.ps1
 ```
 
-浏览器启动器先核对端口和 Node.js 版本，根据 `package-lock.json` 安装锁定的前端依赖，并仅在源码变化时重建 `frontend/dist`；随后初始化 SQLite schema、WAL、外键、FTS5、embedding 指纹与原文 Vault 清单，检查已登记原文的外部变化，再以单 worker 启动 API。`/ready` 通过后打开 <http://127.0.0.1:8000/ui/>。首次安装 npm 依赖需要联网，之后未改变依赖与前端源码时会直接复用。可加 `-Port 9000` 换端口，`-NoBrowser` 不自动开浏览器；在这个模式下按 `Ctrl+C` 停止 API。
+浏览器启动器先核对端口和 Node.js 版本，根据 `package-lock.json` 安装锁定的前端依赖，并仅在源码变化时重建 `frontend/dist`；随后初始化 SQLite schema、WAL、外键、FTS5、embedding 指纹与原文 Vault 清单，检查已登记原文的外部变化并恢复中断的入库任务，再以单 worker 启动 API。`/ready` 通过后打开 <http://127.0.0.1:8000/ui/>。首次安装 npm 依赖需要联网，之后未改变依赖与前端源码时会直接复用。可加 `-Port 9000` 换端口，`-NoBrowser` 不自动开浏览器；在这个模式下按 `Ctrl+C` 停止 API。
 
 若仓库的 `data/knowbase.db` 是旧 PostgreSQL 数据的已验证迁移产物，首次启动会通过 SQLite backup API 把数据库和完整 `data/storage` 复制到用户数据目录。候选库通过原文、chunk 锚点、外键、FTS 与摘要复核后才发布；源文件不会移动或删除，已有用户数据库绝不会被覆盖。
 
@@ -126,7 +127,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/ask \
   -d '{"question":"TCP 为什么需要三次握手？","kb_id":1}'
 ```
 
-上传登记即返回，切分与向量化在后台执行；提问若覆盖不足会返回 `refused=true`。
+上传登记即返回，切分与向量化在后台执行；文档页约每 2.2 秒刷新真实任务阶段，完成或失败后停止轮询。进程在处理中退出时，下一次启动会自动续跑；提问若覆盖不足会返回 `refused=true`。
 
 含本地图片的笔记需打成 ZIP：包内必须恰有一篇 `.md`，图片使用相对路径引用，支持静态 PNG/JPEG/WebP。系统校验 ZIP 路径、CRC、压缩比、图片格式与尺寸，并原样保存图片；具体目录示例、限制和版本保留策略见 [Markdown 图片包说明](docs/image-packages.md)。
 
@@ -152,9 +153,9 @@ wsl.exe -d Ubuntu -- docker exec knowbase-pg createdb -U postgres knowbase_test
 .\.venv\Scripts\python.exe -m pytest -q tests/test_chunking.py tests/test_embedding.py
 ```
 
-SQLite 集成测试使用临时真文件，覆盖建库、WAL/外键、入库、FTS5 触发器、
+SQLite 集成测试使用临时真文件，覆盖建库、v1→v2 原地升级、WAL/外键、入库、FTS5 触发器、
 混合检索、关联图、级联删除、Vault 原子清单、删除数据库后全量重建、外部编辑
-的单篇增量重建与中断续接、失败保护和重启持久化；迁移集成测试还会从隔离的
+的单篇增量重建与中断续接、入库任务跨重启恢复、单篇失败隔离、失败保护和重启持久化；迁移集成测试还会从隔离的
 PostgreSQL 生成最终 SQLite，验证失败不覆盖。桌面与诊断测试还覆盖跨进程单实例锁、
 后台 API 就绪与退出、窗口编排、端口冲突、回环 Web UI 的异源写请求保护、
 请求 ID、日志轮转/脱敏和隐私安全诊断摘要：

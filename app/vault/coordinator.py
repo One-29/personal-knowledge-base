@@ -35,6 +35,11 @@ class VaultTransactionError(VaultError):
     """数据库提交失败后，Vault 清单也未能恢复到数据库现状。"""
 
 
+def bind_managed_store(db: Session, store: VaultStore) -> None:
+    """为自定义运行时 Session 显式绑定同一用户目录的 Vault。"""
+    db.info[_SESSION_STORE_KEY] = store
+
+
 def managed_store(db: Session) -> VaultStore | None:
     """仅为配置所指向的日常文件 SQLite 启用 Vault。"""
     cached = db.info.get(_SESSION_STORE_KEY)

@@ -19,7 +19,9 @@ from app.embedding_profile import (
     EmbeddingProfileError,
     ensure_embedding_profile,
 )
+from app.ingest_tasks import IngestRecovery, recover_incomplete_tasks
 from app.vault.external_sync import ExternalSourceSync, reconcile_external_sources
+from app.vault.coordinator import bind_managed_store
 from app.vault.rebuild import VaultRebuildError, rebuild_database
 from app.vault.store import VaultError, VaultStore
 from app.vault.sync import ensure_snapshot
@@ -37,6 +39,7 @@ class RuntimeInitialization:
     paths: RuntimePaths
     project_import: ProjectDataImport
     external_sync: ExternalSourceSync
+    ingest_recovery: IngestRecovery
 
 
 def prepare_runtime(
@@ -80,6 +83,7 @@ def prepare_runtime(
 
     engine = None
     external_sync = ExternalSourceSync()
+    ingest_recovery = IngestRecovery()
     try:
         paths.storage.mkdir(parents=True, exist_ok=True)
         assert config.database_url is not None
@@ -92,6 +96,7 @@ def prepare_runtime(
         )
         initialize_database(engine)
         with Session(engine, expire_on_commit=False) as db:
+            bind_managed_store(db, vault)
             ensure_embedding_profile(db, EmbeddingProfile.configured(config))
             snapshot = ensure_snapshot(db, store=vault)
             _snapshot, external_sync = reconcile_external_sources(
@@ -99,6 +104,11 @@ def prepare_runtime(
                 snapshot,
                 store=vault,
                 config=config,
+            )
+            ingest_recovery = recover_incomplete_tasks(
+                db,
+                config=config,
+                storage_root=paths.storage,
             )
         with engine.connect() as connection:
             quick_check = connection.exec_driver_sql("PRAGMA quick_check").scalar_one()
@@ -129,4 +139,5 @@ def prepare_runtime(
         paths=paths,
         project_import=project_import,
         external_sync=external_sync,
+        ingest_recovery=ingest_recovery,
     )

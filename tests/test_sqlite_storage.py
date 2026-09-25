@@ -16,7 +16,8 @@ from app import crud, embedding, graph, ingest, retrieval, storage
 from app.database import SQLITE_SCHEMA_VERSION, create_database_engine, initialize_database
 from app.database.schema import UnsupportedSchemaVersion
 from app.db import Base
-from app.models import Chunk, Document, KnowledgeBase
+from app.ingest_tasks import stage_task
+from app.models import Chunk, Document, IngestTask, KnowledgeBase
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,48 @@ def test_fastapi_lifespan_initializes_new_sqlite_database(monkeypatch):
         shutil.rmtree(directory, ignore_errors=True)
 
 
+def test_fastapi_lifespan_recovers_persisted_ingest_task(
+    sqlite_harness,
+    monkeypatch,
+):
+    from app import main
+
+    text_value = "# 直接启动\nASGI 生命周期会恢复任务。"
+    with sqlite_harness.session() as db:
+        kb = KnowledgeBase(name="直接启动恢复")
+        db.add(kb)
+        db.flush()
+        document = Document(
+            kb_id=kb.id,
+            title="lifespan.md",
+            file_path="placeholder",
+            content_hash="lifespan-hash",
+            char_count=len(text_value),
+            status="pending",
+        )
+        db.add(document)
+        db.flush()
+        path = storage.save(kb.id, document.id, text_value.encode("utf-8"))
+        document.file_path = path
+        document.pending_file_path = path
+        document.pending_content_hash = document.content_hash
+        document.pending_char_count = document.char_count
+        stage_task(db, document)
+        db.commit()
+        document_id = document.id
+
+    monkeypatch.setattr(main, "engine", sqlite_harness.engine)
+    with TestClient(main.app) as client:
+        assert client.get("/ready").status_code == 200
+
+    with sqlite_harness.session() as db:
+        document = db.get(Document, document_id)
+        task = db.get(IngestTask, document_id)
+        assert document is not None and document.status == "ready"
+        assert task is not None and task.status == "succeeded"
+        assert task.recovery_count == 1
+
+
 def test_sqlite_ingest_and_hybrid_retrieval_use_real_storage(
     sqlite_harness,
 ):
@@ -239,6 +282,35 @@ def test_sqlite_data_survives_engine_restart(sqlite_harness):
             assert db.scalar(select(KnowledgeBase.name)) == "重启后仍存在"
     finally:
         reopened.dispose()
+
+
+def test_sqlite_v1_upgrades_task_schema_without_losing_data(sqlite_harness):
+    with sqlite_harness.session() as db:
+        db.add(KnowledgeBase(name="升级保留数据"))
+        db.commit()
+
+    with sqlite_harness.engine.begin() as connection:
+        connection.execute(text("DROP TABLE ingest_tasks"))
+        connection.execute(text("""
+            UPDATE app_metadata
+            SET value = '1'
+            WHERE key = 'schema_version'
+        """))
+
+    initialize_database(sqlite_harness.engine)
+    initialize_database(sqlite_harness.engine)
+
+    with sqlite_harness.session() as db:
+        assert db.scalar(select(KnowledgeBase.name)) == "升级保留数据"
+        assert db.scalar(select(func.count()).select_from(IngestTask)) == 0
+    with sqlite_harness.engine.connect() as connection:
+        assert connection.scalar(text("""
+            SELECT value FROM app_metadata WHERE key = 'schema_version'
+        """)) == str(SQLITE_SCHEMA_VERSION)
+        assert connection.scalar(text("""
+            SELECT count(*) FROM sqlite_master
+            WHERE type = 'index' AND name = 'ix_ingest_tasks_status_updated'
+        """)) == 1
 
 
 def test_sqlite_initialization_rebuilds_fts_for_existing_chunks():

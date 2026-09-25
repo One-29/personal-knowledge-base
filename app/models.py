@@ -155,6 +155,62 @@ class Document(Base):
     )
 
 
+class IngestTask(Base):
+    """每篇文档当前入库版本的可恢复任务状态。"""
+
+    __tablename__ = "ingest_tasks"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued','running','succeeded','failed','superseded')"
+        ),
+        CheckConstraint(
+            "stage IN ('queued','validating','reading','chunking','embedding',"
+            "'publishing','complete')"
+        ),
+        CheckConstraint(
+            "(status = 'queued' AND stage = 'queued') OR "
+            "(status = 'running' AND stage IN "
+            "('validating','reading','chunking','embedding','publishing')) OR "
+            "(status IN ('succeeded','failed','superseded') AND stage = 'complete')"
+        ),
+        CheckConstraint("attempt_count >= 0"),
+        CheckConstraint("recovery_count >= 0"),
+        Index("ix_ingest_tasks_status_updated", "status", "updated_at"),
+    )
+
+    doc_id: Mapped[int] = mapped_column(
+        PORTABLE_BIGINT,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    ingest_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    candidate_path: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="queued", server_default="queued"
+    )
+    stage: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="queued", server_default="queued"
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    recovery_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_error_code: Mapped[str | None] = mapped_column(String(32))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class Chunk(Base):
     """表 chunks：检索原子单元 + 溯源锚点（M2 产物，03 §3）。
 

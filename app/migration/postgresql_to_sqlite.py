@@ -192,7 +192,8 @@ def _lock_source_snapshot(connection: Connection, timeout_seconds: float) -> Non
     # SHARE 与应用的 INSERT/UPDATE/DELETE（ROW EXCLUSIVE）冲突。固定顺序取锁，
     # 让数据库行与随后校验的不可变活动文件在发布完成前保持同一版本。
     connection.execute(text(
-        "LOCK TABLE app_metadata, knowledge_bases, documents, chunks IN SHARE MODE"
+        "LOCK TABLE app_metadata, knowledge_bases, documents, ingest_tasks, chunks "
+        "IN SHARE MODE"
     ))
 
 
@@ -206,7 +207,12 @@ def _copy_locked_snapshot(
     validate_model_contract()
     prefetched: dict[str, list[dict]] = {}
     specs = {spec.name: spec for spec in TABLE_SPECS}
-    for table_name in ("app_metadata", "knowledge_bases", "documents"):
+    for table_name in (
+        "app_metadata",
+        "knowledge_bases",
+        "documents",
+        "ingest_tasks",
+    ):
         spec = specs[table_name]
         prefetched[table_name] = [
             portable

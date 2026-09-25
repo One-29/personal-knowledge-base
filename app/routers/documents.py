@@ -23,13 +23,15 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
-from .. import crud, ingest, package_storage, storage
+from .. import crud, ingest_tasks, package_storage, storage
 from ..document_io import PreparedDocument, UploadValidationError, read_upload
 from ..db import get_db
-from ..models import Document
+from ..ingest_tasks import IngestTaskSpec
+from ..models import Document, IngestTask
 from ..schemas import (
     DocStatus,
     DocumentOut,
+    IngestTaskOut,
     UploadResult,
 )
 from ..vault.coordinator import VaultTransactionError, commit_document
@@ -41,7 +43,7 @@ kb_documents_router = APIRouter(prefix="/kbs", tags=["Documents"])
 documents_router = APIRouter(prefix="/documents", tags=["Documents"])
 
 
-def _doc_out(doc: Document) -> DocumentOut:
+def _doc_out(doc: Document, task: IngestTask | None = None) -> DocumentOut:
     """ORM → 响应模型：会话存活时显式组装（防懒加载时序问题）。"""
     try:
         display_path = doc.pending_file_path or doc.file_path
@@ -61,6 +63,11 @@ def _doc_out(doc: Document) -> DocumentOut:
         ),
         chunk_count=doc.chunk_count,
         image_count=image_count,
+        task=(
+            IngestTaskOut.model_validate(task)
+            if task is not None and task.ingest_version == doc.ingest_version
+            else None
+        ),
         last_error_code=doc.last_error_code,
         last_error_message=doc.last_error_message,
         processed_at=doc.processed_at,
@@ -69,29 +76,17 @@ def _doc_out(doc: Document) -> DocumentOut:
     )
 
 
-def _schedule_ingest(background_tasks: BackgroundTasks, doc: Document) -> None:
-    """把候选文件和版本固定到任务参数，旧任务据此识别自己是否已过期。"""
-    candidate_path = doc.pending_file_path or doc.file_path
-    background_tasks.add_task(
-        _run_ingest_task,
-        doc.id,
-        expected_version=doc.ingest_version,
-        candidate_path=candidate_path,
-    )
-
-
-def _run_ingest_task(
-    doc_id: int,
-    *,
-    expected_version: int,
-    candidate_path: str,
+def _schedule_ingest(
+    background_tasks: BackgroundTasks,
+    spec: IngestTaskSpec,
 ) -> None:
+    """调度已持久化的任务；重复调度由原子领取保护。"""
+    background_tasks.add_task(_run_ingest_task, spec)
+
+
+def _run_ingest_task(spec: IngestTaskSpec) -> None:
     """后台任务入口；独立会话由入库模块创建。"""
-    ingest.process_document(
-        doc_id,
-        expected_version=expected_version,
-        candidate_path=candidate_path,
-    )
+    ingest_tasks.run_ingest_task(spec)
 
 
 def _clear_pending(doc: Document) -> None:
@@ -172,6 +167,7 @@ def upload_document(
         doc.pending_file_path = candidate_path
         doc.pending_content_hash = prepared.content_hash
         doc.pending_char_count = len(prepared.text)
+        task, task_spec = ingest_tasks.stage_task(db, doc)
         commit_document(db, doc)
     except VaultTransactionError:
         db.rollback()
@@ -196,8 +192,9 @@ def upload_document(
             _safe_delete(candidate_path)
         raise
     db.refresh(doc)
-    _schedule_ingest(background_tasks, doc)
-    return UploadResult(document=_doc_out(doc), content_changed=True)
+    db.refresh(task)
+    _schedule_ingest(background_tasks, task_spec)
+    return UploadResult(document=_doc_out(doc, task), content_changed=True)
 
 
 @documents_router.post("/{doc_id}/reupload", response_model=UploadResult)
@@ -219,15 +216,20 @@ def reupload_document(
     new_hash = prepared.content_hash
 
     if new_hash == doc.pending_content_hash:
-        result = UploadResult(document=_doc_out(doc), content_changed=False)
         if doc.status in {DocStatus.PENDING.value, DocStatus.PROCESSING.value}:
-            _schedule_ingest(background_tasks, doc)
+            task, task_spec = ingest_tasks.stage_task(db, doc)
+            db.commit()
+            db.refresh(task)
+            _schedule_ingest(background_tasks, task_spec)
+            return UploadResult(document=_doc_out(doc, task), content_changed=False)
+        task = ingest_tasks.current_task(db, doc)
         db.rollback()
-        return result
+        return UploadResult(document=_doc_out(doc, task), content_changed=False)
 
     if new_hash == doc.content_hash:
         if doc.pending_file_path:
             abandoned_path = doc.pending_file_path
+            ingest_tasks.supersede_task(db, doc.id)
             doc.ingest_version += 1
             _clear_pending(doc)
             doc.status = (
@@ -249,10 +251,14 @@ def reupload_document(
             doc.status = DocStatus.PENDING.value
             doc.last_error_code = None
             doc.last_error_message = None
+            task, task_spec = ingest_tasks.stage_task(db, doc)
             _commit_document_and_vault(db, doc)
             db.refresh(doc)
-            _schedule_ingest(background_tasks, doc)
-        return UploadResult(document=_doc_out(doc), content_changed=False)
+            db.refresh(task)
+            _schedule_ingest(background_tasks, task_spec)
+            return UploadResult(document=_doc_out(doc, task), content_changed=False)
+        task = ingest_tasks.current_task(db, doc)
+        return UploadResult(document=_doc_out(doc, task), content_changed=False)
 
     next_version = doc.ingest_version + 1
     try:
@@ -269,6 +275,7 @@ def reupload_document(
     doc.status = DocStatus.PENDING.value                # 内容变更 → 待重建（M2 驱动）
     doc.last_error_code = None
     doc.last_error_message = None
+    task, task_spec = ingest_tasks.stage_task(db, doc)
     try:
         _commit_document_and_vault(db, doc)
     except VaultTransactionError:
@@ -278,10 +285,11 @@ def reupload_document(
         _safe_delete(candidate_path)
         raise
     db.refresh(doc)
+    db.refresh(task)
     if abandoned_path and abandoned_path not in {doc.file_path, candidate_path}:
         _safe_delete(abandoned_path)
-    _schedule_ingest(background_tasks, doc)
-    return UploadResult(document=_doc_out(doc), content_changed=True)
+    _schedule_ingest(background_tasks, task_spec)
+    return UploadResult(document=_doc_out(doc, task), content_changed=True)
 
 
 def _commit_document_and_vault(db: Session, doc: Document) -> None:
@@ -305,7 +313,8 @@ def list_documents(
         status=status.value if status is not None else None,
         title=title,
     )
-    return [_doc_out(doc) for doc in docs]
+    tasks = ingest_tasks.tasks_by_document_ids(db, [doc.id for doc in docs])
+    return [_doc_out(doc, tasks.get(doc.id)) for doc in docs]
 
 
 @documents_router.get("/{doc_id}", response_model=DocumentOut)
@@ -314,7 +323,7 @@ def get_document(doc_id: int, db: Session = Depends(get_db)):
     doc = crud.get_document(db, doc_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
-    return _doc_out(doc)
+    return _doc_out(doc, ingest_tasks.current_task(db, doc))
 
 
 @documents_router.delete("/{doc_id}", status_code=204)

@@ -20,7 +20,7 @@ from app.embedding_profile import (
     EmbeddingProfile,
     EmbeddingProfileError,
 )
-from app.models import AppMetadata, Chunk, Document, KnowledgeBase
+from app.models import AppMetadata, Chunk, Document, IngestTask, KnowledgeBase
 
 from .context import current_request_id
 from .local_logging import (
@@ -58,6 +58,7 @@ def build_diagnostic_report(
     kb_count: int | None = None
     chunk_count: int | None = None
     document_counts: dict[str, int] = {}
+    task_counts: dict[str, int] = {}
     profile_label = "not-recorded"
 
     try:
@@ -71,6 +72,14 @@ def build_diagnostic_report(
                 select(Document.status, func.count())
                 .group_by(Document.status)
                 .order_by(Document.status)
+            ).all()
+        }
+        task_counts = {
+            str(status): int(count)
+            for status, count in db.execute(
+                select(IngestTask.status, func.count())
+                .group_by(IngestTask.status)
+                .order_by(IngestTask.status)
             ).all()
         }
         profile_row = db.get(AppMetadata, PROFILE_KEY)
@@ -96,6 +105,10 @@ def build_diagnostic_report(
         f"{status}:{document_counts.get(status, 0)}"
         for status in ("pending", "processing", "ready", "failed")
     )
+    task_status_text = ",".join(
+        f"{status}:{task_counts.get(status, 0)}"
+        for status in ("queued", "running", "succeeded", "failed", "superseded")
+    )
     lines = [
         "KnowBase diagnostics",
         f"generated_utc: {generated}",
@@ -109,6 +122,7 @@ def build_diagnostic_report(
         f"data_location: {_data_location(config)}",
         f"knowledge_bases: {_optional_count(kb_count)}",
         f"documents: {status_text if database_status == 'ok' else 'unavailable'}",
+        f"ingest_tasks: {task_status_text if database_status == 'ok' else 'unavailable'}",
         f"chunks: {_optional_count(chunk_count)}",
         f"embedding_profile: {profile_label}",
         f"llm_model: {llm_model}",
