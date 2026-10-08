@@ -108,7 +108,7 @@ def graph_pairs(
                 candidate,
                 cosine_similarity(source.embedding, candidate.embedding),
             )
-            for candidate in rows
+            for candidate in pool
             if candidate.doc_id != source.doc_id
         ]
         neighbors.sort(key=lambda item: (-item[1], item[0].id))

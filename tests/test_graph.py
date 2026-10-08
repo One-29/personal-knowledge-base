@@ -175,3 +175,47 @@ def test_graph_source_pool_samples_documents_in_rounds(db, chunk_counts, max_chu
     assert Counter(row.source_doc for row in rows) == {
         doc.id: expected for doc, expected in zip(docs, expected_counts)
     }
+
+
+def test_graph_neighbors_are_limited_to_sampled_pool(db):
+    """截断图的目标块也必须来自采样池，避免预算退化为对全库扫描。"""
+    kb = KnowledgeBase(name="图目标池测试")
+    db.add(kb)
+    db.flush()
+    vectors = (
+        [1.0] + [0.0] * (settings.embedding_dimension - 1),
+        [0.0, 1.0] + [0.0] * (settings.embedding_dimension - 2),
+        [1.0] + [0.0] * (settings.embedding_dimension - 1),
+    )
+    docs = []
+    for slot, vector in enumerate(vectors):
+        doc = Document(
+            kb_id=kb.id,
+            title=f"目标池{slot}.md",
+            file_path=f"unused-target-{slot}.md",
+            content_hash=f"target-pool-{slot}",
+            char_count=1,
+        )
+        db.add(doc)
+        db.flush()
+        docs.append(doc)
+        db.add(Chunk(
+            kb_id=kb.id,
+            doc_id=doc.id,
+            chunk_index=0,
+            content="块",
+            char_start=0,
+            char_end=1,
+            embedding=vector,
+        ))
+    db.flush()
+
+    rows = db.execute(
+        graph._PAIRS_SQL,
+        {"kb_id": kb.id, "max_chunks": 2, "top_k": 1, "min_similarity": 0.0},
+    ).all()
+
+    sampled_doc_ids = {docs[0].id, docs[1].id}
+    assert rows
+    assert {row.source_doc for row in rows} <= sampled_doc_ids
+    assert {row.target_doc for row in rows} <= sampled_doc_ids

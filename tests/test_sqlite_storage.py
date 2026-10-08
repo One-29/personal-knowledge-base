@@ -18,6 +18,7 @@ from app.database.schema import UnsupportedSchemaVersion
 from app.db import Base
 from app.ingest_tasks import stage_task
 from app.models import Chunk, Document, IngestTask, KnowledgeBase
+from app.search import sqlite as sqlite_search
 
 
 @dataclass(frozen=True)
@@ -267,6 +268,35 @@ def test_sqlite_vector_search_and_graph_are_deterministic(sqlite_harness):
             {edge.source, edge.target} == {first_doc.id, second_doc.id}
             for edge in result.edges
         )
+
+
+def test_sqlite_graph_neighbors_are_limited_to_sampled_pool(sqlite_harness):
+    """SQLite 与 PostgreSQL 使用同一个封闭采样池计算截断图。"""
+    with sqlite_harness.session() as db:
+        kb = KnowledgeBase(name="SQLite 图目标池")
+        db.add(kb)
+        db.flush()
+        first_doc, _first = _add_chunk(db, kb, "一.md", "一", [1.0, 0.0])
+        second_doc, _second = _add_chunk(db, kb, "二.md", "二", [0.0, 1.0])
+        third_doc, _third = _add_chunk(db, kb, "三.md", "三", [1.0, 0.0])
+
+        pairs = sqlite_search.graph_pairs(
+            db,
+            kb.id,
+            top_k=1,
+            min_similarity=0.0,
+            max_chunks=2,
+        )
+
+        sampled_doc_ids = {first_doc.id, second_doc.id}
+        assert pairs
+        assert {pair.source_doc for pair in pairs} <= sampled_doc_ids
+        assert {pair.target_doc for pair in pairs} <= sampled_doc_ids
+        assert third_doc.id not in {
+            doc_id
+            for pair in pairs
+            for doc_id in (pair.source_doc, pair.target_doc)
+        }
 
 
 def test_sqlite_data_survives_engine_restart(sqlite_harness):
