@@ -72,8 +72,8 @@ GRAPH_PAIRS_SQL = text("""
     FROM pool p
     JOIN LATERAL (
         SELECT c2.doc_id, c2.embedding
-        FROM chunks c2
-        WHERE c2.kb_id = :kb_id AND c2.doc_id <> p.doc_id
+        FROM pool c2
+        WHERE c2.doc_id <> p.doc_id
         ORDER BY c2.embedding <=> p.embedding
         LIMIT :top_k
     ) n ON true
