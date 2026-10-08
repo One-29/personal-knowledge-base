@@ -294,6 +294,8 @@ def test_run_workflow_api_contract(client, db, no_l1_threshold, monkeypatch):
 
 def test_workflow_empty_task_422(client):
     assert client.post("/api/v1/workflow", json={"task": ""}).status_code == 422
+    assert client.post("/api/v1/workflow", json={"task": "  \n "}).status_code == 422
+    assert client.post("/api/v1/workflow", json={"task": "坏\x00任务"}).status_code == 422
 
 
 def test_workflow_recovers_after_database_error(db, monkeypatch):

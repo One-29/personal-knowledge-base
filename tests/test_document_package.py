@@ -13,6 +13,7 @@ from sqlalchemy import select
 from app import ingest, package_storage, storage
 from app.core.config import settings
 from app.document_io import UploadValidationError, prepare_upload
+from app.document_io.image_validation import validate_image
 from app.models import Chunk, Document
 
 
@@ -121,6 +122,25 @@ def test_prepare_upload_enforces_limits_even_without_http_reader(monkeypatch):
     monkeypatch.setattr(settings, "max_upload_bytes", 3)
     with pytest.raises(UploadValidationError, match="大小上限") as exc_info:
         prepare_upload("too-large.md", b"1234")
+    assert exc_info.value.status_code == 413
+
+
+def test_package_rejects_markdown_title_exceeding_database_limit():
+    source = f"{'a' * 253}.md"
+    payload = _zip({source: b"![x](x.png)", "x.png": PNG})
+
+    with pytest.raises(UploadValidationError, match="255"):
+        prepare_upload("package.zip", payload)
+
+
+def test_pillow_decompression_bomb_is_reported_as_size_limit(monkeypatch):
+    def raise_bomb(*_args, **_kwargs):
+        raise Image.DecompressionBombError("too many pixels")
+
+    monkeypatch.setattr(Image, "open", raise_bomb)
+
+    with pytest.raises(UploadValidationError, match="像素数量") as exc_info:
+        validate_image("huge.png", PNG)
     assert exc_info.value.status_code == 413
 
 

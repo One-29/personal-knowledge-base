@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .evidence import AnswerStatus, EvidenceBand
 
@@ -24,7 +24,20 @@ class DocStatus(str, Enum):
     FAILED = "failed"
 
 
-class KnowledgeBaseCreate(BaseModel):
+class _CleanInputModel(BaseModel):
+    """统一清理 API 文本输入，避免各数据库对空白和 NUL 的处理分叉。"""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    @field_validator("*")
+    @classmethod
+    def reject_nul(cls, value):
+        if isinstance(value, str) and "\x00" in value:
+            raise ValueError("文本不能包含 NUL 字符")
+        return value
+
+
+class KnowledgeBaseCreate(_CleanInputModel):
     name: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, min_length=1, max_length=500)
 
@@ -112,14 +125,14 @@ class UploadResult(BaseModel):
     content_changed: bool
 
 
-class TurnIn(BaseModel):
+class TurnIn(_CleanInputModel):
     """一轮历史问答（前端持久化后随请求回传，用于追问改写）。"""
 
-    question: str = Field(max_length=500)
-    answer: str = Field(max_length=4000)
+    question: str = Field(min_length=1, max_length=500)
+    answer: str = Field(min_length=1, max_length=4000)
 
 
-class AskRequest(BaseModel):
+class AskRequest(_CleanInputModel):
     """问答请求（M3 契约 §3）。kb_id 为 None 表示全库检索。
 
     对话历史由前端持久化并回传（history）：服务端保持无状态——
@@ -229,7 +242,7 @@ class CitationDetailOut(BaseModel):
     images: list[DocumentImageOut] = Field(default_factory=list)
 
 
-class WorkflowRequest(BaseModel):
+class WorkflowRequest(_CleanInputModel):
     """多步任务请求（05 §4）。kb_id 缺省表示全库。"""
 
     task: str = Field(min_length=1, max_length=500)

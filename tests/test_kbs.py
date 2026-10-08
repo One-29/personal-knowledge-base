@@ -1,6 +1,7 @@
 """知识库 CRUD 端点测试（US-M1-01、M1 契约 §3）。"""
 
 from sqlalchemy import event
+from sqlalchemy.exc import IntegrityError
 
 
 def _create_kb(client, name: str = "计算机网络", description: str | None = "计网笔记"):
@@ -26,8 +27,46 @@ def test_create_kb_duplicate_409(client):
 
 
 def test_create_kb_invalid_422(client):
-    """空名称 → 422（Pydantic 校验 min_length=1）。"""
+    """空白名称和数据库不兼容的 NUL 字符都在 API 边界拒绝。"""
     assert _create_kb(client, name="").status_code == 422
+    assert _create_kb(client, name="   \n").status_code == 422
+    assert _create_kb(client, name="坏\x00名称").status_code == 422
+
+
+def test_create_kb_trims_human_input(client):
+    response = _create_kb(client, name="  高等数学  ", description="  极限与积分  ")
+
+    assert response.status_code == 201
+    assert response.json()["name"] == "高等数学"
+    assert response.json()["description"] == "极限与积分"
+
+
+def test_create_kb_concurrent_duplicate_returns_409(client, db, monkeypatch):
+    """两个请求同时通过预检时，数据库唯一约束仍应转换为业务冲突。"""
+    from app.routers import kbs
+
+    lookups = iter([None, object()])
+    monkeypatch.setattr(kbs.crud, "get_kb_by_name", lambda *_args: next(lookups))
+
+    def fail_create(*_args):
+        raise IntegrityError("INSERT knowledge_bases", {}, Exception("duplicate"))
+
+    monkeypatch.setattr(kbs.crud, "create_kb", fail_create)
+    rollbacks = 0
+    real_rollback = db.rollback
+
+    def record_rollback():
+        nonlocal rollbacks
+        rollbacks += 1
+        real_rollback()
+
+    monkeypatch.setattr(db, "rollback", record_rollback)
+
+    response = _create_kb(client, name="并发同名")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "知识库名称已存在"
+    assert rollbacks == 1
 
 
 def test_list_kbs_returns_created(client):

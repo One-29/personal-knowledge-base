@@ -21,6 +21,7 @@ from fastapi import (
     Response,
     UploadFile,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import crud, ingest_tasks, package_storage, storage
@@ -159,9 +160,9 @@ def upload_document(
         ingest_version=1,
     )
     db.add(doc)
-    db.flush()                                          # 分配 doc_id（事务未提交）
     candidate_path: str | None = None
     try:
+        db.flush()                                      # 分配 doc_id（事务未提交）
         candidate_path = _save_candidate(prepared, kb_id, doc.id, doc.ingest_version)
         doc.file_path = candidate_path
         doc.pending_file_path = candidate_path
@@ -186,6 +187,18 @@ def upload_document(
             _safe_delete(candidate_path)
         logger.exception("原文写入失败: kb_id=%s title=%s", kb_id, title)
         raise HTTPException(status_code=500, detail="原文写入失败") from None
+    except IntegrityError:
+        db.rollback()
+        if candidate_path:
+            _safe_delete(candidate_path)
+        if crud.get_document_by_title(db, kb_id, title) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="同库同名文档已存在，请使用重传接口",
+            ) from None
+        if crud.get_kb(db, kb_id) is None:
+            raise HTTPException(status_code=404, detail="知识库不存在") from None
+        raise
     except Exception:
         db.rollback()
         if candidate_path:

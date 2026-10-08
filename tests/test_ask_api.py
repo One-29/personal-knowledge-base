@@ -362,8 +362,10 @@ def test_ask_unknown_kb_404(client, fake_llm):
 
 
 def test_ask_empty_question_422(client, fake_llm):
-    """空问题 → 422（Pydantic 校验）。"""
+    """空白问题与 NUL 字符 → 422，不进入模型调用。"""
     assert client.post("/api/v1/ask", json={"question": ""}).status_code == 422
+    assert client.post("/api/v1/ask", json={"question": "  \n "}).status_code == 422
+    assert client.post("/api/v1/ask", json={"question": "坏\x00问题"}).status_code == 422
 
 
 def test_ask_all_kbs_without_kb_id(client, db, fake_llm, no_l1_threshold):
