@@ -7,7 +7,7 @@
 4. **L1 双阈值证据门**：低相关拒答，中间灰区只展示候选，高相关才进入生成
 5. LLM 生成带 [n] 标注的回答（灰区不会调用模型）
 6. **L2 引用校验**：越界或零引用 → 拒答（严格策略，04 §5）
-7. 记录可供下一轮追问改写的结果；灰区只返回候选原文且不进入改写历史；
+7. 只记录通过校验的回答供下一轮追问改写；所有拒答都不进入历史；
    组装 Answer（含 citations 供前端溯源）
 
 拒答是正常业务结果（HTTP 200 + refused=true），不是错误。
@@ -428,12 +428,9 @@ def _finish(
     result: AnswerData,
     search_query: str,
 ) -> AnswerData:
-    """记录可用于追问改写的轮次并返回。
-
-    普通拒答仍保留原行为；灰区没有形成事实性回答，不能进入下一轮改写上下文。
-    """
+    """只记录通过两级证据校验的回答，拒答不能成为下一轮的事实前提。"""
     result.search_query = search_query
-    if session_id and result.status is not AnswerStatus.NEEDS_REVIEW:
+    if session_id and result.status is AnswerStatus.ANSWERED:
         store.append(session_id, SessionTurn(question=result.question, answer=result.content))
     return result
 

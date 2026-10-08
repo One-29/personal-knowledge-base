@@ -19,10 +19,11 @@ import type {
 } from "./types";
 let conversations: ConversationStore;
 let savedTimer: number | null = null;
+let storageWarningShown = false;
 
-function flashSaved(): void {
+function flashSaved(persistent: boolean): void {
   const status = byId("ask-saved");
-  status.textContent = "已保存到本地";
+  status.textContent = persistent ? "已保存到本地" : "仅保留在当前窗口";
   if (savedTimer !== null) window.clearTimeout(savedTimer);
   savedTimer = window.setTimeout(() => { status.textContent = ""; }, 1800);
 }
@@ -57,7 +58,12 @@ function rememberTurn(
   const saved = conversations.remember(conversationId, turn);
   if (saved) {
     renderConversationSelect();
-    flashSaved();
+    const persistent = conversations.isPersistent();
+    flashSaved(persistent);
+    if (!persistent && !storageWarningShown) {
+      storageWarningShown = true;
+      notify("浏览器本地存储不可用；本次会话会保留到当前窗口关闭", true);
+    }
   }
   return saved;
 }

@@ -236,14 +236,64 @@ function defaultId(): string {
 }
 
 export class ConversationStore {
+  private serializedConversations: string;
+  private activeConversationId: string | null;
+  private storageAvailable: boolean;
+
   constructor(
-    private readonly storage: Storage,
+    private readonly storage: Storage | null,
     private readonly idFactory: IdFactory = defaultId,
-  ) {}
+  ) {
+    this.storageAvailable = storage !== null;
+    this.serializedConversations = this.readItem(CONVERSATIONS_KEY) ?? "[]";
+    this.activeConversationId = this.readItem(ACTIVE_CONVERSATION_KEY);
+  }
+
+  private readItem(key: string): string | null {
+    if (!this.storageAvailable || this.storage === null) return null;
+    try {
+      return this.storage.getItem(key);
+    } catch {
+      this.storageAvailable = false;
+      return null;
+    }
+  }
+
+  private writeItem(key: string, value: string): boolean {
+    if (!this.storageAvailable || this.storage === null) return false;
+    try {
+      this.storage.setItem(key, value);
+      return true;
+    } catch {
+      this.storageAvailable = false;
+      return false;
+    }
+  }
+
+  private removeItem(key: string): boolean {
+    if (!this.storageAvailable || this.storage === null) return false;
+    try {
+      this.storage.removeItem(key);
+      return true;
+    } catch {
+      this.storageAvailable = false;
+      return false;
+    }
+  }
+
+  private setActive(id: string | null): void {
+    this.activeConversationId = id;
+    if (id === null) this.removeItem(ACTIVE_CONVERSATION_KEY);
+    else this.writeItem(ACTIVE_CONVERSATION_KEY, id);
+  }
+
+  isPersistent(): boolean {
+    return this.storageAvailable;
+  }
 
   load(): Conversation[] {
     try {
-      const parsed: unknown = JSON.parse(this.storage.getItem(CONVERSATIONS_KEY) ?? "[]");
+      const parsed: unknown = JSON.parse(this.serializedConversations);
       return Array.isArray(parsed)
         ? parsed
           .map(parseConversation)
@@ -254,16 +304,17 @@ export class ConversationStore {
     }
   }
 
-  persist(conversations: Conversation[]): void {
-    this.storage.setItem(
-      CONVERSATIONS_KEY,
-      JSON.stringify(conversations.slice(0, MAX_CONVERSATIONS)),
+  persist(conversations: Conversation[]): boolean {
+    this.serializedConversations = JSON.stringify(
+      conversations.slice(0, MAX_CONVERSATIONS),
     );
+    return this.writeItem(CONVERSATIONS_KEY, this.serializedConversations);
   }
 
   active(): Conversation | null {
-    const activeId = this.storage.getItem(ACTIVE_CONVERSATION_KEY);
-    return this.load().find((conversation) => conversation.id === activeId) ?? null;
+    return this.load().find(
+      (conversation) => conversation.id === this.activeConversationId,
+    ) ?? null;
   }
 
   start(): Conversation {
@@ -276,7 +327,7 @@ export class ConversationStore {
     const conversations = this.load().filter((item) => item.id !== conversation.id);
     conversations.unshift(conversation);
     this.persist(conversations);
-    this.storage.setItem(ACTIVE_CONVERSATION_KEY, conversation.id);
+    this.setActive(conversation.id);
     return conversation;
   }
 
@@ -286,17 +337,16 @@ export class ConversationStore {
 
   use(id: string): boolean {
     if (!this.load().some((conversation) => conversation.id === id)) return false;
-    this.storage.setItem(ACTIVE_CONVERSATION_KEY, id);
+    this.setActive(id);
     return true;
   }
 
   drop(id: string): void {
     const conversations = this.load().filter((conversation) => conversation.id !== id);
     this.persist(conversations);
-    if (this.storage.getItem(ACTIVE_CONVERSATION_KEY) !== id) return;
+    if (this.activeConversationId !== id) return;
     const first = conversations[0];
-    if (first === undefined) this.storage.removeItem(ACTIVE_CONVERSATION_KEY);
-    else this.storage.setItem(ACTIVE_CONVERSATION_KEY, first.id);
+    this.setActive(first?.id ?? null);
   }
 
   remember(conversationId: string, turn: ConversationTurn): boolean {

@@ -1,6 +1,7 @@
 import { api, ApiError } from "./api";
 import { byId, queryAll, queryOne } from "./dom";
 import { escapeHtml, friendlyError } from "./format";
+import { readLocalValue, writeLocalValue } from "./local-storage";
 import { notify } from "./notifications";
 import type {
   Citation,
@@ -16,7 +17,7 @@ const marginItems = new Map<string, HTMLElement>();
 export function setEvidenceOpen(open: boolean, persist = true): void {
   byId("app-shell").classList.toggle("evidence-collapsed", !open);
   byId<HTMLButtonElement>("margin-open").setAttribute("aria-expanded", String(open));
-  if (persist) localStorage.setItem(EVIDENCE_KEY, open ? "1" : "0");
+  if (persist) writeLocalValue(EVIDENCE_KEY, open ? "1" : "0");
 }
 
 function updateEvidenceState(): void {
@@ -265,7 +266,7 @@ export function bindCitations(scope: ParentNode, citations: Citation[]): void {
 
 function initResizer(): void {
   const resizer = byId("margin-resizer");
-  const saved = localStorage.getItem(MARGIN_WIDTH_KEY);
+  const saved = readLocalValue(MARGIN_WIDTH_KEY);
   if (saved !== null) {
     const width = Math.max(300, Math.min(520, Number.parseInt(saved, 10) || 356));
     document.documentElement.style.setProperty("--margin-width", `${width}px`);
@@ -279,7 +280,7 @@ function initResizer(): void {
     if (!dragging) return;
     dragging = false;
     resizer.classList.remove("on");
-    localStorage.setItem(
+    writeLocalValue(
       MARGIN_WIDTH_KEY,
       getComputedStyle(document.documentElement).getPropertyValue("--margin-width").trim(),
     );
@@ -309,7 +310,7 @@ export function initEvidence(): void {
   );
   initResizer();
   updateEvidenceState();
-  const savedEvidence = localStorage.getItem(EVIDENCE_KEY);
+  const savedEvidence = readLocalValue(EVIDENCE_KEY);
   const evidenceOpen = window.innerWidth > 1020
     && (savedEvidence === null || savedEvidence === "1");
   setEvidenceOpen(evidenceOpen, false);

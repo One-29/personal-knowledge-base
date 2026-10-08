@@ -182,6 +182,36 @@ def test_l1_gray_zone_exposes_candidates_without_calling_llm_or_storing_history(
     assert store.history("gray-session") == []
 
 
+@pytest.mark.parametrize(
+    "status",
+    [
+        AnswerStatus.NEEDS_REVIEW,
+        AnswerStatus.INSUFFICIENT,
+        AnswerStatus.UNVERIFIED,
+        AnswerStatus.ERROR,
+    ],
+)
+def test_only_answered_results_enter_legacy_session_history(status):
+    """拒答文案不是事实，不能被下一轮改写当作已确认的回答。"""
+    store = ask.session.SessionStore(ttl_seconds=60, max_turns=5)
+    result = ask.AnswerData(question="问题", content="拒答说明", status=status)
+
+    ask._finish(store, "legacy-session", result, "检索问题")
+
+    assert store.history("legacy-session") == []
+
+
+def test_answered_result_enters_legacy_session_history():
+    store = ask.session.SessionStore(ttl_seconds=60, max_turns=5)
+    result = ask.AnswerData(question="问题", content="可信回答 [1]")
+
+    ask._finish(store, "legacy-session", result, "检索问题")
+
+    assert [(turn.question, turn.answer) for turn in store.history("legacy-session")] == [
+        ("问题", "可信回答 [1]"),
+    ]
+
+
 def test_l2_refuse_on_invalid_citation(db, client, no_l1_threshold):
     """引用越界 → L2 拒答（invalid_citation，严格策略）。"""
     kb = client.post("/api/v1/kbs", json={"name": "计算机网络"}).json()["id"]
