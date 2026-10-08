@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from . import ask as ask_service
 from . import generation
 from .core.config import settings
-from .diagnostics import timed_stage
+from .diagnostics import current_request_id, timed_stage
 from .evidence import AnswerStatus, CitationData, EvidenceCandidateData
 from .generation import LLMError, LLMProvider
 
@@ -156,13 +156,13 @@ def run_workflow(
         except ask_service.KnowledgeBaseNotFound:
             db.rollback()
             raise                                     # 库不存在是整体性错误，不降级为单步故障
-        except Exception as exc:                     # 单步技术故障不中断后续步骤
+        except Exception:                            # 单步技术故障不中断后续步骤
             db.rollback()
             logger.exception("工作流第 %d 步执行失败", index)
             steps.append(
                 WorkflowStepData(
                     index=index, goal=plan.goal, query=plan.query,
-                    status=STEP_ERROR, note=f"该步执行失败：{exc}",
+                    status=STEP_ERROR, note=_step_error_note(),
                 )
             )
             continue
@@ -207,6 +207,13 @@ def run_workflow(
     with timed_stage("workflow.synthesis", steps=len(steps)):
         answer_text, citations = synthesize(task, steps)
     return WorkflowResultData(task=task, steps=steps, answer=answer_text, citations=citations)
+
+
+def _step_error_note() -> str:
+    """给界面返回可排障但不含 SQL、路径或供应商响应的故障说明。"""
+    request_id = current_request_id()
+    suffix = f"（请求 ID：{request_id}）" if request_id != "-" else ""
+    return f"该步执行失败，请重试或复制诊断信息{suffix}"
 
 
 # ── 汇总（AW4：规则化 + 全局统一编号） ───────────────────────

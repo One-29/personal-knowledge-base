@@ -141,7 +141,9 @@ class AskRequest(_CleanInputModel):
 
     question: str = Field(min_length=1, max_length=500)
     kb_id: int | None = None
-    session_id: str | None = None
+    # 兼容旧客户端的进程内会话键。浏览器的新会话机制以 history 为准；
+    # 仍需限制这个键，避免任意大字符串长期驻留在 SessionStore 的字典中。
+    session_id: str | None = Field(default=None, min_length=1, max_length=128)
     history: list[TurnIn] | None = Field(default=None, max_length=10)
 
 

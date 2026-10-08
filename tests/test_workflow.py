@@ -171,6 +171,37 @@ def test_run_workflow_continues_after_step_error(db, client, no_l1_threshold, mo
     assert result.steps[1].status == "answered"              # 后续步骤照常执行
 
 
+def test_workflow_step_error_does_not_expose_internal_exception(monkeypatch):
+    """单步降级响应不能泄漏 SQL、参数、本机路径或供应商错误正文。"""
+    from app.diagnostics.context import bind_request_id, reset_request_id
+
+    class Session:
+        def rollback(self):
+            pass
+
+    secret_detail = "postgresql://user:secret@localhost/private"
+
+    def fail_step(*args, **kwargs):
+        raise RuntimeError(secret_detail)
+
+    monkeypatch.setattr(workflow.ask_service, "validate_kb", lambda *args: None)
+    monkeypatch.setattr(workflow.ask_service, "answer_question", fail_step)
+    token = bind_request_id("safe-request-123")
+    try:
+        result = workflow.run_workflow(
+            Session(),
+            "任务",
+            None,
+            llm=_ScriptedLLM(['[{"goal":"检查","query":"q"}]']),
+        )
+    finally:
+        reset_request_id(token)
+
+    note = result.steps[0].note or ""
+    assert secret_detail not in note
+    assert note == "该步执行失败，请重试或复制诊断信息（请求 ID：safe-request-123）"
+
+
 def test_workflow_keeps_gray_step_distinct_and_continues(db, monkeypatch):
     from app.ask import AnswerData
     from app.evidence import AnswerStatus
