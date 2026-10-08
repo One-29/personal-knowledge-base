@@ -10,6 +10,7 @@ from threading import Event
 import httpx
 import pytest
 from fastapi import FastAPI
+from sqlalchemy.exc import IntegrityError
 
 MD = ("tcp.md", "# TCP\n三次握手与四次挥手", "text/markdown")
 
@@ -96,6 +97,33 @@ def test_upload_409_duplicate_title(client):
     assert _upload(client, kb_id).status_code == 409
 
 
+def test_upload_concurrent_duplicate_returns_409(client, db, monkeypatch):
+    """并发上传撞上 UNIQUE(kb_id,title) 时不得泄漏成 500。"""
+    from app.routers import documents
+
+    kb_id = _create_kb(client)
+    lookups = iter([None, object()])
+    monkeypatch.setattr(
+        documents.crud,
+        "get_document_by_title",
+        lambda *_args: next(lookups),
+    )
+    real_flush = db.flush
+
+    def fail_new_document_flush(*args, **kwargs):
+        if db.new:
+            raise IntegrityError("INSERT documents", {}, Exception("duplicate"))
+        return real_flush(*args, **kwargs)
+
+    monkeypatch.setattr(db, "flush", fail_new_document_flush)
+
+    response = _upload(client, kb_id)
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "同库同名文档已存在，请使用重传接口"
+    assert not db.new
+
+
 def test_upload_422_unsupported_format(client):
     """非 .md/.txt → 422。"""
     kb_id = _create_kb(client)
@@ -112,6 +140,39 @@ def test_upload_422_non_utf8_content(client):
     )
     assert response.status_code == 422
     assert response.json()["detail"] == "文件编码需为 UTF-8"
+
+
+def test_upload_422_nul_content(client):
+    """PostgreSQL 不能存储 NUL；SQLite 路径也必须在同一边界拒绝。"""
+    kb_id = _create_kb(client)
+    response = _upload(
+        client,
+        kb_id,
+        ("nul.md", b"valid utf-8\x00hidden", "text/markdown"),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "文本不能包含 NUL 字符"
+
+
+def test_upload_422_filename_exceeding_database_limit(client):
+    kb_id = _create_kb(client)
+    filename = f"{'a' * 253}.md"
+
+    response = _upload(client, kb_id, (filename, b"content", "text/markdown"))
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "文件名不能超过 255 个字符"
+
+
+def test_upload_accepts_filename_at_database_limit(client):
+    kb_id = _create_kb(client)
+    filename = f"{'a' * 252}.md"
+
+    response = _upload(client, kb_id, (filename, b"content", "text/markdown"))
+
+    assert response.status_code == 201
+    assert response.json()["document"]["title"] == filename
 
 
 def test_upload_400_empty_content(client):

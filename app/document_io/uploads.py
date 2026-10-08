@@ -195,7 +195,7 @@ def _prepare_zip(payload: bytes) -> PreparedDocument:
             for index, (raw, asset_path) in enumerate(resolved_occurrences, start=1)
         )
         return PreparedDocument(
-            title=PurePosixPath(source_path).name,
+            title=_upload_name(source_path),
             source_bytes=source_bytes,
             text=text,
             content_hash=calculate_package_hash(
@@ -211,15 +211,20 @@ def _prepare_zip(payload: bytes) -> PreparedDocument:
 
 def _upload_name(filename: str | None) -> str:
     normalized = (filename or "").replace("\\", "/")
-    title = PurePosixPath(normalized).name
+    title = unicodedata.normalize("NFC", PurePosixPath(normalized).name)
     if not title or title in {".", ".."} or any(ord(char) < 32 for char in title):
         raise UploadValidationError("文件名无效")
+    if len(title) > 255:
+        raise UploadValidationError("文件名不能超过 255 个字符")
     # 浏览器可能传 C:\\fakepath\\name.md；只保留 basename，再统一 Unicode。
-    return unicodedata.normalize("NFC", title)
+    return title
 
 
 def _decode_markdown(payload: bytes) -> str:
     try:
-        return payload.decode("utf-8")
+        text = payload.decode("utf-8")
     except UnicodeDecodeError:
         raise UploadValidationError("文件编码需为 UTF-8") from None
+    if "\x00" in text:
+        raise UploadValidationError("文本不能包含 NUL 字符")
+    return text

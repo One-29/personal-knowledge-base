@@ -42,6 +42,10 @@ def validate_image(path: str, data: bytes) -> tuple[str, str, int, int]:
             image.load()
     except UploadValidationError:
         raise
+    except Image.DecompressionBombError:
+        raise UploadValidationError(
+            f"图片像素数量超过上限：{path}", status_code=413
+        ) from None
     except (EOFError, UnidentifiedImageError, OSError, SyntaxError, ValueError):
         raise UploadValidationError(f"图片文件已损坏或无法解码：{path}") from None
 

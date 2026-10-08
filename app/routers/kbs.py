@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import crud, storage
@@ -25,7 +26,14 @@ def _kb_out(kb: KnowledgeBase) -> KnowledgeBaseOut:
 def create_kb(data: KnowledgeBaseCreate, db: Session = Depends(get_db)):
     if crud.get_kb_by_name(db, data.name):        # 重名检查：数据层先查
         raise HTTPException(status_code=409, detail="知识库名称已存在")
-    return _kb_out(crud.create_kb(db, data))
+    try:
+        return _kb_out(crud.create_kb(db, data))
+    except IntegrityError:
+        # 并发请求可能同时通过上面的友好预检；数据库 UNIQUE 才是最终裁决者。
+        db.rollback()
+        if crud.get_kb_by_name(db, data.name) is not None:
+            raise HTTPException(status_code=409, detail="知识库名称已存在") from None
+        raise
 
 
 @router.get("", response_model=list[KnowledgeBaseOut])
