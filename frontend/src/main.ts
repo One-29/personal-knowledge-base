@@ -6,6 +6,7 @@ import { initEvidence } from "./evidence";
 import { friendlyError } from "./format";
 import { initGraph, loadGraph } from "./graph";
 import { initLibrary, loadDocuments, loadKnowledgeBases } from "./library";
+import { browserLocalStorage } from "./local-storage";
 import { activateView, initNavigation, isViewName } from "./navigation";
 import { notify } from "./notifications";
 import { checkService, initServiceStatus, markServiceOffline } from "./service-status";
@@ -17,7 +18,7 @@ async function start(): Promise<void> {
   initGraph();
   initLibrary();
   initNavigation({ docs: loadDocuments, map: loadGraph });
-  initTasks(new ConversationStore(window.localStorage));
+  initTasks(new ConversationStore(browserLocalStorage()));
   initServiceStatus();
   void checkService();
 

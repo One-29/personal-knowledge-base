@@ -21,6 +21,7 @@ const DOCUMENT_STATUS: Record<DocumentStatus, string> = {
 };
 
 type EmptyAction = "upload" | "reset" | "create";
+let documentsRequestId = 0;
 
 export async function loadKnowledgeBases(): Promise<void> {
   state.kbs = await api<KnowledgeBase[]>("/kbs");
@@ -228,10 +229,12 @@ async function deleteDocument(id: string): Promise<void> {
 }
 
 export async function loadDocuments({ quiet = false }: { quiet?: boolean } = {}): Promise<void> {
+  const requestId = ++documentsRequestId;
   if (state.docsPoll !== null) window.clearTimeout(state.docsPoll);
   state.docsPoll = null;
   const loading = byId("docs-loading");
   if (state.docsKbId === null) {
+    loading.classList.add("hidden");
     state.docs = [];
     updateDocumentStats([]);
     showDocumentsEmpty("先创建一个知识库", "知识库用于组织文档，也是问答和关联图的检索范围。", "create");
@@ -246,7 +249,7 @@ export async function loadDocuments({ quiet = false }: { quiet?: boolean } = {})
   }
   try {
     const documents = await api<KnowledgeDocument[]>(`/kbs/${requestedKnowledgeBase}/documents`);
-    if (state.docsKbId !== requestedKnowledgeBase) return;
+    if (requestId !== documentsRequestId || state.docsKbId !== requestedKnowledgeBase) return;
     state.docs = documents;
     renderDocuments();
     const hasPending = documents.some(
@@ -256,13 +259,13 @@ export async function loadDocuments({ quiet = false }: { quiet?: boolean } = {})
       state.docsPoll = window.setTimeout(() => { void loadDocuments({ quiet: true }); }, 2200);
     }
   } catch (error) {
-    if (state.docsKbId !== requestedKnowledgeBase) return;
+    if (requestId !== documentsRequestId || state.docsKbId !== requestedKnowledgeBase) return;
     state.docs = [];
     updateDocumentStats([]);
     showDocumentsEmpty("文档列表读取失败", friendlyError(error, "读取文档"), "reset");
     notify(friendlyError(error, "读取文档"), true);
   } finally {
-    loading.classList.add("hidden");
+    if (requestId === documentsRequestId) loading.classList.add("hidden");
   }
 }
 

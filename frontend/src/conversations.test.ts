@@ -31,6 +31,15 @@ class MemoryStorage implements Storage {
   }
 }
 
+class FailingWriteStorage extends MemoryStorage {
+  failWrites = false;
+
+  override setItem(key: string, value: string): void {
+    if (this.failWrites) throw new DOMException("quota exceeded", "QuotaExceededError");
+    super.setItem(key, value);
+  }
+}
+
 function answer(content = "answer"): AnswerResponse {
   return {
     question: "question",
@@ -111,5 +120,25 @@ describe("ConversationStore", () => {
     const active = store.active();
     expect(active?.turns).toHaveLength(2);
     expect(store.history(active!)).toEqual([{ question: "q1", answer: "a1" }]);
+  });
+
+  it("keeps a completed answer in memory when persistent storage becomes full", () => {
+    const storage = new FailingWriteStorage();
+    const store = new ConversationStore(storage, () => "c-1");
+    const conversation = store.start();
+    storage.failWrites = true;
+
+    expect(store.remember(conversation.id, turn(1))).toBe(true);
+    expect(store.isPersistent()).toBe(false);
+    expect(store.active()?.turns.map((item) => item.question)).toEqual(["q1"]);
+  });
+
+  it("works as an in-memory store when local storage is unavailable", () => {
+    const store = new ConversationStore(null, () => "c-1");
+    const conversation = store.start();
+
+    expect(store.remember(conversation.id, turn(1))).toBe(true);
+    expect(store.isPersistent()).toBe(false);
+    expect(store.load()[0]?.turns).toHaveLength(1);
   });
 });

@@ -182,6 +182,7 @@ export async function loadGraph(): Promise<void> {
   const loading = byId("map-loading");
   const requestId = ++graphState.requestId;
   if (!kbId) {
+    loading.classList.add("hidden");
     empty.textContent = "先建一个知识库并导入笔记，这里会出现笔记之间的关联。";
     empty.classList.remove("hidden");
     status.textContent = "暂无可计算的数据";
