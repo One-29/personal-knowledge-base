@@ -32,6 +32,10 @@ class SessionStore:
     """进程内会话存储（单用户场景的轻量实现）。"""
 
     def __init__(self, ttl_seconds: float, max_turns: int) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be greater than zero")
+        if max_turns < 1:
+            raise ValueError("max_turns must be greater than zero")
         self._ttl = ttl_seconds
         self._max_turns = max_turns
         self._sessions: dict[str, _Session] = {}

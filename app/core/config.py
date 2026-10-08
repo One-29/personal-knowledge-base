@@ -49,14 +49,14 @@ class Settings(BaseSettings):
     max_zip_compression_ratio: float = Field(default=100.0, gt=1)
 
     # 切分参数（04 §2 DR1；06 评估阶段用网格扫描回调）
-    chunk_max_chars: int = 800
-    chunk_overlap_chars: int = 80
+    chunk_max_chars: int = Field(default=800, ge=1)
+    chunk_overlap_chars: int = Field(default=80, ge=0)
 
     # 检索召回量（04 §4.2 DR3：向量 top-20 + 关键词 top-10 → RRF 合并）
-    vector_top_k: int = 20
-    keyword_top_k: int = 10
+    vector_top_k: int = Field(default=20, ge=1)
+    keyword_top_k: int = Field(default=10, ge=1)
     keyword_similarity_threshold: float = Field(default=0.1, gt=0, le=1)
-    retrieval_top_k: int = 8          # 交给生成层的候选块数
+    retrieval_top_k: int = Field(default=8, ge=1)  # 交给生成层的候选块数
 
     # Embedding 通道（04 §3 DR2）：OpenAI 兼容协议，供应商可配；
     # 全项目模型唯一——换模型需全库重向量化 + 一次维度迁移。
@@ -82,14 +82,16 @@ class Settings(BaseSettings):
     answer_similarity_threshold: float = Field(default=0.55, ge=-1, le=1)
 
     # 会话（决策 D5：进程内存，不落库）；追问改写见 04 DR5
-    session_ttl_seconds: float = 1800.0     # 30 分钟无活动即过期
-    session_max_turns: int = 5              # 只保留最近 5 轮作为改写上下文
+    session_ttl_seconds: float = Field(default=1800.0, gt=0)  # 30 分钟无活动即过期
+    session_max_turns: int = Field(default=5, ge=1)  # 只保留最近 5 轮作为改写上下文
 
     # 多步工作流（05 §5 AW2）：单次任务的步骤上限
     workflow_max_steps: int = Field(default=5, ge=1)
 
     @model_validator(mode="after")
     def derive_local_storage_paths(self) -> "Settings":
+        if self.chunk_overlap_chars >= self.chunk_max_chars:
+            raise ValueError("CHUNK_OVERLAP_CHARS 必须小于 CHUNK_MAX_CHARS")
         if self.refusal_similarity_threshold >= self.answer_similarity_threshold:
             raise ValueError(
                 "REFUSAL_SIMILARITY_THRESHOLD 必须小于 "

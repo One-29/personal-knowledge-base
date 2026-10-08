@@ -45,6 +45,19 @@ def test_store_keeps_recent_turns_only():
     assert [t.question for t in history] == ["q2", "q3"]
 
 
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"ttl_seconds": 0, "max_turns": 5},
+        {"ttl_seconds": 60, "max_turns": 0},
+    ],
+)
+def test_store_rejects_limits_that_disable_eviction(kwargs):
+    """max_turns=0 的 [-0:] 会保留全部历史，必须在边界直接拒绝。"""
+    with pytest.raises(ValueError):
+        SessionStore(**kwargs)
+
+
 def test_store_evicts_expired_sessions():
     """TTL 过期：超时会话被清理（进程内存不无限增长）。"""
     store = SessionStore(ttl_seconds=0.01, max_turns=5)
