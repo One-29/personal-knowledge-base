@@ -95,6 +95,9 @@ if ($secretFiles.Count -gt 0) {
 }
 
 if (-not $SkipSmokeTest) {
+    # GitHub 的干净 Windows runner 首次初始化 WebView2 偶尔需要 20 秒以上；
+    # 这里覆盖进程冷启动和正常退出，页面本身仍由 launcher 的 10 秒探针判定。
+    $windowSmokeTimeoutSeconds = 60
     $smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("KnowBase-package-check-" + [Guid]::NewGuid().ToString("N"))
     $profileRoot = Join-Path $smokeRoot "profile"
     $configuredProfileRoot = Join-Path $smokeRoot "profile-from-config"
@@ -154,9 +157,9 @@ if (-not $SkipSmokeTest) {
             -WorkingDirectory $smokeRoot `
             -WindowStyle Hidden `
             -PassThru
-        if (-not $windowProcess.WaitForExit(30000)) {
+        if (-not $windowProcess.WaitForExit($windowSmokeTimeoutSeconds * 1000)) {
             Stop-Process -Id $windowProcess.Id -Force
-            throw "Packaged WebView check did not finish within 30 seconds."
+            throw "Packaged WebView check did not finish within $windowSmokeTimeoutSeconds seconds."
         }
         if ($windowProcess.ExitCode -ne 0) {
             throw "Packaged WebView check failed with exit code $($windowProcess.ExitCode)."
