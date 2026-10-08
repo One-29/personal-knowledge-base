@@ -25,7 +25,9 @@ from ..schemas import (
     AskRequest,
     CitationDetailOut,
     DocumentImageOut,
+    RetrievalEvidenceOut,
     citations_out,
+    evidence_candidates_out,
 )
 from ..sse import encode_event
 
@@ -123,9 +125,22 @@ def _answer_out(payload: AskRequest, result: ask_service.AnswerData) -> AnswerOu
     return AnswerOut(
         question=result.question,
         content=result.content,
+        status=result.status.value,
         session_id=payload.session_id,
         search_query=result.search_query,
         citations=citations_out(result.citations),
+        possible_sources=evidence_candidates_out(result.possible_sources),
+        evidence=(
+            RetrievalEvidenceOut(
+                band=result.evidence.band.value,
+                candidate_count=result.evidence.candidate_count,
+                max_vector_similarity=result.evidence.max_vector_similarity,
+                refusal_threshold=result.evidence.refusal_threshold,
+                answer_threshold=result.evidence.answer_threshold,
+            )
+            if result.evidence is not None
+            else None
+        ),
         refused=result.refused,
         refusal_reason=result.refusal_reason,
     )

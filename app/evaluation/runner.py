@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,6 +13,7 @@ from sqlalchemy.orm import Session
 from .. import ask as ask_service
 from .. import retrieval
 from ..core.config import settings
+from ..evidence import AnswerStatus, EvidenceBand, classify_similarity
 from ..models import Document
 from .dataset import EvalDifficulty, EvalItem
 from .metrics import RefusalMetrics, RetrievalMetrics, is_hit
@@ -25,6 +28,15 @@ class EvalExecutionError(RuntimeError):
 KbScopes = int | Mapping[str, int]
 QueryVectorKey = tuple[str, str]
 QueryVectors = Mapping[QueryVectorKey, list[float]]
+
+
+@dataclass(frozen=True)
+class SimilaritySample:
+    """离线双阈值扫描所需的最小检索快照。"""
+
+    item: EvalItem
+    max_vector_similarity: float | None
+    candidate_count: int
 
 
 def _resolve_kb_scopes(items: list[EvalItem], scopes: KbScopes) -> dict[str, int]:
@@ -145,7 +157,11 @@ def evaluate_refusal(
             item.library,
             item.difficulty,
             in_kb=item.in_kb,
-            refused=result.refused,
+            status=getattr(
+                result,
+                "status",
+                AnswerStatus.INSUFFICIENT if result.refused else AnswerStatus.ANSWERED,
+            ),
             reason=result.refusal_reason,
         )
     return metrics
@@ -156,11 +172,11 @@ def collect_similarities(
     items: list[EvalItem],
     kb_ids: KbScopes,
     query_vectors: QueryVectors | None = None,
-) -> list[tuple[EvalItem, float | None]]:
+) -> list[SimilaritySample]:
     """按知识库收集最高向量相似度，不调用回答模型。"""
     scopes = _resolve_kb_scopes(items, kb_ids)
     vectors = embed_eval_questions(items) if query_vectors is None else query_vectors
-    samples: list[tuple[EvalItem, float | None]] = []
+    samples: list[SimilaritySample] = []
     for item in items:
         vector = _query_vector(item, vectors)
         try:
@@ -173,31 +189,58 @@ def collect_similarities(
             )
         finally:
             db.rollback()
-        similarities = [
-            candidate.vector_similarity
-            for candidate in candidates
-            if candidate.vector_similarity is not None
-        ]
-        samples.append((item, max(similarities) if similarities else None))
+        similarities: list[float] = []
+        for candidate in candidates:
+            if candidate.vector_similarity is None:
+                continue
+            try:
+                similarity = float(candidate.vector_similarity)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(similarity) and -1.0 <= similarity <= 1.0:
+                similarities.append(similarity)
+        samples.append(
+            SimilaritySample(
+                item=item,
+                max_vector_similarity=max(similarities) if similarities else None,
+                candidate_count=len(candidates),
+            )
+        )
     return samples
 
 
-def simulate_thresholds(
-    samples: list[tuple[EvalItem, float | None]],
-    thresholds: list[float],
-) -> list[tuple[float, RefusalMetrics]]:
-    """按 τ 本地模拟 L1 拒答；无候选或最高相似度低于阈值即拒答。"""
-    results: list[tuple[float, RefusalMetrics]] = []
-    for threshold in thresholds:
+def simulate_threshold_pairs(
+    samples: list[SimilaritySample],
+    threshold_pairs: list[tuple[float, float]],
+) -> list[tuple[float, float, RefusalMetrics]]:
+    """本地模拟双阈值证据门，不调用回答模型。"""
+    results: list[tuple[float, float, RefusalMetrics]] = []
+    for refusal_threshold, answer_threshold in threshold_pairs:
         metrics = RefusalMetrics()
-        for item, similarity in samples:
-            refused = similarity is None or similarity < threshold
-            metrics.record(
-                item.library,
-                item.difficulty,
-                in_kb=item.in_kb,
-                refused=refused,
-                reason="low_relevance(l1)" if refused else None,
+        for sample in samples:
+            decision = classify_similarity(
+                candidate_count=sample.candidate_count,
+                max_vector_similarity=sample.max_vector_similarity,
+                refusal_threshold=refusal_threshold,
+                answer_threshold=answer_threshold,
             )
-        results.append((threshold, metrics))
+            status = {
+                EvidenceBand.SUFFICIENT: AnswerStatus.ANSWERED,
+                EvidenceBand.BORDERLINE: AnswerStatus.NEEDS_REVIEW,
+                EvidenceBand.INSUFFICIENT: AnswerStatus.INSUFFICIENT,
+            }[decision.band]
+            metrics.record(
+                sample.item.library,
+                sample.item.difficulty,
+                in_kb=sample.item.in_kb,
+                status=status,
+                reason=(
+                    "borderline_relevance(l1)"
+                    if status is AnswerStatus.NEEDS_REVIEW
+                    else "low_relevance(l1)"
+                    if status is AnswerStatus.INSUFFICIENT
+                    else None
+                ),
+            )
+        results.append((refusal_threshold, answer_threshold, metrics))
     return results

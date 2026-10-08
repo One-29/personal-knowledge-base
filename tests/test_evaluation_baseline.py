@@ -212,6 +212,7 @@ def test_build_eval_kbs_swaps_all_libraries_in_one_final_transaction(
     }
     events: list[str] = []
     db = Mock()
+    db.info = {}
     db.get_bind.return_value.dialect.name = "postgresql"
     db.scalar.return_value = "knowbase_eval"
     db.get.side_effect = lambda _model, object_id: objects_by_id.get(object_id)
@@ -368,5 +369,16 @@ def test_sqlite_eval_baseline_imports_into_isolated_file(tmp_path, monkeypatch):
             assert len(documents) == 1
             assert documents[0].status == "ready"
             assert documents[0].chunk_count >= 1
+
+            # 第二次运行必须能替换整套候选；Vault 清单不能保留第一次的旧 id。
+            second_ids = eval_baseline.build_eval_kbs(db, dataset)
+            assert second_ids["alpha"] != kb_ids["alpha"]
+            documents = list(
+                db.scalars(
+                    select(Document).where(Document.kb_id == second_ids["alpha"])
+                )
+            )
+            assert len(documents) == 1
+            assert documents[0].status == "ready"
     finally:
         engine.dispose()

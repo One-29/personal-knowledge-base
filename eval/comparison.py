@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,10 @@ class EvaluationComparison:
     reference_mrr: float
     candidate_mrr: float
     max_mrr_drop: float
+    reference_out_of_kb_answer_rate: float
+    candidate_out_of_kb_answer_rate: float
+    reference_in_kb_hard_refusal_rate: float
+    candidate_in_kb_hard_refusal_rate: float
 
     @property
     def mrr_drop(self) -> float:
@@ -29,16 +34,22 @@ class EvaluationComparison:
             "评估迁移门通过："
             f"recall@k {self.reference_recall:.3f} → {self.candidate_recall:.3f}，"
             f"MRR {self.reference_mrr:.3f} → {self.candidate_mrr:.3f} "
-            f"（下降 {max(0.0, self.mrr_drop):.3f} / 上限 {self.max_mrr_drop:.3f}）"
+            f"（下降 {max(0.0, self.mrr_drop):.3f} / 上限 {self.max_mrr_drop:.3f}）；"
+            f"库外直接回答率 {self.reference_out_of_kb_answer_rate:.3f} → "
+            f"{self.candidate_out_of_kb_answer_rate:.3f}，库内明确拒答率 "
+            f"{self.reference_in_kb_hard_refusal_rate:.3f} → "
+            f"{self.candidate_in_kb_hard_refusal_rate:.3f}"
         )
 
 
 COMPARABILITY_FIELDS = (
+    "schema_version",
     "dataset_version",
     "embedding_model",
     "embedding_dimension",
     "query_vector_count",
     "configured_refusal_threshold",
+    "configured_answer_threshold",
     "top_k",
     "library_count",
     "document_count",
@@ -89,12 +100,18 @@ def compare_reports(
 
     reference_retrieval = _retrieval_metrics(reference, "参考")
     candidate_retrieval = _retrieval_metrics(candidate, "候选")
+    reference_decisions = _configured_decision_metrics(reference, "参考")
+    candidate_decisions = _configured_decision_metrics(candidate, "候选")
     result = EvaluationComparison(
         reference_recall=reference_retrieval[0],
         candidate_recall=candidate_retrieval[0],
         reference_mrr=reference_retrieval[1],
         candidate_mrr=candidate_retrieval[1],
         max_mrr_drop=max_mrr_drop,
+        reference_out_of_kb_answer_rate=reference_decisions[0],
+        candidate_out_of_kb_answer_rate=candidate_decisions[0],
+        reference_in_kb_hard_refusal_rate=reference_decisions[1],
+        candidate_in_kb_hard_refusal_rate=candidate_decisions[1],
     )
     if result.candidate_recall + 1e-12 < result.reference_recall:
         raise EvaluationGateError(
@@ -107,11 +124,84 @@ def compare_reports(
             f"{result.reference_mrr:.6f} → {result.candidate_mrr:.6f}，"
             f"允许下降 {max_mrr_drop:.6f}"
         )
+    if (
+        result.candidate_out_of_kb_answer_rate
+        > result.reference_out_of_kb_answer_rate + 1e-12
+    ):
+        raise EvaluationGateError(
+            "迁移后库外问题直接回答率上升："
+            f"{result.reference_out_of_kb_answer_rate:.6f} → "
+            f"{result.candidate_out_of_kb_answer_rate:.6f}"
+        )
+    if (
+        result.candidate_in_kb_hard_refusal_rate
+        > result.reference_in_kb_hard_refusal_rate + 1e-12
+    ):
+        raise EvaluationGateError(
+            "迁移后库内问题明确拒答率上升："
+            f"{result.reference_in_kb_hard_refusal_rate:.6f} → "
+            f"{result.candidate_in_kb_hard_refusal_rate:.6f}"
+        )
     _validate_breakdowns(
         reference,
         candidate,
         max_mrr_drop=max_group_mrr_drop,
     )
+    return result
+
+
+def _configured_decision_metrics(
+    report: dict[str, Any],
+    label: str,
+) -> tuple[float, float]:
+    pairs = report.get("threshold_pairs")
+    if not isinstance(pairs, list):
+        raise EvaluationGateError(f"{label}报告缺少 threshold_pairs 指标。")
+    try:
+        lower = _finite_float(report["configured_refusal_threshold"])
+        upper = _finite_float(report["configured_answer_threshold"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise EvaluationGateError(f"{label}报告的已配置双阈值无效。") from exc
+    if not -1.0 <= lower < upper <= 1.0:
+        raise EvaluationGateError(
+            f"{label}报告的双阈值必须满足 -1 ≤ 拒答线 < 回答线 ≤ 1。"
+        )
+
+    match: dict[str, Any] | None = None
+    for item in pairs:
+        if not isinstance(item, dict):
+            raise EvaluationGateError(f"{label}报告的 threshold_pairs 条目无效。")
+        try:
+            item_lower = _finite_float(item["refusal_threshold"])
+            item_upper = _finite_float(item["answer_threshold"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EvaluationGateError(
+                f"{label}报告的 threshold_pairs 条目无效。"
+            ) from exc
+        if math.isclose(item_lower, lower) and math.isclose(item_upper, upper):
+            match = item
+            break
+    if match is None:
+        raise EvaluationGateError(
+            f"{label}报告缺少当前双阈值 {lower:.2f}/{upper:.2f} 的模拟结果。"
+        )
+    try:
+        out_answer = _finite_float(match["out_of_kb_answer_rate"])
+        in_hard_refusal = _finite_float(match["in_kb_hard_refusal_rate"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise EvaluationGateError(f"{label}报告的双阈值指标无效。") from exc
+    if not 0.0 <= out_answer <= 1.0 or not 0.0 <= in_hard_refusal <= 1.0:
+        raise EvaluationGateError(f"{label}报告的双阈值指标超出 0–1。")
+    return out_answer, in_hard_refusal
+
+
+def _finite_float(value: Any) -> float:
+    """把 JSON 数值转成有限浮点数；拒绝 bool、NaN 与无穷大。"""
+    if isinstance(value, bool):
+        raise TypeError("布尔值不是有效数值")
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError("数值必须有限")
     return result
 
 

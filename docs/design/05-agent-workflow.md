@@ -34,10 +34,14 @@ flowchart TD
     A[综合任务请求] --> B[规划: LLM 拆解为子步骤清单]
     B --> C{还有子步骤?}
     C -->|是| D[执行子步骤: 调 M3 问答]
-    D --> E{M3 返回 refused?}
-    E -->|是 缺料| F[记录该步缺料原因]
-    E -->|否| G[暂存该步结论 + 引用]
+    D --> E{M3 回答状态}
+    E -->|insufficient| F[记录该步缺料原因]
+    E -->|needs_review| J[记录灰区候选 需人工核对]
+    E -->|answered| G[暂存该步结论 + 引用]
+    E -->|error| K[记录技术故障]
     F --> C
+    J --> C
+    K --> C
     G --> C
     C -->|否| H[汇总: 组织最终答案]
     H --> I[输出结构化结果 + 全局引用编号 + 步骤进度]
@@ -55,8 +59,9 @@ flowchart TD
 ### 3.2 执行（Execution）
 
 - 逐步调用 M3 的问答能力（同一库范围）。
-- **每步结果三态**：
+- **每步结果四态**：
   - `answered`：M3 正常回答 → 暂存结论 + 引用
+  - `needs_review`：M3 命中双阈值灰区 → 保留候选原文供核对，不生成结论、不计入正式引用
   - `insufficient`：M3 返回拒答（low_relevance / empty_kb）→ 记录缺料（该步查到什么范围、为什么没料）
   - `error`：LLM 不可用等技术故障 → 记录错误，**继续后续步骤**（不因单步故障整体失败）
 - **顺序执行**（MVP）：步骤间无依赖并行需求，串行更易追踪与排错。
@@ -67,15 +72,16 @@ flowchart TD
 这是 M4 与"一次生成"的本质区别：**每步都能说清"哪一步没查到"**，而不是笼统地答不好。
 
 ```text
-第 2 步「拥塞控制的具体算法」：知识库无相关内容（检索到的最高相似度 0.21 < τ 0.50）
+第 2 步「拥塞控制的具体算法」：知识库无相关内容（最高相似度 0.21 < 拒答线 0.45）
+第 3 步「拥塞窗口边界」：找到可能相关原文（最高相似度 0.51 < 回答线 0.55），需人工核对
 ```
 
 ### 3.4 汇总（Synthesis）
 
-- 输入：各步骤的结论 + 引用 + 缺料记录。
+- 输入：各步骤的结论 + 引用 + 灰区/缺料/故障记录。
 - 输出：结构化结果（分步列出结论），**引用编号全局统一**（跨步连续编号，前端可逐条溯源）。
 - 当前汇总按规则拼接步骤结果，重映射已由 M3 校验的引用编号；汇总阶段不再调用 LLM。未来如引入模型汇总，仍须重新校验引用。
-- 缺料步骤在最终结果中显式标注（US-M4-02）。
+- 灰区和缺料步骤在最终结果中分别标注；灰区候选不会进入全局引用重编号（US-M4-02）。
 
 ### 3.5 进度可见（US-M4-01）
 
@@ -90,10 +96,11 @@ class WorkflowStep:
     index: int
     goal: str                 # 该步要查什么
     query: str                # 实际用于检索的问题（可能是改写后的）
-    status: str               # answered / insufficient / error
+    status: str               # answered / needs_review / insufficient / error
     conclusion: str | None    # 该步结论（answered 时）
-    note: str | None          # 缺料/错误说明（insufficient / error 时）
+    note: str | None          # 灰区/缺料/错误说明
     citations: list[Citation]
+    possible_sources: list[EvidenceCandidate]  # 仅 needs_review，非正式引用
 
 class WorkflowResult:
     task: str

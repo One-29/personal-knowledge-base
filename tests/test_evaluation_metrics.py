@@ -135,17 +135,17 @@ def test_refusal_metrics_are_aggregated_by_library_and_difficulty(monkeypatch):
         evaluation.EvalItem("b-out", None, [], False, "beta", "hard"),
     ]
     outcomes = {
-        "a-in": (False, None),
-        "a-out": (True, "low_relevance(l1)"),
-        "b-in": (True, "low_relevance(l1)"),
-        "b-out": (False, None),
+        "a-in": ("answered", False, None),
+        "a-out": ("insufficient", True, "low_relevance(l1)"),
+        "b-in": ("needs_review", True, "borderline_relevance(l1)"),
+        "b-out": ("answered", False, None),
     }
     calls: list[tuple[str, int]] = []
 
     def answer(_db, question, kb_id):
         calls.append((question, kb_id))
-        refused, reason = outcomes[question]
-        return SimpleNamespace(refused=refused, refusal_reason=reason)
+        status, refused, reason = outcomes[question]
+        return SimpleNamespace(status=status, refused=refused, refusal_reason=reason)
 
     monkeypatch.setattr(evaluation_runner.ask_service, "answer_question", answer)
     db = Mock()
@@ -169,7 +169,21 @@ def test_refusal_metrics_are_aggregated_by_library_and_difficulty(monkeypatch):
     assert metrics.by_library["beta"].in_kb_false_refusal_rate == 1.0
     assert metrics.by_difficulty["hard"].out_of_kb_total == 2
     assert metrics.by_difficulty["hard"].out_of_kb_refused == 1
+    assert metrics.in_kb_review_rate == pytest.approx(0.5)
+    assert metrics.in_kb_hard_refusal_rate == 0.0
     assert db.rollback.call_count == 4
+
+
+def test_hard_refusal_rate_uses_integer_counts_without_float_residue():
+    metrics = evaluation.RefusalMetrics(
+        in_kb_total=50,
+        in_kb_statuses={"answered": 49, "needs_review": 1},
+        out_of_kb_total=10,
+        out_of_kb_statuses={"needs_review": 4, "insufficient": 6},
+    )
+
+    assert metrics.in_kb_hard_refusal_rate == 0.0
+    assert metrics.out_of_kb_hard_refusal_rate == 0.6
 
 
 def test_refusal_evaluation_fails_instead_of_publishing_partial_metrics(monkeypatch):
@@ -196,33 +210,81 @@ def test_refusal_evaluation_fails_instead_of_publishing_partial_metrics(monkeypa
 
 def test_threshold_simulation_preserves_library_and_difficulty_breakdown():
     samples = [
-        (
-            evaluation.EvalItem(
+        evaluation.SimilaritySample(
+            item=evaluation.EvalItem(
                 "a-in", "a.md", ["a"], True, "alpha", "smoke"
             ),
-            0.8,
+            max_vector_similarity=0.8,
+            candidate_count=1,
         ),
-        (
-            evaluation.EvalItem("a-out", None, [], False, "alpha", "hard"),
-            0.2,
+        evaluation.SimilaritySample(
+            item=evaluation.EvalItem("a-out", None, [], False, "alpha", "hard"),
+            max_vector_similarity=0.2,
+            candidate_count=1,
         ),
-        (
-            evaluation.EvalItem(
+        evaluation.SimilaritySample(
+            item=evaluation.EvalItem(
                 "b-in", "b.md", ["b"], True, "beta", "regular"
             ),
-            None,
+            max_vector_similarity=None,
+            candidate_count=1,
         ),
-        (
-            evaluation.EvalItem("b-out", None, [], False, "beta", "hard"),
-            0.6,
+        evaluation.SimilaritySample(
+            item=evaluation.EvalItem("b-out", None, [], False, "beta", "hard"),
+            max_vector_similarity=0.6,
+            candidate_count=1,
         ),
     ]
 
-    [(threshold, metrics)] = evaluation.simulate_thresholds(samples, [0.5])
+    [(lower, upper, metrics)] = evaluation.simulate_threshold_pairs(
+        samples,
+        [(0.4, 0.7)],
+    )
 
-    assert threshold == 0.5
-    assert metrics.out_of_kb_refusal_rate == pytest.approx(0.5)
+    assert (lower, upper) == (0.4, 0.7)
+    assert metrics.out_of_kb_answer_rate == 0.0
+    assert metrics.out_of_kb_review_rate == pytest.approx(0.5)
+    assert metrics.out_of_kb_hard_refusal_rate == pytest.approx(0.5)
     assert metrics.in_kb_false_refusal_rate == pytest.approx(0.5)
+    assert metrics.in_kb_answer_rate == pytest.approx(0.5)
+    assert metrics.in_kb_review_rate == pytest.approx(0.5)
+    assert metrics.in_kb_hard_refusal_rate == 0.0
     assert metrics.by_library["alpha"].out_of_kb_refusal_rate == 1.0
-    assert metrics.by_library["beta"].in_kb_false_refusal_rate == 1.0
+    assert metrics.by_library["beta"].in_kb_review_rate == 1.0
     assert metrics.by_difficulty["hard"].out_of_kb_total == 2
+
+
+def test_similarity_collection_ignores_invalid_scores_without_losing_valid_maximum(
+    monkeypatch,
+):
+    item = evaluation.EvalItem(
+        "边界问题",
+        "a.md",
+        ["a"],
+        True,
+        "alpha",
+        "hard",
+    )
+    candidates = [
+        SimpleNamespace(vector_similarity=float("nan")),
+        SimpleNamespace(vector_similarity=1.01),
+        SimpleNamespace(vector_similarity=0.51),
+    ]
+    monkeypatch.setattr(
+        evaluation_runner.retrieval,
+        "retrieve",
+        lambda *args, **kwargs: candidates,
+    )
+    db = Mock()
+
+    samples = evaluation.collect_similarities(
+        db,
+        [item],
+        {"alpha": 1},
+        query_vectors={("alpha", "边界问题"): [1.0]},
+    )
+
+    assert len(samples) == 1
+    assert samples[0].candidate_count == 3
+    assert samples[0].max_vector_similarity == 0.51
+    db.rollback.assert_called_once()

@@ -1,13 +1,16 @@
 import type {
   AnswerResponse,
+  AnswerStatus,
   Citation,
   Conversation,
   ConversationTurn,
   DocumentImage,
+  EvidenceCandidate,
   HistoryTurn,
   WorkflowResponse,
   WorkflowStep,
   WorkflowStepStatus,
+  RetrievalEvidence,
 } from "./types";
 
 const CONVERSATIONS_KEY = "kb_conversations";
@@ -75,21 +78,89 @@ function parseCitations(value: unknown): Citation[] {
     : [];
 }
 
+function parseEvidenceCandidate(value: unknown): EvidenceCandidate | null {
+  const citation = parseCitation(value);
+  if (citation === null || !isRecord(value)) return null;
+  return {
+    ...citation,
+    vector_similarity: typeof value.vector_similarity === "number"
+      && Number.isFinite(value.vector_similarity)
+      ? value.vector_similarity
+      : null,
+    rrf_score: finiteNumber(value.rrf_score),
+    vector_rank: typeof value.vector_rank === "number" ? finiteNumber(value.vector_rank) : null,
+    keyword_rank: typeof value.keyword_rank === "number" ? finiteNumber(value.keyword_rank) : null,
+  };
+}
+
+function parseEvidenceCandidates(value: unknown): EvidenceCandidate[] {
+  return Array.isArray(value)
+    ? value
+      .map(parseEvidenceCandidate)
+      .filter((candidate): candidate is EvidenceCandidate => candidate !== null)
+    : [];
+}
+
+function parseAnswerStatus(value: unknown, refused: boolean, reason: string | null): AnswerStatus {
+  if (
+    value === "answered"
+    || value === "needs_review"
+    || value === "insufficient"
+    || value === "unverified"
+    || value === "error"
+  ) return value;
+  if (!refused) return "answered";
+  if (reason === "borderline_relevance") return "needs_review";
+  if (reason === "invalid_citation" || reason === "no_citation") return "unverified";
+  if (
+    reason === "llm_unavailable"
+    || reason === "embedding_unavailable"
+    || reason === "embedding_mismatch"
+  ) return "error";
+  return "insufficient";
+}
+
+function parseRetrievalEvidence(value: unknown): RetrievalEvidence | null {
+  if (!isRecord(value)) return null;
+  if (
+    value.band !== "sufficient"
+    && value.band !== "borderline"
+    && value.band !== "insufficient"
+  ) return null;
+  const maximum = value.max_vector_similarity;
+  if (!(maximum === null || (typeof maximum === "number" && Number.isFinite(maximum)))) return null;
+  return {
+    band: value.band,
+    candidate_count: finiteNumber(value.candidate_count),
+    max_vector_similarity: maximum,
+    refusal_threshold: finiteNumber(value.refusal_threshold),
+    answer_threshold: finiteNumber(value.answer_threshold),
+  };
+}
+
 function parseAnswer(value: unknown, question: string): AnswerResponse | null {
   if (!isRecord(value) || typeof value.content !== "string") return null;
+  const refused = value.refused === true;
+  const refusalReason = nullableString(value.refusal_reason);
   return {
     question: nullableString(value.question) ?? question,
     content: value.content,
+    status: parseAnswerStatus(value.status, refused, refusalReason),
     session_id: nullableString(value.session_id),
     search_query: nullableString(value.search_query),
     citations: parseCitations(value.citations),
-    refused: value.refused === true,
-    refusal_reason: nullableString(value.refusal_reason),
+    possible_sources: parseEvidenceCandidates(value.possible_sources),
+    evidence: parseRetrievalEvidence(value.evidence),
+    refused,
+    refusal_reason: refusalReason,
   };
 }
 
 function parseStepStatus(value: unknown): WorkflowStepStatus {
-  return value === "answered" || value === "insufficient" || value === "error"
+  return value === "answered"
+    || value === "needs_review"
+    || value === "insufficient"
+    || value === "error"
     ? value
     : "error";
 }
@@ -107,6 +178,7 @@ function parseWorkflowStep(value: unknown, index: number): WorkflowStep | null {
     conclusion: nullableString(value.conclusion),
     note: nullableString(value.note),
     citations: parseCitations(value.citations),
+    possible_sources: parseEvidenceCandidates(value.possible_sources),
   };
 }
 
@@ -241,9 +313,16 @@ export class ConversationStore {
   }
 
   history(conversation: Conversation): HistoryTurn[] {
-    return conversation.turns.slice(-HISTORY_TURNS).map((turn) => ({
-      question: turn.question,
-      answer: turn.answerText.slice(0, 1500),
-    }));
+    return conversation.turns
+      .filter((turn) => (
+        turn.kind === "ask"
+          ? turn.answer.status === "answered"
+          : turn.result.steps.some((step) => step.status === "answered")
+      ))
+      .slice(-HISTORY_TURNS)
+      .map((turn) => ({
+        question: turn.question,
+        answer: turn.answerText.slice(0, 1500),
+      }));
   }
 }

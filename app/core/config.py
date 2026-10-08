@@ -75,10 +75,11 @@ class Settings(BaseSettings):
     llm_model: str = "deepseek-ai/DeepSeek-V4-Flash"
     llm_timeout_seconds: float = Field(default=60.0, gt=0)
 
-    # 拒答阈值（04 §6 DR6）：候选块最高向量相似度低于 τ → 拒答
-    # τ=0.50 由 06 的 v2 多库评估校准（2026-09-20）：库内最低约 0.543、
-    # 库外最高约 0.493；取两者之间便于解释的值。
-    refusal_similarity_threshold: float = 0.50
+    # 双阈值证据门（04 §6 DR6）：低于 0.45 明确拒答，0.45–0.55 进入
+    # 人工核对灰区，达到 0.55 才允许调用回答模型。边界来自 06 的 v2
+    # 多库评估：库内最低约 0.543、库外最高约 0.493。
+    refusal_similarity_threshold: float = Field(default=0.45, ge=-1, le=1)
+    answer_similarity_threshold: float = Field(default=0.55, ge=-1, le=1)
 
     # 会话（决策 D5：进程内存，不落库）；追问改写见 04 DR5
     session_ttl_seconds: float = 1800.0     # 30 分钟无活动即过期
@@ -89,6 +90,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def derive_local_storage_paths(self) -> "Settings":
+        if self.refusal_similarity_threshold >= self.answer_similarity_threshold:
+            raise ValueError(
+                "REFUSAL_SIMILARITY_THRESHOLD 必须小于 "
+                "ANSWER_SIMILARITY_THRESHOLD"
+            )
         self.data_dir = self.data_dir.expanduser().resolve()
         if not self.database_url or not self.database_url.strip():
             self.database_url = sqlite_database_url(

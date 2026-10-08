@@ -4,10 +4,11 @@
 1. 库范围校验（kb_id 指定时校验存在）
 2. **会话追问改写**（D5/DR5）：带 session_id 且存在上文时，把指代句改写为自包含问题
 3. 问题向量化 → 双通道检索 → RRF 合并（retrieval）
-4. **L1 拒答**：无候选（库空/无命中）或最高向量相似度 < τ → 拒答
-5. LLM 生成带 [n] 标注的回答
+4. **L1 双阈值证据门**：低相关拒答，中间灰区只展示候选，高相关才进入生成
+5. LLM 生成带 [n] 标注的回答（灰区不会调用模型）
 6. **L2 引用校验**：越界或零引用 → 拒答（严格策略，04 §5）
-7. 记录本轮对话（供下一轮追问改写）；组装 Answer（含 citations 供前端溯源）
+7. 记录可供下一轮追问改写的结果；灰区只返回候选原文且不进入改写历史；
+   组装 Answer（含 citations 供前端溯源）
 
 拒答是正常业务结果（HTTP 200 + refused=true），不是错误。
 """
@@ -34,6 +35,14 @@ from . import (
 from .core.config import settings
 from .diagnostics import timed_stage
 from .embedding import EmbeddingError
+from .evidence import (
+    AnswerStatus,
+    CitationData,
+    EvidenceBand,
+    EvidenceCandidateData,
+    RetrievalEvidenceData,
+    classify_retrieval_evidence,
+)
 from .generation import LLMError, LLMProvider
 from .models import Document
 from .session import Turn as SessionTurn
@@ -54,6 +63,7 @@ class KnowledgeBaseNotFound(LookupError):
 
 REFUSAL_EMPTY_KB = "empty_kb"                 # 库为空 / 无任何命中
 REFUSAL_LOW_RELEVANCE = "low_relevance"       # 最高相似度低于阈值 τ / 模型自述资料不足
+REFUSAL_BORDERLINE_RELEVANCE = "borderline_relevance"  # 灰区：有候选但不足以自动回答
 REFUSAL_INVALID_CITATION = "invalid_citation"  # 引用越界（幻觉引用）
 REFUSAL_NO_CITATION = "no_citation"           # 有实质内容却零引用（不可溯源）
 REFUSAL_LLM_UNAVAILABLE = "llm_unavailable"   # 生成服务不可用
@@ -63,6 +73,10 @@ REFUSAL_EMBEDDING_MISMATCH = "embedding_mismatch"  # 配置与现有向量空间
 REFUSAL_MESSAGES = {
     REFUSAL_EMPTY_KB: "知识库里还没有相关内容，无法回答这个问题。可以先导入相关笔记再试。",
     REFUSAL_LOW_RELEVANCE: "知识库中没有找到与该问题足够相关的内容，无法给出可信回答。",
+    REFUSAL_BORDERLINE_RELEVANCE: (
+        "找到可能相关的内容，但证据强度处于灰区。系统没有调用回答模型，也没有形成"
+        "正式引用；请核对下方候选原文，或换一种更具体的问法。"
+    ),
     REFUSAL_INVALID_CITATION: "生成的回答引用了不存在的来源，为保证可信性已拒绝这次回答。",
     REFUSAL_NO_CITATION: "生成的回答没有标注任何来源，无法核对，为保证可信性已拒绝这次回答。",
     REFUSAL_LLM_UNAVAILABLE: "回答生成服务暂时不可用，请稍后重试。",
@@ -77,29 +91,42 @@ _INSUFFICIENT_MARKERS = ("资料不足", "无法回答", "没有相关", "未提
 
 
 @dataclass
-class CitationData:
-    """一条引用：回答中 [n] 对应的块与来源文档（供前端溯源展示）。"""
-
-    index: int          # 在回答中的 [n] 序号（= 候选列表中的位置）
-    chunk_id: int
-    doc_id: int
-    doc_title: str
-    chunk_text: str
-    char_start: int
-    char_end: int
-    images: list[document_images.ImageReferenceData] = field(default_factory=list)
-
-
-@dataclass
 class AnswerData:
     """服务层返回结构（schemas 层负责序列化）。"""
 
     question: str
     content: str
+    status: AnswerStatus = AnswerStatus.ANSWERED
     citations: list[CitationData] = field(default_factory=list)
+    possible_sources: list[EvidenceCandidateData] = field(default_factory=list)
+    evidence: RetrievalEvidenceData | None = None
     refused: bool = False
     refusal_reason: str | None = None
     search_query: str | None = None    # 实际用于检索的问题（有会话时可能被改写）
+
+    def __post_init__(self) -> None:
+        """兼容旧调用方只填写 ``refused``/``refusal_reason`` 的构造方式。"""
+        self.status = AnswerStatus(self.status)
+        if self.status is not AnswerStatus.ANSWERED:
+            self.refused = True
+            return
+        if not self.refused:
+            return
+        if self.refusal_reason == REFUSAL_BORDERLINE_RELEVANCE:
+            self.status = AnswerStatus.NEEDS_REVIEW
+        elif self.refusal_reason in {
+            REFUSAL_INVALID_CITATION,
+            REFUSAL_NO_CITATION,
+        }:
+            self.status = AnswerStatus.UNVERIFIED
+        elif self.refusal_reason in {
+            REFUSAL_LLM_UNAVAILABLE,
+            REFUSAL_EMBEDDING_UNAVAILABLE,
+            REFUSAL_EMBEDDING_MISMATCH,
+        }:
+            self.status = AnswerStatus.ERROR
+        else:
+            self.status = AnswerStatus.INSUFFICIENT
 
 
 @dataclass
@@ -112,6 +139,7 @@ class AnswerPreparation:
     candidate_citations: list[CitationData]
     session_id: str | None
     session_store: SessionStore
+    retrieval_evidence: RetrievalEvidenceData | None = None
     terminal_result: AnswerData | None = None
 
 
@@ -218,27 +246,52 @@ def prepare_answer(
         finally:
             db.rollback()
 
-    # L1-a：无候选
-    if not candidates:
+    evidence = classify_retrieval_evidence(
+        candidates,
+        refusal_threshold=settings.refusal_similarity_threshold,
+        answer_threshold=settings.answer_similarity_threshold,
+    )
+
+    # L1-a：无候选，或最高相似度低于明确拒答线。
+    if evidence.band is EvidenceBand.INSUFFICIENT:
+        reason = REFUSAL_EMPTY_KB if not candidates else REFUSAL_LOW_RELEVANCE
+        logger.info(
+            "L1 证据不足：最高相似度=%s，拒答线=%.2f",
+            evidence.max_vector_similarity,
+            evidence.refusal_threshold,
+        )
         return _terminal_preparation(
             question=question,
             search_query=search_query,
             session_id=session_id,
             store=store,
-            result=_refuse(question, REFUSAL_EMPTY_KB),
+            result=_refuse(question, reason, evidence=evidence),
         )
 
-    # L1-b：最高向量相似度低于阈值 τ（素材与问题不够相关）
-    similarities = [c.vector_similarity for c in candidates if c.vector_similarity is not None]
-    if similarities and max(similarities) < settings.refusal_similarity_threshold:
-        logger.info("L1 拒答：最高相似度 %.3f < τ %.2f", max(similarities),
-                    settings.refusal_similarity_threshold)
+    # L1-b：候选处于双阈值之间，或只有关键词分数。保留候选供人工核对，
+    # 但不调用生成模型，也不把候选冒充为正式引用。
+    if evidence.band is EvidenceBand.BORDERLINE:
+        possible_sources = _build_possible_sources(candidates, candidate_citations)
+        logger.info(
+            "L1 灰区：最高相似度=%s，区间=[%.2f, %.2f)",
+            evidence.max_vector_similarity,
+            evidence.refusal_threshold,
+            evidence.answer_threshold,
+        )
         return _terminal_preparation(
             question=question,
             search_query=search_query,
             session_id=session_id,
             store=store,
-            result=_refuse(question, REFUSAL_LOW_RELEVANCE),
+            candidates=candidates,
+            candidate_citations=candidate_citations,
+            result=_refuse(
+                question,
+                REFUSAL_BORDERLINE_RELEVANCE,
+                status=AnswerStatus.NEEDS_REVIEW,
+                evidence=evidence,
+                possible_sources=possible_sources,
+            ),
         )
 
     return AnswerPreparation(
@@ -248,6 +301,7 @@ def prepare_answer(
         candidate_citations=candidate_citations,
         session_id=session_id,
         session_store=store,
+        retrieval_evidence=evidence,
     )
 
 
@@ -324,6 +378,8 @@ def finish_prepared_answer(
     result: AnswerData,
 ) -> AnswerData:
     """完成会话记录；流式路径只在最终结果形成后调用。"""
+    if result.evidence is None:
+        result.evidence = prepared.retrieval_evidence
     return _finish(
         prepared.session_store,
         prepared.session_id,
@@ -339,14 +395,17 @@ def _terminal_preparation(
     session_id: str | None,
     store: SessionStore,
     result: AnswerData,
+    candidates: list[retrieval.RetrievedChunk] | None = None,
+    candidate_citations: list[CitationData] | None = None,
 ) -> AnswerPreparation:
     return AnswerPreparation(
         question=question,
         search_query=search_query,
-        candidates=[],
-        candidate_citations=[],
+        candidates=candidates or [],
+        candidate_citations=candidate_citations or [],
         session_id=session_id,
         session_store=store,
+        retrieval_evidence=result.evidence,
         terminal_result=result,
     )
 
@@ -369,10 +428,45 @@ def _finish(
     result: AnswerData,
     search_query: str,
 ) -> AnswerData:
-    """记录本轮对话（含拒答——问过什么对后续追问仍是有效上下文）并返回。"""
+    """记录可用于追问改写的轮次并返回。
+
+    普通拒答仍保留原行为；灰区没有形成事实性回答，不能进入下一轮改写上下文。
+    """
     result.search_query = search_query
-    if session_id:
+    if session_id and result.status is not AnswerStatus.NEEDS_REVIEW:
         store.append(session_id, SessionTurn(question=result.question, answer=result.content))
+    return result
+
+
+def _build_possible_sources(
+    candidates: list[retrieval.RetrievedChunk],
+    snapshots: list[CitationData],
+    *,
+    limit: int = 3,
+) -> list[EvidenceCandidateData]:
+    """把灰区前几名候选复制成可脱离数据库展示的来源快照。"""
+    by_index = {snapshot.index: snapshot for snapshot in snapshots}
+    result: list[EvidenceCandidateData] = []
+    for index, candidate in enumerate(candidates[:limit], start=1):
+        snapshot = by_index.get(index)
+        if snapshot is None:
+            continue
+        result.append(
+            EvidenceCandidateData(
+                index=index,
+                chunk_id=snapshot.chunk_id,
+                doc_id=snapshot.doc_id,
+                doc_title=snapshot.doc_title,
+                chunk_text=snapshot.chunk_text,
+                char_start=snapshot.char_start,
+                char_end=snapshot.char_end,
+                vector_similarity=candidate.vector_similarity,
+                rrf_score=candidate.rrf_score,
+                vector_rank=candidate.vector_rank,
+                keyword_rank=candidate.keyword_rank,
+                images=list(snapshot.images),
+            )
+        )
     return result
 
 
@@ -430,10 +524,31 @@ def _build_citations(
     return result
 
 
-def _refuse(question: str, reason: str) -> AnswerData:
+def _refuse(
+    question: str,
+    reason: str,
+    *,
+    status: AnswerStatus | None = None,
+    evidence: RetrievalEvidenceData | None = None,
+    possible_sources: list[EvidenceCandidateData] | None = None,
+) -> AnswerData:
+    if status is None:
+        if reason in {
+            REFUSAL_LLM_UNAVAILABLE,
+            REFUSAL_EMBEDDING_UNAVAILABLE,
+            REFUSAL_EMBEDDING_MISMATCH,
+        }:
+            status = AnswerStatus.ERROR
+        elif reason in {REFUSAL_INVALID_CITATION, REFUSAL_NO_CITATION}:
+            status = AnswerStatus.UNVERIFIED
+        else:
+            status = AnswerStatus.INSUFFICIENT
     return AnswerData(
         question=question,
         content=REFUSAL_MESSAGES[reason],
+        status=status,
+        possible_sources=possible_sources or [],
+        evidence=evidence,
         refused=True,
         refusal_reason=reason,
     )

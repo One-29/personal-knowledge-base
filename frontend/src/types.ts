@@ -73,6 +73,28 @@ export interface Citation {
   images: DocumentImage[];
 }
 
+export interface EvidenceCandidate extends Citation {
+  vector_similarity: number | null;
+  rrf_score: number;
+  vector_rank: number | null;
+  keyword_rank: number | null;
+}
+
+export type AnswerStatus =
+  | "answered"
+  | "needs_review"
+  | "insufficient"
+  | "unverified"
+  | "error";
+
+export interface RetrievalEvidence {
+  band: "sufficient" | "borderline" | "insufficient";
+  candidate_count: number;
+  max_vector_similarity: number | null;
+  refusal_threshold: number;
+  answer_threshold: number;
+}
+
 export interface CitationDetail {
   doc_id: number;
   doc_title: string;
@@ -91,9 +113,12 @@ export interface DocumentContent {
 export interface AnswerResponse {
   question: string;
   content: string;
+  status: AnswerStatus;
   session_id: string | null;
   search_query: string | null;
   citations: Citation[];
+  possible_sources: EvidenceCandidate[];
+  evidence: RetrievalEvidence | null;
   refused: boolean;
   refusal_reason: string | null;
 }
@@ -103,7 +128,7 @@ export interface AskStreamMetadata {
   search_query: string;
 }
 
-export type WorkflowStepStatus = "answered" | "insufficient" | "error";
+export type WorkflowStepStatus = "answered" | "needs_review" | "insufficient" | "error";
 
 export interface WorkflowStep {
   index: number;
@@ -113,6 +138,7 @@ export interface WorkflowStep {
   conclusion: string | null;
   note: string | null;
   citations: Citation[];
+  possible_sources: EvidenceCandidate[];
 }
 
 export interface WorkflowResponse {

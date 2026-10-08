@@ -77,10 +77,13 @@ export function renderConversation(): void {
     entry.className = "entry";
     if (turn.kind === "workflow") {
       entry.innerHTML = renderWorkflowEntry(turn.question, turn.result, turn.durationMs);
-      bindCitations(entry, turn.result.citations);
+      bindCitations(entry, [
+        ...turn.result.citations,
+        ...turn.result.steps.flatMap((step) => step.possible_sources),
+      ]);
     } else {
       entry.innerHTML = renderAnswerEntry(turn.question, turn.answer, turn.durationMs);
-      bindCitations(entry, turn.answer.citations);
+      bindCitations(entry, [...turn.answer.citations, ...turn.answer.possible_sources]);
     }
     flow.append(entry);
   }
@@ -167,7 +170,7 @@ async function submitQuestion(): Promise<void> {
     }
     const durationMs = Date.now() - startedAt;
     entry.innerHTML = renderAnswerEntry(question, answer, durationMs);
-    bindCitations(entry, answer.citations);
+    bindCitations(entry, [...answer.citations, ...answer.possible_sources]);
     const saved = rememberTurn(conversation.id, {
       kind: "ask",
       question,
@@ -241,7 +244,10 @@ async function submitWorkflow(): Promise<void> {
     });
     const durationMs = Date.now() - startedAt;
     entry.innerHTML = renderWorkflowEntry(task, result, durationMs);
-    bindCitations(entry, result.citations);
+    bindCitations(entry, [
+      ...result.citations,
+      ...result.steps.flatMap((step) => step.possible_sources),
+    ]);
     const saved = rememberTurn(conversation.id, {
       kind: "workflow",
       question: task,

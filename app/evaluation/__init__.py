@@ -20,11 +20,12 @@ from .runner import (
     KbScopes,
     QueryVectorKey,
     QueryVectors,
+    SimilaritySample,
     collect_similarities,
     embed_eval_questions,
     evaluate_refusal,
     evaluate_retrieval,
-    simulate_thresholds,
+    simulate_threshold_pairs,
 )
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "KbScopes",
     "QueryVectorKey",
     "QueryVectors",
+    "SimilaritySample",
     "RefusalMetrics",
     "RetrievalMetrics",
     "assert_baseline_scale",
@@ -50,6 +52,6 @@ __all__ = [
     "evaluate_retrieval",
     "is_hit",
     "load_eval_set",
-    "simulate_thresholds",
+    "simulate_threshold_pairs",
     "validate_eval_sources",
 ]

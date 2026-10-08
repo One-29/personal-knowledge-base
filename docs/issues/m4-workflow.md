@@ -17,7 +17,7 @@ class WorkflowStep:
     index: int
     goal: str                  # 该步要查什么
     query: str                 # 实际用于检索的问题（规划输出）
-    status: str                # answered / insufficient / error
+    status: str                # answered / needs_review / insufficient / error
     conclusion: str | None     # 该步结论（answered）
     note: str | None           # 缺料或错误说明（insufficient / error）
     citations: list[Citation]  # 该步的引用

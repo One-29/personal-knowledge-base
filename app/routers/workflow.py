@@ -1,7 +1,7 @@
 """多步工作流路由（M4）：POST /api/v1/workflow。
 
 契约（docs/issues/m4-workflow.md §3）：同步返回全部步骤与最终结果（AW3），
-每步状态（answered / insufficient / error）与缺料说明对用户可见（US-M4-02）。
+每步状态（answered / needs_review / insufficient / error）与候选/缺料说明对用户可见（US-M4-02）。
 """
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,10 +11,11 @@ from .. import workflow as workflow_service
 from ..ask import KnowledgeBaseNotFound
 from ..db import get_db
 from ..schemas import (
-    citations_out,
     WorkflowRequest,
     WorkflowResultOut,
     WorkflowStepOut,
+    citations_out,
+    evidence_candidates_out,
 )
 
 router = APIRouter(tags=["Workflow"])
@@ -41,6 +42,7 @@ def run_workflow(payload: WorkflowRequest, db: Session = Depends(get_db)):
                 conclusion=step.conclusion,
                 note=step.note,
                 citations=citations_out(step.citations),
+                possible_sources=evidence_candidates_out(step.possible_sources),
             )
             for step in result.steps
         ],

@@ -19,14 +19,15 @@ from sqlalchemy.orm import Session
 
 from . import ask as ask_service
 from . import generation
-from .ask import CitationData
 from .core.config import settings
 from .diagnostics import timed_stage
+from .evidence import AnswerStatus, CitationData, EvidenceCandidateData
 from .generation import LLMError, LLMProvider
 
 logger = logging.getLogger(__name__)
 
 STEP_ANSWERED = "answered"           # 该步正常回答
+STEP_NEEDS_REVIEW = "needs_review"   # 该步命中灰区，需人工核对候选来源
 STEP_INSUFFICIENT = "insufficient"   # 该步缺料（M3 拒答）
 STEP_ERROR = "error"                 # 该步执行故障（技术问题）
 
@@ -63,6 +64,7 @@ class WorkflowStepData:
     conclusion: str | None = None
     note: str | None = None
     citations: list[CitationData] = field(default_factory=list)
+    possible_sources: list[EvidenceCandidateData] = field(default_factory=list)
 
 
 @dataclass
@@ -165,10 +167,7 @@ def run_workflow(
             )
             continue
 
-        if answer.refusal_reason in {
-            ask_service.REFUSAL_LLM_UNAVAILABLE,
-            ask_service.REFUSAL_EMBEDDING_UNAVAILABLE,
-        }:
+        if answer.status is AnswerStatus.ERROR:
             steps.append(
                 WorkflowStepData(
                     index=index,
@@ -176,6 +175,17 @@ def run_workflow(
                     query=plan.query,
                     status=STEP_ERROR,
                     note=answer.content,
+                )
+            )
+        elif answer.status is AnswerStatus.NEEDS_REVIEW:
+            steps.append(
+                WorkflowStepData(
+                    index=index,
+                    goal=plan.goal,
+                    query=plan.query,
+                    status=STEP_NEEDS_REVIEW,
+                    note=answer.content,
+                    possible_sources=list(answer.possible_sources),
                 )
             )
         elif answer.refused:
@@ -240,6 +250,8 @@ def synthesize(
             blocks.append(f"{header}\n\n{body}")
         elif step.status == STEP_INSUFFICIENT:
             blocks.append(f"{header}\n\n（知识库无相关内容：{step.note}）")
+        elif step.status == STEP_NEEDS_REVIEW:
+            blocks.append(f"{header}\n\n（找到可能相关的原文，需人工核对：{step.note}）")
         else:
             blocks.append(f"{header}\n\n（该步未完成：{step.note}）")
 

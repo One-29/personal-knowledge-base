@@ -4,9 +4,10 @@ import json
 
 import pytest
 
-from app import generation, ingest, session, storage
+from app import ask, generation, ingest, session, storage
 from app.core.config import settings
 from app.models import Document
+from app.retrieval import RetrievedChunk
 
 DOC_TCP = "# TCP 三次握手\n\n客户端发送 SYN，服务端回复 SYN+ACK。\n"
 
@@ -43,7 +44,8 @@ def _sse_events(response) -> list[tuple[str, dict]]:
 @pytest.fixture()
 def no_l1_threshold(monkeypatch) -> None:
     """关闭 L1 阈值（假向量彼此近似正交，默认 τ 会拦住所有测试）。"""
-    monkeypatch.setattr(settings, "refusal_similarity_threshold", -1.0)
+    monkeypatch.setattr(settings, "refusal_similarity_threshold", -2.0)
+    monkeypatch.setattr(settings, "answer_similarity_threshold", -1.0)
 
 
 @pytest.fixture()
@@ -138,6 +140,49 @@ def test_ask_stream_l1_refusal_sends_no_untrusted_delta(client):
     assert [kind for kind, _ in events] == ["metadata", "result"]
     assert events[-1][1]["refused"] is True
     assert events[-1][1]["refusal_reason"] == "empty_kb"
+
+
+def test_ask_stream_gray_zone_returns_candidates_without_model_delta(
+    client,
+    db,
+    monkeypatch,
+):
+    kb_id = client.post("/api/v1/kbs", json={"name": "流式灰区"}).json()["id"]
+    doc = _add_doc(db, kb_id, "tcp.md", DOC_TCP)
+    candidate = RetrievedChunk(
+        778,
+        doc.id,
+        "客户端发送 SYN，服务端回复 SYN+ACK。",
+        0,
+        25,
+        0.03,
+        0.50,
+        1,
+        1,
+    )
+    monkeypatch.setattr(ask, "_embed_query", lambda _question: [1.0])
+    monkeypatch.setattr(ask.retrieval, "retrieve", lambda *args, **kwargs: [candidate])
+    monkeypatch.setattr(settings, "refusal_similarity_threshold", 0.45)
+    monkeypatch.setattr(settings, "answer_similarity_threshold", 0.55)
+    monkeypatch.setattr(
+        generation,
+        "get_llm_provider",
+        lambda: (_ for _ in ()).throw(AssertionError("灰区不应创建回答模型")),
+    )
+
+    response = client.post(
+        "/api/v1/ask/stream",
+        json={"question": "三次握手是什么？", "kb_id": kb_id},
+    )
+
+    events = _sse_events(response)
+    assert [kind for kind, _ in events] == ["metadata", "result"]
+    result = events[-1][1]
+    assert result["status"] == "needs_review"
+    assert result["refusal_reason"] == "borderline_relevance"
+    assert result["citations"] == []
+    assert result["possible_sources"][0]["chunk_id"] == 778
+    assert result["evidence"]["max_vector_similarity"] == 0.5
 
 
 def test_ask_stream_replaces_invalid_citation_draft_with_refusal(
