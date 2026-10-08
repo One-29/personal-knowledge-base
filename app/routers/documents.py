@@ -314,12 +314,23 @@ def _commit_document_and_vault(db: Session, doc: Document) -> None:
 def list_documents(
     kb_id: int,
     status: DocStatus | None = Query(default=None, description="按处理状态过滤"),
-    title: str | None = Query(default=None, min_length=1, description="标题模糊匹配"),
+    title: str | None = Query(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description="标题模糊匹配",
+    ),
     db: Session = Depends(get_db),
 ):
     """某知识库下的文档列表（可按状态/标题过滤）。"""
     if crud.get_kb(db, kb_id) is None:
         raise HTTPException(status_code=404, detail="知识库不存在")
+    if title is not None:
+        title = title.strip()
+        if not title:
+            raise HTTPException(status_code=422, detail="标题筛选条件不能为空")
+        if "\x00" in title:
+            raise HTTPException(status_code=422, detail="标题筛选条件不能包含 NUL 字符")
     docs = crud.list_documents(
         db,
         kb_id,

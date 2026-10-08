@@ -199,6 +199,39 @@ def test_list_documents_filter_by_status(client):
     assert client.get(f"/api/v1/kbs/{kb_id}/documents?status=bogus").status_code == 422
 
 
+def test_list_documents_normalizes_and_validates_title_filter(client):
+    """筛选文本在进入 SQL 前统一清理，避免 PostgreSQL NUL 异常与空白查询。"""
+    kb_id = _create_kb(client)
+    _upload(client, kb_id)
+
+    matched = client.get(
+        f"/api/v1/kbs/{kb_id}/documents",
+        params={"title": "  tcp  "},
+    )
+    assert matched.status_code == 200
+    assert [doc["title"] for doc in matched.json()] == ["tcp.md"]
+
+    blank = client.get(
+        f"/api/v1/kbs/{kb_id}/documents",
+        params={"title": "   "},
+    )
+    assert blank.status_code == 422
+    assert blank.json()["detail"] == "标题筛选条件不能为空"
+
+    nul = client.get(
+        f"/api/v1/kbs/{kb_id}/documents",
+        params={"title": "tcp\x00hidden"},
+    )
+    assert nul.status_code == 422
+    assert nul.json()["detail"] == "标题筛选条件不能包含 NUL 字符"
+
+    too_long = client.get(
+        f"/api/v1/kbs/{kb_id}/documents",
+        params={"title": "x" * 256},
+    )
+    assert too_long.status_code == 422
+
+
 def test_get_content_matches_upload(client):
     """原文读取与上传内容一致（US-M1-03）。"""
     kb_id = _create_kb(client)

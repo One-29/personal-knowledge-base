@@ -96,6 +96,17 @@ def test_ask_returns_answer_with_citations(client, db, fake_llm, no_l1_threshold
     assert citation["chunk_id"] > 0
 
 
+@pytest.mark.parametrize("session_id", ["", "   ", "bad\x00id", "x" * 129])
+def test_ask_rejects_invalid_legacy_session_id(client, session_id):
+    """旧版进程内会话键必须是有界的有效文本，不能扩大内存驻留。"""
+    response = client.post(
+        "/api/v1/ask",
+        json={"question": "测试问题", "session_id": session_id},
+    )
+
+    assert response.status_code == 422
+
+
 def test_ask_stream_returns_deltas_then_validated_result(
     client, db, no_l1_threshold, monkeypatch
 ):
