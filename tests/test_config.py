@@ -122,3 +122,30 @@ def test_relevance_thresholds_must_form_a_non_empty_gray_zone(lower, upper):
             refusal_similarity_threshold=lower,
             answer_similarity_threshold=upper,
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("chunk_max_chars", 0),
+        ("chunk_overlap_chars", -1),
+        ("vector_top_k", 0),
+        ("keyword_top_k", 0),
+        ("retrieval_top_k", 0),
+        ("session_ttl_seconds", 0),
+        ("session_max_turns", 0),
+    ],
+)
+def test_runtime_limits_reject_non_positive_values(field, value):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **{field: value})
+
+
+@pytest.mark.parametrize(("maximum", "overlap"), [(80, 80), (80, 81)])
+def test_chunk_overlap_must_leave_forward_progress(maximum, overlap):
+    with pytest.raises(ValidationError, match="必须小于"):
+        Settings(
+            _env_file=None,
+            chunk_max_chars=maximum,
+            chunk_overlap_chars=overlap,
+        )
