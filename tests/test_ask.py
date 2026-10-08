@@ -8,6 +8,7 @@ from sqlalchemy.pool import QueuePool
 from app import ask, generation, ingest, storage
 from app.core.config import settings
 from app.embedding import EmbeddingError
+from app.evidence import AnswerStatus
 from app.generation import LLMError
 from app.models import Document
 from app.retrieval import RetrievedChunk
@@ -38,10 +39,11 @@ def _query_vector() -> list[float]:
 def no_l1_threshold(monkeypatch) -> None:
     """关闭 L1 阈值。
 
-    假 provider 的伪向量彼此近似正交（相似度≈0），若沿用默认 τ=0.35，
-    所有测试都会停在 L1 拒答、走不到生成路径。测 L1 本身时另用 τ=1 的反例。
+    假 provider 的伪向量彼此近似正交（相似度≈0），若沿用默认 0.45/0.55，
+    所有测试都会停在 L1 拒答、走不到生成路径。测 L1 本身时另用 >1 的反例。
     """
-    monkeypatch.setattr(settings, "refusal_similarity_threshold", -1.0)
+    monkeypatch.setattr(settings, "refusal_similarity_threshold", -2.0)
+    monkeypatch.setattr(settings, "answer_similarity_threshold", -1.0)
 
 
 def _add_doc(db, kb_id: int, title: str, text: str) -> Document:
@@ -125,11 +127,59 @@ def test_l1_refuse_on_low_similarity(db, client, monkeypatch):
     kb = client.post("/api/v1/kbs", json={"name": "计算机网络"}).json()["id"]
     _add_doc(db, kb, "tcp.md", DOC_TCP)
     # 把 τ 抬到不可能达到的高度，模拟"素材与问题不够相关"
-    monkeypatch.setattr(settings, "refusal_similarity_threshold", 0.999999)
+    monkeypatch.setattr(settings, "refusal_similarity_threshold", 1.01)
+    monkeypatch.setattr(settings, "answer_similarity_threshold", 1.02)
 
     result = ask.answer_question(db, "完全无关的问题", kb, llm=_FakeLLM(reply="不该被调用"))
     assert result.refused is True
     assert result.refusal_reason == ask.REFUSAL_LOW_RELEVANCE
+
+
+def test_l1_gray_zone_exposes_candidates_without_calling_llm_or_storing_history(
+    db,
+    client,
+    monkeypatch,
+):
+    """灰区只给人工核对素材，不生成回答、不产生正式引用或追问上下文。"""
+    kb = client.post("/api/v1/kbs", json={"name": "灰区测试"}).json()["id"]
+    doc = _add_doc(db, kb, "tcp.md", DOC_TCP)
+    candidate = RetrievedChunk(
+        chunk_id=777,
+        doc_id=doc.id,
+        content="客户端发送 SYN，服务端回复 SYN+ACK。",
+        char_start=0,
+        char_end=25,
+        rrf_score=0.03,
+        vector_similarity=0.50,
+        vector_rank=1,
+        keyword_rank=1,
+    )
+    monkeypatch.setattr(ask, "_embed_query", lambda _question: [1.0])
+    monkeypatch.setattr(ask.retrieval, "retrieve", lambda *args, **kwargs: [candidate])
+    monkeypatch.setattr(settings, "refusal_similarity_threshold", 0.45)
+    monkeypatch.setattr(settings, "answer_similarity_threshold", 0.55)
+    llm = _FakeLLM(reply="不应调用 [1]")
+    store = ask.session.SessionStore(ttl_seconds=60, max_turns=5)
+
+    result = ask.answer_question(
+        db,
+        "三次握手是什么？",
+        kb,
+        session_id="gray-session",
+        llm=llm,
+        session_store=store,
+    )
+
+    assert result.status is AnswerStatus.NEEDS_REVIEW
+    assert result.refused is True
+    assert result.refusal_reason == ask.REFUSAL_BORDERLINE_RELEVANCE
+    assert result.citations == []
+    assert [source.chunk_id for source in result.possible_sources] == [777]
+    assert result.possible_sources[0].vector_similarity == 0.50
+    assert result.evidence is not None
+    assert result.evidence.max_vector_similarity == 0.50
+    assert llm.last_user_prompt == ""
+    assert store.history("gray-session") == []
 
 
 def test_l2_refuse_on_invalid_citation(db, client, no_l1_threshold):

@@ -144,7 +144,8 @@ def _add_doc(db, kb_id: int, title: str, text: str) -> Document:
 
 def test_followup_uses_rewritten_query(db, client, monkeypatch):
     """追问：检索用的是改写后的问题；无会话时用原问题。"""
-    monkeypatch.setattr(settings, "refusal_similarity_threshold", -1.0)
+    monkeypatch.setattr(settings, "refusal_similarity_threshold", -2.0)
+    monkeypatch.setattr(settings, "answer_similarity_threshold", -1.0)
     kb_id = client.post("/api/v1/kbs", json={"name": "计算机网络"}).json()["id"]
     _add_doc(db, kb_id, "tcp.md", DOC_TCP)
 
@@ -163,7 +164,8 @@ def test_followup_uses_rewritten_query(db, client, monkeypatch):
 
 def test_followup_without_session_uses_original(db, client, monkeypatch):
     """无会话：原问题直接检索（行为与 M3 单轮一致）。"""
-    monkeypatch.setattr(settings, "refusal_similarity_threshold", -1.0)
+    monkeypatch.setattr(settings, "refusal_similarity_threshold", -2.0)
+    monkeypatch.setattr(settings, "answer_similarity_threshold", -1.0)
     kb_id = client.post("/api/v1/kbs", json={"name": "计算机网络"}).json()["id"]
     _add_doc(db, kb_id, "tcp.md", DOC_TCP)
 
@@ -176,7 +178,8 @@ def test_followup_without_session_uses_original(db, client, monkeypatch):
 
 def test_rewrite_failure_falls_back_to_original(db, client, monkeypatch):
     """改写失败（LLM 故障）→ 退化为原问题继续检索，不中断整条链路。"""
-    monkeypatch.setattr(settings, "refusal_similarity_threshold", -1.0)
+    monkeypatch.setattr(settings, "refusal_similarity_threshold", -2.0)
+    monkeypatch.setattr(settings, "answer_similarity_threshold", -1.0)
     kb_id = client.post("/api/v1/kbs", json={"name": "计算机网络"}).json()["id"]
     _add_doc(db, kb_id, "tcp.md", DOC_TCP)
 

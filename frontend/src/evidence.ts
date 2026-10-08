@@ -34,7 +34,7 @@ function removeMarginItem(key: string, chunkId: number | null = null): void {
   marginItems.delete(key);
   if (chunkId !== null) {
     queryAll<HTMLElement>(
-      `.cite.on[data-chunk="${chunkId}"], .source-pill[data-chunk="${chunkId}"]`,
+      `.cite.on[data-chunk="${chunkId}"], .source-pill.on[data-chunk="${chunkId}"]`,
     ).forEach((element) => element.classList.remove("on"));
   }
   updateEvidenceState();

@@ -30,7 +30,14 @@ from .reporting import _refusal_payload, _retrieval_payload, _write_report
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EVAL_SET_PATH = PROJECT_ROOT / "eval" / "eval_set.json"
-THRESHOLDS = (0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60)
+REFUSAL_THRESHOLDS = (0.35, 0.40, 0.45, 0.50)
+ANSWER_THRESHOLDS = (0.50, 0.55, 0.60)
+THRESHOLD_PAIRS = tuple(
+    (refusal, answer)
+    for refusal in REFUSAL_THRESHOLDS
+    for answer in ANSWER_THRESHOLDS
+    if refusal < answer
+)
 
 
 def main() -> int:
@@ -86,30 +93,46 @@ def main() -> int:
             refusal_metrics = evaluation.evaluate_refusal(db, dataset.items, kb_ids)
             print(refusal_metrics.summary())
 
-        print("\n=== Q3 τ 扫描（本地模拟 L1，零回答 LLM 调用） ===")
+        print("\n=== Q3 双阈值扫描（本地模拟 L1，零回答 LLM 调用） ===")
         samples = evaluation.collect_similarities(
             db,
             dataset.items,
             kb_ids,
             query_vectors=query_vectors,
         )
-        threshold_results = evaluation.simulate_thresholds(samples, list(THRESHOLDS))
-        print(f"{'τ':>6} | {'库外拒答率':>10} | {'库内误拒率':>10}")
-        for threshold, result in threshold_results:
+        threshold_results = evaluation.simulate_threshold_pairs(
+            samples,
+            list(THRESHOLD_PAIRS),
+        )
+        print(
+            f"{'拒答线':>6} | {'回答线':>6} | "
+            f"{'库外 回答/灰区/拒答':>23} | {'库内 回答/灰区/拒答':>23}"
+        )
+        for refusal_threshold, answer_threshold, result in threshold_results:
             print(
-                f"{threshold:>6.2f} | {result.out_of_kb_refusal_rate:>10.3f} | "
-                f"{result.in_kb_false_refusal_rate:>10.3f}"
+                f"{refusal_threshold:>6.2f} | {answer_threshold:>6.2f} | "
+                f"{result.out_of_kb_answer_rate:.3f}/"
+                f"{result.out_of_kb_review_rate:.3f}/"
+                f"{result.out_of_kb_hard_refusal_rate:.3f} | "
+                f"{result.in_kb_answer_rate:.3f}/"
+                f"{result.in_kb_review_rate:.3f}/"
+                f"{result.in_kb_hard_refusal_rate:.3f}"
             )
 
         print("\n=== 相似度分布 ===")
-        for item, similarity in samples:
+        for sample in samples:
+            item = sample.item
             tag = "库内" if item.in_kb else "库外"
-            value = f"{similarity:.3f}" if similarity is not None else "无候选"
+            value = (
+                f"{sample.max_vector_similarity:.3f}"
+                if sample.max_vector_similarity is not None
+                else f"无向量分数（候选 {sample.candidate_count}）"
+            )
             print(f"  [{item.library}/{tag}] {value}  {item.question}")
 
         profile = stored_embedding_profile(db)
         report: dict[str, object] = {
-            "schema_version": 1,
+            "schema_version": 2,
             "generated_at": datetime.now(UTC).isoformat(),
             "mode": "retrieval" if args.retrieval else "full",
             "dataset_version": dataset.version,
@@ -119,28 +142,31 @@ def main() -> int:
             "database_backend": make_url(settings.database_url).get_backend_name(),
             "query_vector_count": len(query_vectors),
             "configured_refusal_threshold": settings.refusal_similarity_threshold,
+            "configured_answer_threshold": settings.answer_similarity_threshold,
             "top_k": settings.retrieval_top_k if args.top_k is None else args.top_k,
             "library_count": len(dataset.libraries),
             "document_count": dataset.document_count,
             "item_count": len(dataset.items),
             "retrieval": _retrieval_payload(retrieval_metrics),
             "refusal": _refusal_payload(refusal_metrics) if refusal_metrics else None,
-            "thresholds": [
+            "threshold_pairs": [
                 {
-                    "threshold": threshold,
+                    "refusal_threshold": refusal_threshold,
+                    "answer_threshold": answer_threshold,
                     **_refusal_payload(result),
                 }
-                for threshold, result in threshold_results
+                for refusal_threshold, answer_threshold, result in threshold_results
             ],
             "similarities": [
                 {
-                    "library": item.library,
-                    "difficulty": item.difficulty,
-                    "in_kb": item.in_kb,
-                    "question": item.question,
-                    "max_vector_similarity": similarity,
+                    "library": sample.item.library,
+                    "difficulty": sample.item.difficulty,
+                    "in_kb": sample.item.in_kb,
+                    "question": sample.item.question,
+                    "candidate_count": sample.candidate_count,
+                    "max_vector_similarity": sample.max_vector_similarity,
                 }
-                for item, similarity in samples
+                for sample in samples
             ],
         }
         if args.report is not None:

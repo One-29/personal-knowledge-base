@@ -32,7 +32,8 @@ class _ScriptedLLM:
 
 @pytest.fixture()
 def no_l1_threshold(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "refusal_similarity_threshold", -1.0)
+    monkeypatch.setattr(settings, "refusal_similarity_threshold", -2.0)
+    monkeypatch.setattr(settings, "answer_similarity_threshold", -1.0)
 
 
 def _add_doc(db, kb_id: int, title: str, text: str) -> Document:
@@ -168,6 +169,40 @@ def test_run_workflow_continues_after_step_error(db, client, no_l1_threshold, mo
     result = workflow.run_workflow(db, "任务", kb_id, llm=llm)
     assert result.steps[0].status == "error"
     assert result.steps[1].status == "answered"              # 后续步骤照常执行
+
+
+def test_workflow_keeps_gray_step_distinct_and_continues(db, monkeypatch):
+    from app.ask import AnswerData
+    from app.evidence import AnswerStatus
+
+    plans = [
+        workflow.StepPlan(goal="核对边界材料", query="边界问题"),
+        workflow.StepPlan(goal="回答确定材料", query="确定问题"),
+    ]
+    answers = iter(
+        [
+            AnswerData(
+                question="边界问题",
+                content="找到可能相关的内容，请人工核对。",
+                status=AnswerStatus.NEEDS_REVIEW,
+                refused=True,
+                refusal_reason="borderline_relevance",
+            ),
+            AnswerData(question="确定问题", content="确定结论 [1]。"),
+        ]
+    )
+    monkeypatch.setattr(workflow, "plan_steps", lambda *args, **kwargs: plans)
+    monkeypatch.setattr(
+        workflow.ask_service,
+        "answer_question",
+        lambda *args, **kwargs: next(answers),
+    )
+
+    result = workflow.run_workflow(db, "综合任务", None)
+
+    assert [step.status for step in result.steps] == ["needs_review", "answered"]
+    assert "需人工核对" in result.answer
+    assert "确定结论" in result.answer
 
 
 def test_step_error_rolls_back_poisoned_session_before_following_steps(monkeypatch):

@@ -35,9 +35,17 @@ def _refusal_payload(metrics: evaluation.RefusalMetrics) -> dict[str, object]:
             "out_of_kb_total": item.out_of_kb_total,
             "out_of_kb_refused": item.out_of_kb_refused,
             "out_of_kb_refusal_rate": item.out_of_kb_refusal_rate,
+            "out_of_kb_statuses": item.out_of_kb_statuses,
+            "out_of_kb_answer_rate": item.out_of_kb_answer_rate,
+            "out_of_kb_review_rate": item.out_of_kb_review_rate,
+            "out_of_kb_hard_refusal_rate": item.out_of_kb_hard_refusal_rate,
             "in_kb_total": item.in_kb_total,
             "in_kb_refused": item.in_kb_refused,
             "in_kb_false_refusal_rate": item.in_kb_false_refusal_rate,
+            "in_kb_statuses": item.in_kb_statuses,
+            "in_kb_answer_rate": item.in_kb_answer_rate,
+            "in_kb_review_rate": item.in_kb_review_rate,
+            "in_kb_hard_refusal_rate": item.in_kb_hard_refusal_rate,
             "refusal_reasons": item.refusal_reasons,
         }
 

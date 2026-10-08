@@ -17,6 +17,77 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNullableFiniteNumber(value: unknown): value is number | null {
+  return value === null || isFiniteNumber(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isDocumentImage(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return isFiniteNumber(value.ordinal)
+    && typeof value.source_reference === "string"
+    && typeof value.alt_text === "string"
+    && isFiniteNumber(value.char_start)
+    && isFiniteNumber(value.char_end)
+    && typeof value.content_hash === "string"
+    && (value.mime_type === "image/png"
+      || value.mime_type === "image/jpeg"
+      || value.mime_type === "image/webp")
+    && isFiniteNumber(value.file_size)
+    && isFiniteNumber(value.width)
+    && isFiniteNumber(value.height)
+    && typeof value.content_url === "string"
+    && value.content_url.startsWith("/api/v1/");
+}
+
+function isCitation(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return isFiniteNumber(value.index)
+    && isFiniteNumber(value.chunk_id)
+    && isFiniteNumber(value.doc_id)
+    && typeof value.doc_title === "string"
+    && typeof value.chunk_text === "string"
+    && isFiniteNumber(value.char_start)
+    && isFiniteNumber(value.char_end)
+    && Array.isArray(value.images)
+    && value.images.every(isDocumentImage);
+}
+
+function isEvidenceCandidate(value: unknown): boolean {
+  if (!isRecord(value) || !isCitation(value)) return false;
+  return isNullableFiniteNumber(value.vector_similarity)
+    && isFiniteNumber(value.rrf_score)
+    && isNullableFiniteNumber(value.vector_rank)
+    && isNullableFiniteNumber(value.keyword_rank);
+}
+
+function isRetrievalEvidence(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (
+    value.band !== "sufficient"
+    && value.band !== "borderline"
+    && value.band !== "insufficient"
+  ) return false;
+  if (
+    !isFiniteNumber(value.candidate_count)
+    || !Number.isInteger(value.candidate_count)
+    || value.candidate_count < 0
+    || !isNullableFiniteNumber(value.max_vector_similarity)
+    || !isFiniteNumber(value.refusal_threshold)
+    || !isFiniteNumber(value.answer_threshold)
+  ) return false;
+  return value.refusal_threshold >= -1
+    && value.refusal_threshold < value.answer_threshold
+    && value.answer_threshold <= 1;
+}
+
 function parseJson(message: SseMessage): unknown {
   try {
     return JSON.parse(message.data) as unknown;
@@ -44,12 +115,20 @@ function parseDelta(value: unknown): string {
 }
 
 function parseResult(value: unknown): AnswerResponse {
+  const statuses = new Set(["answered", "needs_review", "insufficient", "unverified", "error"]);
   if (
     !isRecord(value)
     || typeof value.question !== "string"
     || typeof value.content !== "string"
+    || typeof value.status !== "string"
+    || !statuses.has(value.status)
+    || !isNullableString(value.session_id)
     || !(typeof value.search_query === "string" || value.search_query === null)
     || !Array.isArray(value.citations)
+    || !value.citations.every(isCitation)
+    || !Array.isArray(value.possible_sources)
+    || !value.possible_sources.every(isEvidenceCandidate)
+    || !(value.evidence === null || isRetrievalEvidence(value.evidence))
     || typeof value.refused !== "boolean"
     || !(typeof value.refusal_reason === "string" || value.refusal_reason === null)
   ) {

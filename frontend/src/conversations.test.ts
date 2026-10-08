@@ -35,9 +35,12 @@ function answer(content = "answer"): AnswerResponse {
   return {
     question: "question",
     content,
+    status: "answered",
     session_id: null,
     search_query: null,
     citations: [],
+    possible_sources: [],
+    evidence: null,
     refused: false,
     refusal_reason: null,
   };
@@ -91,5 +94,22 @@ describe("ConversationStore", () => {
       { question: "q6", answer: "a6" },
       { question: "q7", answer: "a7" },
     ]);
+  });
+
+  it("keeps gray-zone results visible locally but out of follow-up context", () => {
+    const storage = new MemoryStorage();
+    const store = new ConversationStore(storage, () => "c-1");
+    const conversation = store.start();
+    expect(store.remember(conversation.id, turn(1))).toBe(true);
+    const gray = turn(2);
+    gray.answer.status = "needs_review";
+    gray.answer.refused = true;
+    gray.answer.refusal_reason = "borderline_relevance";
+    gray.answerText = "可能有关，但没有形成回答";
+    expect(store.remember(conversation.id, gray)).toBe(true);
+
+    const active = store.active();
+    expect(active?.turns).toHaveLength(2);
+    expect(store.history(active!)).toEqual([{ question: "q1", answer: "a1" }]);
   });
 });

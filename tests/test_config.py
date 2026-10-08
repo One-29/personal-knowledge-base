@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
 from sqlalchemy.engine import make_url
 
 from app.core.config import Settings
@@ -22,6 +24,8 @@ def test_default_model_configuration_matches_documented_runtime(monkeypatch):
         "KNOWBASE_DATA_DIR",
         "DATABASE_URL",
         "STORAGE_DIR",
+        "REFUSAL_SIMILARITY_THRESHOLD",
+        "ANSWER_SIMILARITY_THRESHOLD",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -35,10 +39,12 @@ def test_default_model_configuration_matches_documented_runtime(monkeypatch):
     assert defaults.embedding_retry_base_seconds == 0.5
     assert defaults.llm_base_url == "https://api.siliconflow.cn/v1"
     assert defaults.llm_model == "deepseek-ai/DeepSeek-V4-Flash"
+    assert defaults.refusal_similarity_threshold == 0.45
+    assert defaults.answer_similarity_threshold == 0.55
     assert make_url(defaults.database_url).get_backend_name() == "sqlite"
     assert Path(make_url(defaults.database_url).database).resolve() == (
         defaults.data_dir / "knowbase.db"
-    )
+    ).resolve()
     assert defaults.storage_dir == defaults.data_dir / "storage"
 
 
@@ -106,3 +112,13 @@ def test_data_dir_override_is_loaded_from_dotenv(monkeypatch, tmp_path):
     configured = Settings(_env_file=dotenv)
 
     assert configured.data_dir == expected.resolve()
+
+
+@pytest.mark.parametrize(("lower", "upper"), [(0.55, 0.55), (0.60, 0.55)])
+def test_relevance_thresholds_must_form_a_non_empty_gray_zone(lower, upper):
+    with pytest.raises(ValidationError, match="必须小于"):
+        Settings(
+            _env_file=None,
+            refusal_similarity_threshold=lower,
+            answer_similarity_threshold=upper,
+        )

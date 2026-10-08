@@ -5,8 +5,10 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .evidence import AnswerStatus, EvidenceBand
+
 if TYPE_CHECKING:
-    from .ask import CitationData
+    from .evidence import CitationData, EvidenceCandidateData
 
 
 class DocStatus(str, Enum):
@@ -160,14 +162,58 @@ def citations_out(citations: Iterable["CitationData"]) -> list[CitationOut]:
     ]
 
 
+class EvidenceCandidateOut(CitationOut):
+    """灰区候选来源；只供人工核对，不代表回答已经正式引用。"""
+
+    vector_similarity: float | None = None
+    rrf_score: float
+    vector_rank: int | None = None
+    keyword_rank: int | None = None
+
+
+def evidence_candidates_out(
+    candidates: Iterable["EvidenceCandidateData"],
+) -> list[EvidenceCandidateOut]:
+    return [
+        EvidenceCandidateOut(
+            index=c.index,
+            chunk_id=c.chunk_id,
+            doc_id=c.doc_id,
+            doc_title=c.doc_title,
+            chunk_text=c.chunk_text,
+            char_start=c.char_start,
+            char_end=c.char_end,
+            images=[DocumentImageOut.model_validate(image) for image in c.images],
+            vector_similarity=c.vector_similarity,
+            rrf_score=c.rrf_score,
+            vector_rank=c.vector_rank,
+            keyword_rank=c.keyword_rank,
+        )
+        for c in candidates
+    ]
+
+
+class RetrievalEvidenceOut(BaseModel):
+    """双阈值判定摘要，供界面解释灰区与拒答。"""
+
+    band: EvidenceBand
+    candidate_count: int = Field(ge=0)
+    max_vector_similarity: float | None = None
+    refusal_threshold: float
+    answer_threshold: float
+
+
 class AnswerOut(BaseModel):
     """问答响应：拒答也是 200 + refused=true 的正常业务结果。"""
 
     question: str
     content: str
+    status: AnswerStatus = AnswerStatus.ANSWERED
     session_id: str | None = None
     search_query: str | None = None    # 实际检索用语（有会话追问时可能被改写）
-    citations: list[CitationOut] = []
+    citations: list[CitationOut] = Field(default_factory=list)
+    possible_sources: list[EvidenceCandidateOut] = Field(default_factory=list)
+    evidence: RetrievalEvidenceOut | None = None
     refused: bool = False
     refusal_reason: str | None = None
 
@@ -197,10 +243,11 @@ class WorkflowStepOut(BaseModel):
     index: int
     goal: str
     query: str
-    status: str                        # answered / insufficient / error
+    status: str                        # answered / needs_review / insufficient / error
     conclusion: str | None = None      # answered 时的结论
     note: str | None = None            # 缺料或故障说明
-    citations: list[CitationOut] = []
+    citations: list[CitationOut] = Field(default_factory=list)
+    possible_sources: list[EvidenceCandidateOut] = Field(default_factory=list)
 
 
 class WorkflowResultOut(BaseModel):
@@ -209,7 +256,7 @@ class WorkflowResultOut(BaseModel):
     task: str
     steps: list[WorkflowStepOut]
     answer: str
-    citations: list[CitationOut] = []
+    citations: list[CitationOut] = Field(default_factory=list)
 
 
 class GraphNodeOut(BaseModel):

@@ -10,6 +10,7 @@ from app import crud, evaluation, ingest, storage
 from app.core.config import settings
 from app.models import Document, KnowledgeBase
 from app.schemas import KnowledgeBaseCreate
+from app.vault.coordinator import commit_full_snapshot
 
 from .environment import validate_eval_database_session, validate_eval_environment
 
@@ -133,7 +134,9 @@ def build_eval_kbs(
                 raise RuntimeError(f"候选评估知识库在切换前消失：{key}")
             staging.name = library.name
             staging.description = f"固定评估基线 v{dataset.version} · {key}"
-        db.commit()
+        # SQLite 评估也启用 Vault。删除旧库与候选改名必须和完整清单一起提交，
+        # 否则首次运行后清单仍指向已删除的旧 id，第二次评估会无法恢复。
+        commit_full_snapshot(db)
     except Exception:
         db.rollback()
         for staging_id in staging_ids.values():
