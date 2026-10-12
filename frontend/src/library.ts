@@ -196,6 +196,7 @@ function renderDocuments(): void {
       <td class="acts">
         <button type="button" class="table-action" data-open-doc="${document.id}" data-title="${escapeHtml(document.title)}">查看</button>
         <button type="button" class="table-action" data-again="${document.id}">重传</button>
+        <button type="button" class="table-action" data-reindex="${document.id}" ${document.status === "pending" || document.status === "processing" ? "disabled" : ""} title="用已保存原文重新建立索引，成功后替换旧索引">更新索引</button>
         <button type="button" class="table-action danger" data-remove="${document.id}">删除</button>
       </td>
     </tr>${document.last_error_message ? `<tr class="error-row"><td colspan="7"><span class="hint-inline">${
@@ -214,6 +215,21 @@ function renderDocuments(): void {
   queryAll<HTMLButtonElement>("[data-again]", body).forEach((button) => {
     button.addEventListener("click", () => reuploadDocument(Number(button.dataset.again)));
   });
+  queryAll<HTMLButtonElement>("[data-reindex]", body).forEach((button) => {
+    button.addEventListener("click", () => { void reindexDocument(Number(button.dataset.reindex), button); });
+  });
+}
+
+async function reindexDocument(documentId: number, button: HTMLButtonElement): Promise<void> {
+  button.disabled = true;
+  try {
+    await api<UploadResult>(`/documents/${documentId}/reindex`, { method: "POST" });
+    notify("正在按当前规则更新索引；完成前仍可使用旧索引");
+    await loadDocuments();
+  } catch (error) {
+    notify(friendlyError(error, "更新索引"), true);
+    button.disabled = false;
+  }
 }
 
 async function deleteDocument(id: string): Promise<void> {

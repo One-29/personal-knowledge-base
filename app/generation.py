@@ -1,6 +1,6 @@
 """生成层（M3）：LLM 调用、提示词构造、引用校验（04 §5）。
 
-提示词约束（第一层防线）：只基于提供的块作答，逐句标注 `[n]`。
+提示词约束（第一层防线）：只基于提供的块作答，为独立论点标注 `[n]`。
 引用校验（第二层，**纯规则必执行**）：解析回答中的 `[n]`，断言其落在
 「本次提供的块编号集合」内——越界即幻觉引用。生成不可控，校验必须可控。
 
@@ -10,6 +10,7 @@
 import json
 import logging
 import re
+import unicodedata
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Protocol
 
@@ -20,6 +21,7 @@ from .http_client import get_http_client
 from .retrieval import RetrievedChunk
 
 if TYPE_CHECKING:                      # 仅类型检查期导入，避免运行期循环依赖
+    from .evidence import CitationData
     from .session import Turn as TurnRef
 
 logger = logging.getLogger(__name__)
@@ -31,14 +33,15 @@ SYSTEM_PROMPT_TEMPLATE = """你是一个严谨的知识库问答助手。只能�
 
 回答方式：
 1. 先直接给出结论，再用资料里的具体内容解释**为什么**或**怎么做**——把机制、步骤、条件、区别、原因展开写清楚，资料里写到的细节不要省略。
-2. 资料涉及多个相关点时，分点或分段组织，每点各自标注来源。
+2. 资料涉及多个相关点时，分点或分段组织，每个独立论点各自标注来源。
 3. 资料里没有的内容一律不写，也不要补充你自己的常识；宁可少写，不可编造。
 4. 用简洁的书面语直接回答，不要用「根据资料」「资料显示」这类套话开头。
 
 引用与边界：
-5. 每个陈述句后必须标注来源编号，格式为 [n]，n 是资料片段的编号。
+5. 来源编号写在论点句末标点之后，例如“结论及依据。[1]”。同一论点引用同一资料片段只标一次；若多个片段内容重复，引用最直接的一处即可。不要在段首、行首堆叠编号。相邻句共同说明同一论点且依据相同时，可在该论点末统一标注。
 6. **本次资料片段只有 {count} 条，合法编号仅限 [1] 到 [{count}]**，不得使用其它编号。
-7. 资料不足以回答时，只回复：资料不足，无法回答。
+7. 保留原文的否定、条件、转折与适用范围；片段注明的上下文来源必须一起阅读，不能只摘结论。无法确认指代或前提时，只回复：上下文不足，无法确定。
+8. 资料不足以回答时，只回复：资料不足，无法回答。
 """
 
 
@@ -187,15 +190,113 @@ def get_llm_provider() -> LLMProvider:
     )
 
 
-def build_user_prompt(question: str, chunks: list[RetrievedChunk]) -> str:
-    """把候选块按 [1..n] 编号拼进提示：编号即回答可引用的全部来源。"""
-    blocks = "\n\n".join(
-        f"[{index}] {chunk.content.strip()}" for index, chunk in enumerate(chunks, start=1)
-    )
+def _source_context(
+    chunks: list[RetrievedChunk],
+    citations: list["CitationData"] | None = None,
+) -> str:
+    """编号原文并附来源元数据，不夹带回答任务指令。"""
+    sources = {citation.chunk_id: citation for citation in citations or []}
+    indexes = {chunk.chunk_id: i for i, chunk in enumerate(chunks, 1)}
+    blocks: list[str] = []
+    numbered = list(enumerate(chunks, start=1))
+    if any(c.context_chunk_ids for c in sources.values()):
+        numbered.sort(key=lambda item: (item[1].doc_id, item[1].char_start, item[1].char_end))
+    for index, chunk in numbered:
+        source = sources.get(chunk.chunk_id)
+        metadata = (
+            f"文档名称：{source.doc_title}\n原文字符位置：{source.char_start}–{source.char_end}\n"
+            if source is not None else ""
+        )
+        if source is not None and source.context_chunk_ids:
+            related = "、".join(f"[{indexes[cid]}]" for cid in source.context_chunk_ids if cid in indexes)
+            metadata += f"须结合上下文来源：{related}；条件与指代不得省略。\n"
+        blocks.append(f"[{index}] {metadata}原文：\n{chunk.content.strip()}")
+    return "\n\n".join(blocks)
+
+
+def build_user_prompt(
+    question: str,
+    chunks: list[RetrievedChunk],
+    citations: list["CitationData"] | None = None,
+) -> str:
+    """知识回答的原文与输出要求；出处核对使用独立指令。"""
+    context = _source_context(chunks, citations)
     return (
-        f"资料片段：\n\n{blocks}\n\n问题：{question}\n\n"
-        "请先给结论，再用资料里的内容解释原因或做法；资料写到几个要点就展开几点，逐句标注引用编号。"
+        f"资料片段：\n\n{context}\n\n问题：{question}\n\n"
+        "请先给结论，再用资料里的内容解释原因或做法；资料写到几个要点就展开几点，每个独立论点在句末标点后标注来源，避免重复堆叠编号。"
+        "要求出处时使用所给文档名称与引用；未记载的作者、书名或原始论文出处不可补写。比较多个对象时，只比较原文实际支持的内容，并说明未覆盖的部分。"
     )
+
+
+class InvalidSourceSelection(ValueError):
+    """模型返回的来源选择不是合法编号列表。"""
+
+
+SOURCE_SELECTION_PROMPT = """核对本次问题在前序正式引用的原文中的出处，不重新回答知识问题。
+本类步骤整理的是前序已经涉及的内容：问“判别方法的出处”时，核对前序所用的精确定义、存在条件或判别依据的原文位置，不要求原文出现“判别方法”字样。不要将这种出处核对误解为穷举本领域所有方法。
+1. 识别本次问题所指的具体对象、定义/判据及范围，只选择直接记载这些内容的原文。不要把共同主题、背景、类比或另一个对象的内容当作本项出处。
+2. 不依据文档名称、前序回答或常识判断。多个对象可能在同一文档中，但不能因此互相借用出处。
+3. 每个匹配必须提供 subject 和 quote。subject 是问题与片段原文共同出现的具体对象名，必须逐字提取，不要附加“判别方法”“出处”等提问要求；例如对象名是“函数极限”时，不写成“函数极限判别方法”。quote 从该片段连续复制，至少 8 个非空白字符，直接记载定义、条件或方法，不能只摘标题；对象名可以由该片段标题或明确标注的上下文来源确认，无需强行重复在摘录里，不能借用未关联的其他片段。可忽略空白差别，不得改写摘录。
+4. 区分某一种定义/判据与全部判别方法；原文不支持所问范围时返回空列表。不要增加问题未要求的对象。
+5. 只输出 JSON 对象：{{"source_matches": [{{"source_index": 1, "subject": "目标对象", "quote": "原文证据摘录"}}]}}；无出处为 {{"source_matches": []}}。合法编号只有 1 到 {count}，不添加其它字段。"""
+
+
+def _normalize_source_text(value: str) -> str:
+    """仅忽略 Unicode 表示与空白差异，不替换或改写证据内容。"""
+    return "".join(unicodedata.normalize("NFKC", value).split())
+
+
+def select_source_indexes(
+    question: str,
+    chunks: list[RetrievedChunk],
+    citations: list["CitationData"],
+    provider: LLMProvider | None = None,
+) -> list[int]:
+    """一次局部核对：验证编号、问题对象及逐字原文证据，不执行检索。"""
+    llm = provider or get_llm_provider()
+    raw = llm.complete(
+        SOURCE_SELECTION_PROMPT.format(count=len(chunks)),
+        f"前序正式引用的原文：\n\n{_source_context(chunks, citations)}\n\n问题：{question}\n\n"
+        "只核对本问题的直接出处，按指定 JSON 返回对象名与证据摘录；不要输出比较结论或扩展到其它对象。",
+    ).strip()
+    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw)
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise InvalidSourceSelection("来源选择不是 JSON") from exc
+    if not isinstance(data, dict) or set(data) != {"source_matches"}:
+        raise InvalidSourceSelection("来源选择字段不合法")
+    matches = data["source_matches"]
+    if not isinstance(matches, list):
+        raise InvalidSourceSelection("来源匹配列表不合法")
+    indexes: list[int] = []
+    citations_by_id = {c.chunk_id: c for c in citations}
+    index_by_id = {c.chunk_id: i for i, c in enumerate(chunks, 1)}
+    normalized_question = _normalize_source_text(question)
+    for match in matches:
+        if not isinstance(match, dict) or set(match) != {"source_index", "subject", "quote"}:
+            raise InvalidSourceSelection("来源匹配字段不合法")
+        index, subject, quote = match["source_index"], match["subject"], match["quote"]
+        if isinstance(index, bool) or not isinstance(index, int) or not 1 <= index <= len(chunks):
+            raise InvalidSourceSelection("来源编号不合法")
+        if not isinstance(subject, str) or not isinstance(quote, str):
+            raise InvalidSourceSelection("来源对象或摘录类型不合法")
+        subject, quote = _normalize_source_text(subject), _normalize_source_text(quote)
+        original_text = _normalize_source_text(chunks[index - 1].content)
+        source = citations_by_id.get(chunks[index - 1].chunk_id)
+        context_ids = source.context_chunk_ids if source else ()
+        subject_text = original_text + "".join(
+            _normalize_source_text(chunks[index_by_id[cid] - 1].content)
+            for cid in context_ids if cid in index_by_id
+        )
+        if (
+            not subject or subject not in normalized_question or subject not in subject_text
+            or len(quote) < 8 or quote not in original_text
+        ):
+            raise InvalidSourceSelection("来源对象或证据摘录无法与问题及原文对应")
+        indexes.append(index)
+        indexes.extend(index_by_id[cid] for cid in context_ids if cid in index_by_id)
+    return list(dict.fromkeys(indexes))
 
 
 def parse_citations(content: str) -> list[int]:
@@ -221,22 +322,26 @@ def generate_answer(
     question: str,
     chunks: list[RetrievedChunk],
     provider: LLMProvider | None = None,
+    *,
+    citations: list["CitationData"] | None = None,
 ) -> str:
     """调用 LLM 生成回答（不做校验——校验由调用方按 04 §5 执行）。"""
     llm = provider or get_llm_provider()
     system = build_system_prompt(len(chunks))
-    return llm.complete(system, build_user_prompt(question, chunks)).strip()
+    return llm.complete(system, build_user_prompt(question, chunks, citations)).strip()
 
 
 def stream_answer(
     question: str,
     chunks: list[RetrievedChunk],
     provider: LLMProvider | None = None,
+    *,
+    citations: list["CitationData"] | None = None,
 ) -> Iterator[str]:
     """逐段生成回答；旧式 provider 自动退回单段输出，保持可替换性。"""
     llm = provider or get_llm_provider()
     system = build_system_prompt(len(chunks))
-    user = build_user_prompt(question, chunks)
+    user = build_user_prompt(question, chunks, citations)
     stream = getattr(llm, "stream", None)
     if callable(stream):
         yield from stream(system, user)

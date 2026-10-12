@@ -356,14 +356,14 @@ def test_ask_no_citation_refused(client, db, fake_llm, no_l1_threshold):
     assert resp.json()["refusal_reason"] == "no_citation"
 
 
-def test_ask_insufficient_answer_maps_to_low_relevance(client, db, fake_llm, no_l1_threshold):
-    """模型自述「资料不足」→ 归入 low_relevance（文案更贴切）。"""
+def test_ask_insufficient_answer_has_generation_reason(client, db, fake_llm, no_l1_threshold):
+    """模型自述资料不足与 L1 检索低相关度分别记录。"""
     kb_id = client.post("/api/v1/kbs", json={"name": "计算机网络"}).json()["id"]
     _add_doc(db, kb_id, "tcp.md", DOC_TCP)
     fake_llm("资料不足，无法回答。")
 
     resp = client.post("/api/v1/ask", json={"question": "三次握手？", "kb_id": kb_id})
-    assert resp.json()["refusal_reason"] == "low_relevance"
+    assert resp.json()["refusal_reason"] == "generation_insufficient"
 
 
 def test_ask_unknown_kb_404(client, fake_llm):

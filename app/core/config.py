@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     # 切分参数（04 §2 DR1；06 评估阶段用网格扫描回调）
     chunk_max_chars: int = Field(default=800, ge=1)
     chunk_overlap_chars: int = Field(default=80, ge=0)
+    chunk_max_unit_chars: int = Field(default=1600, ge=1)
+    answer_context_max_chars: int = Field(default=12000, ge=1)
+    answer_context_neighbor_chars: int = Field(default=1600, ge=1)
 
     # 检索召回量（04 §4.2 DR3：向量 top-20 + 关键词 top-10 → RRF 合并）
     vector_top_k: int = Field(default=20, ge=1)
@@ -87,9 +90,12 @@ class Settings(BaseSettings):
 
     # 多步工作流（05 §5 AW2）：单次任务的步骤上限
     workflow_max_steps: int = Field(default=5, ge=1)
+    workflow_source_max_chars: int = Field(default=32000, ge=1)
 
     @model_validator(mode="after")
     def derive_local_storage_paths(self) -> "Settings":
+        if self.chunk_max_unit_chars < self.chunk_max_chars:
+            raise ValueError("CHUNK_MAX_UNIT_CHARS 必须不小于 CHUNK_MAX_CHARS")
         if self.chunk_overlap_chars >= self.chunk_max_chars:
             raise ValueError("CHUNK_OVERLAP_CHARS 必须小于 CHUNK_MAX_CHARS")
         if self.refusal_similarity_threshold >= self.answer_similarity_threshold:

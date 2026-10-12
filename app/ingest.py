@@ -22,6 +22,7 @@ from . import crud, document_index, embedding, embedding_profile, package_storag
 from .core.config import settings
 from .db import SessionLocal
 from .embedding import EmbeddingError
+from .chunking import UnsplittableContent
 from .models import Chunk, Document
 from .vault.coordinator import VaultTransactionError, commit_document
 
@@ -158,14 +159,20 @@ def process_document(
             return
 
         _notify_progress(progress, "chunking", db, doc_id)
-        chunks = document_index.split_source(
-            text,
-            config=config,
-            protected_spans=tuple(
-                (int(item["char_start"]), int(item["char_end"]))
-                for item in (package_manifest or {}).get("occurrences", [])
-            ),
-        )
+        try:
+            chunks = document_index.split_source(
+                text, config=config,
+                protected_spans=tuple(
+                    (int(item["char_start"]), int(item["char_end"]))
+                    for item in (package_manifest or {}).get("occurrences", [])
+                ),
+            )
+        except UnsplittableContent as exc:
+            _mark_failure(
+                db, doc_id, version, source_path, ERROR_PARSE_FAILED, str(exc),
+                require_pending_candidate=candidate_is_bound, storage_root=storage_root,
+            )
+            return
         if not chunks:
             _mark_failure(
                 db,

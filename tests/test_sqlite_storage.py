@@ -12,7 +12,8 @@ from sqlalchemy import func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app import crud, embedding, graph, ingest, retrieval, storage
+from app import crud, embedding, graph, ingest, retrieval, storage, workflow
+from app.core.config import settings
 from app.database import SQLITE_SCHEMA_VERSION, create_database_engine, initialize_database
 from app.database.schema import UnsupportedSchemaVersion
 from app.db import Base
@@ -211,6 +212,62 @@ def test_sqlite_ingest_and_hybrid_retrieval_use_real_storage(
         assert "局部变化率" in results[0].content
         assert results[0].vector_rank == 1
         assert results[0].keyword_rank == 1
+
+
+def test_sqlite_workflow_cites_distinct_spans_in_one_limit_document(
+    sqlite_harness,
+    monkeypatch,
+):
+    """比较型任务沿真实 SQLite 入库和检索链路保留片段级出处。"""
+    first = [1.0] + [0.0] * (settings.embedding_dimension - 1)
+    second = [0.0, 1.0] + [0.0] * (settings.embedding_dimension - 2)
+
+    class Embeddings:
+        def embed_texts(self, texts):
+            return [second if "函数极限" in value else first for value in texts]
+
+    class Answers:
+        def __init__(self):
+            self.replies = [
+                '[{"goal":"数列极限定义","query":"数列极限定义"},'
+                '{"goal":"函数极限定义","query":"函数极限定义"}]',
+                "数列极限描述项的趋近。[1]",
+                "函数极限描述函数值的趋近。[1]",
+            ]
+
+        def complete(self, system, user):
+            return self.replies.pop(0)
+
+    monkeypatch.setattr(embedding, "get_embedding_provider", lambda _config=None: Embeddings())
+    source = (
+        "# 数列极限\n\n数列极限描述数列项趋于确定值。\n\n"
+        "# 函数极限\n\n函数极限描述自变量趋近时函数值的变化。\n"
+    )
+    with sqlite_harness.session() as db:
+        kb = KnowledgeBase(name="SQLite 极限库")
+        db.add(kb)
+        db.flush()
+        doc = Document(
+            kb_id=kb.id, title="数列与函数极限.md", file_path="pending",
+            content_hash="limits", char_count=len(source),
+        )
+        db.add(doc)
+        db.flush()
+        doc.file_path = storage.save(kb.id, doc.id, source.encode("utf-8"))
+        db.commit()
+        ingest.process_document(doc.id, db)
+
+        result = workflow.run_workflow(
+            db, "比较数列极限和函数极限，并且给出出处", kb.id, llm=Answers()
+        )
+
+    assert [step.status for step in result.steps] == ["answered", "answered"]
+    assert [source.index for source in result.citations] == [1, 2]
+    assert len({source.chunk_id for source in result.citations}) == 2
+    assert len({source.doc_id for source in result.citations}) == 1
+    assert result.steps[0].conclusion == "数列极限描述项的趋近。[1]"
+    assert result.steps[1].conclusion == "函数极限描述函数值的趋近。[2]"
+    assert "函数极限描述函数值的趋近。[2]" in result.answer
 
 
 def test_sqlite_fts_triggers_follow_update_and_cascade_delete(sqlite_harness):

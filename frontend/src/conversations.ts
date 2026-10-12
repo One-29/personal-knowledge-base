@@ -12,6 +12,7 @@ import type {
   WorkflowStepStatus,
   RetrievalEvidence,
 } from "./types";
+import { normalizeWorkflowCitations } from "./workflow-citations";
 
 const CONVERSATIONS_KEY = "kb_conversations";
 const ACTIVE_CONVERSATION_KEY = "kb_active_conv";
@@ -111,11 +112,14 @@ function parseAnswerStatus(value: unknown, refused: boolean, reason: string | nu
   ) return value;
   if (!refused) return "answered";
   if (reason === "borderline_relevance") return "needs_review";
-  if (reason === "invalid_citation" || reason === "no_citation") return "unverified";
+  if (reason === "invalid_citation" || reason === "no_citation" || reason === "invalid_source_selection") return "unverified";
   if (
     reason === "llm_unavailable"
     || reason === "embedding_unavailable"
     || reason === "embedding_mismatch"
+    || reason === "source_changed"
+    || reason === "source_validation_failed"
+    || reason === "source_context_limit"
   ) return "error";
   return "insufficient";
 }
@@ -179,12 +183,23 @@ function parseWorkflowStep(value: unknown, index: number): WorkflowStep | null {
     note: nullableString(value.note),
     citations: parseCitations(value.citations),
     possible_sources: parseEvidenceCandidates(value.possible_sources),
+    kind: value.kind === "source_lookup" ? "source_lookup" : "research",
+    depends_on: Array.isArray(value.depends_on)
+      ? value.depends_on.filter((entry): entry is number => (
+        typeof entry === "number" && Number.isInteger(entry) && entry > 0
+      )) : [],
+    source_scope: value.source_scope === "all" ? "all" : "topic",
+    search_query: nullableString(value.search_query),
+    evidence: parseRetrievalEvidence(value.evidence),
+    refusal_reason: nullableString(value.refusal_reason),
+    evidence_origin: value.evidence_origin === "retrieval" || value.evidence_origin === "previous_step"
+      ? value.evidence_origin : null,
   };
 }
 
 function parseWorkflow(value: unknown, task: string): WorkflowResponse | null {
   if (!isRecord(value) || typeof value.answer !== "string") return null;
-  return {
+  return normalizeWorkflowCitations({
     task: nullableString(value.task) ?? task,
     steps: Array.isArray(value.steps)
       ? value.steps
@@ -193,7 +208,7 @@ function parseWorkflow(value: unknown, task: string): WorkflowResponse | null {
       : [],
     answer: value.answer,
     citations: parseCitations(value.citations),
-  };
+  });
 }
 
 function parseTurn(value: unknown): ConversationTurn | null {
@@ -208,7 +223,7 @@ function parseTurn(value: unknown): ConversationTurn | null {
     const result = parseWorkflow(value.result, question);
     return result === null
       ? null
-      : { kind: "workflow", question, result, answerText, durationMs, at };
+      : { kind: "workflow", question, result, answerText: result.answer, durationMs, at };
   }
   const answer = parseAnswer(value.answer, question);
   return answer === null

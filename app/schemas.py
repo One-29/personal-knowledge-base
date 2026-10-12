@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -263,6 +263,13 @@ class WorkflowStepOut(BaseModel):
     note: str | None = None            # 缺料或故障说明
     citations: list[CitationOut] = Field(default_factory=list)
     possible_sources: list[EvidenceCandidateOut] = Field(default_factory=list)
+    kind: Literal["research", "source_lookup"] = "research"
+    depends_on: list[int] = Field(default_factory=list)
+    source_scope: Literal["topic", "all"] = "topic"
+    search_query: str | None = None
+    evidence: RetrievalEvidenceOut | None = None
+    refusal_reason: str | None = None
+    evidence_origin: Literal["retrieval", "previous_step"] | None = None
 
 
 class WorkflowResultOut(BaseModel):

@@ -22,6 +22,7 @@ def split_source(
             text,
             max_chars=config.chunk_max_chars,
             overlap_chars=config.chunk_overlap_chars,
+            max_unit_chars=config.chunk_max_unit_chars,
             protected_spans=tuple(protected_spans),
         )
 

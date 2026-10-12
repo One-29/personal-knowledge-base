@@ -7,6 +7,7 @@ from .models import (
     EvidenceBand,
     EvidenceCandidateData,
     RetrievalEvidenceData,
+    SourceSnapshot,
 )
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     "EvidenceBand",
     "EvidenceCandidateData",
     "RetrievalEvidenceData",
+    "SourceSnapshot",
     "classify_retrieval_evidence",
     "classify_similarity",
 ]

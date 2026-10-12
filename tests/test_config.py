@@ -26,6 +26,7 @@ def test_default_model_configuration_matches_documented_runtime(monkeypatch):
         "STORAGE_DIR",
         "REFUSAL_SIMILARITY_THRESHOLD",
         "ANSWER_SIMILARITY_THRESHOLD",
+        "WORKFLOW_SOURCE_MAX_CHARS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -41,6 +42,7 @@ def test_default_model_configuration_matches_documented_runtime(monkeypatch):
     assert defaults.llm_model == "deepseek-ai/DeepSeek-V4-Flash"
     assert defaults.refusal_similarity_threshold == 0.45
     assert defaults.answer_similarity_threshold == 0.55
+    assert defaults.workflow_source_max_chars == 32000
     assert make_url(defaults.database_url).get_backend_name() == "sqlite"
     assert Path(make_url(defaults.database_url).database).resolve() == (
         defaults.data_dir / "knowbase.db"
@@ -134,6 +136,8 @@ def test_relevance_thresholds_must_form_a_non_empty_gray_zone(lower, upper):
         ("retrieval_top_k", 0),
         ("session_ttl_seconds", 0),
         ("session_max_turns", 0),
+        ("workflow_source_max_chars", 0),
+        ("workflow_source_max_chars", -1),
     ],
 )
 def test_runtime_limits_reject_non_positive_values(field, value):

@@ -141,4 +141,68 @@ describe("ConversationStore", () => {
     expect(store.isPersistent()).toBe(false);
     expect(store.load()[0]?.turns).toHaveLength(1);
   });
+
+  it("repairs citation numbers in previously saved workflow turns", () => {
+    const storage = new MemoryStorage();
+    const source = (index: number, chunkId: number) => ({
+      index, chunk_id: chunkId, doc_id: 1, doc_title: "极限.md",
+      chunk_text: "原文", char_start: 0, char_end: 2, images: [],
+    });
+    storage.setItem("kb_conversations", JSON.stringify([{
+      id: "old", title: "旧工作流", at: 1,
+      turns: [{
+        kind: "workflow", question: "比较两种极限", answerText: "旧答案", at: 1,
+        result: {
+          task: "比较两种极限",
+          steps: [
+            { index: 1, goal: "数列", query: "q1", status: "answered",
+              conclusion: "数列。[1]", citations: [source(1, 10)] },
+            { index: 2, goal: "函数", query: "q2", status: "answered",
+              conclusion: "函数。[1]", citations: [source(1, 20)] },
+          ],
+          answer: "数列。[1] 函数。[2]",
+          citations: [source(1, 10), source(2, 20)],
+        },
+      }],
+    }]));
+
+    const saved = new ConversationStore(storage).load()[0]?.turns[0];
+
+    expect(saved?.kind).toBe("workflow");
+    if (saved?.kind !== "workflow") return;
+    expect(saved.result.steps[1]?.conclusion).toBe("函数。[2]");
+    expect(saved.result.steps[1]?.citations[0]?.chunk_id).toBe(20);
+    expect(saved.answerText).toBe(saved.result.answer);
+    expect(saved.result.steps[0]?.evidence).toBeNull();
+    expect(saved.result.steps[0]?.refusal_reason).toBeNull();
+    expect(saved.result.steps[0]?.evidence_origin).toBeNull();
+    expect(saved.result.steps[0]?.depends_on).toEqual([]);
+  });
+
+  it("preserves workflow evidence and source dependencies across a reload", () => {
+    const storage = new MemoryStorage();
+    const store = new ConversationStore(storage, () => "sources");
+    const conversation = store.start();
+    store.remember(conversation.id, {
+      kind: "workflow", question: "出处", answerText: "原文不足", at: 1, durationMs: 10,
+      result: {
+        task: "出处", answer: "原文不足", citations: [],
+        steps: [{
+          index: 2, goal: "数列出处", query: "出处问题", kind: "source_lookup",
+          depends_on: [1], source_scope: "topic", evidence_origin: "previous_step",
+          search_query: null, evidence: null, refusal_reason: "source_not_supported",
+          status: "insufficient", conclusion: null, note: "原文不足",
+          citations: [], possible_sources: [],
+        }],
+      },
+    });
+    const saved = new ConversationStore(storage).load()[0]?.turns[0];
+    expect(saved?.kind).toBe("workflow");
+    if (saved?.kind !== "workflow") return;
+    expect(saved.result.steps[0]).toMatchObject({
+      kind: "source_lookup", depends_on: [1], source_scope: "topic",
+      evidence_origin: "previous_step", search_query: null, evidence: null,
+      refusal_reason: "source_not_supported",
+    });
+  });
 });

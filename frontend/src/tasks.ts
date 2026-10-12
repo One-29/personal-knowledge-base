@@ -17,6 +17,7 @@ import type {
   AskStreamMetadata,
   WorkflowResponse,
 } from "./types";
+import { normalizeWorkflowCitations } from "./workflow-citations";
 let conversations: ConversationStore;
 let savedTimer: number | null = null;
 let storageWarningShown = false;
@@ -243,11 +244,12 @@ async function submitWorkflow(): Promise<void> {
   const startedAt = Date.now();
   let outcome: ActivityOutcome = "done";
   try {
-    const result = await api<WorkflowResponse>("/workflow", {
+    const response = await api<WorkflowResponse>("/workflow", {
       method: "POST",
       signal: controller.signal,
       body: JSON.stringify({ task, kb_id: knowledgeBase ? Number(knowledgeBase) : null }),
     });
+    const result = normalizeWorkflowCitations(response);
     const durationMs = Date.now() - startedAt;
     entry.innerHTML = renderWorkflowEntry(task, result, durationMs);
     bindCitations(entry, [

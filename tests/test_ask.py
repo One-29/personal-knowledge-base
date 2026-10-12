@@ -272,13 +272,15 @@ def test_model_calls_release_single_connection_pool(monkeypatch, kb_id):
                           "description TEXT, created_at DATETIME, updated_at DATETIME)"))
         conn.execute(text("INSERT INTO knowledge_bases (id, name) VALUES (1, '知识库')"))
         conn.execute(text(
-            "CREATE TABLE documents (id INTEGER PRIMARY KEY, title TEXT, file_path TEXT)"
+            "CREATE TABLE documents (id INTEGER PRIMARY KEY, title TEXT, file_path TEXT, "
+            "kb_id INTEGER, content_hash TEXT, char_count INTEGER)"
         ))
-        conn.execute(text("INSERT INTO documents VALUES (1, '原文.md', '')"))
+        conn.execute(text("INSERT INTO documents VALUES (1, '原文.md', '', 1, 'published', 4)"))
         conn.execute(text(
             "CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
         ))
-        conn.execute(text("CREATE TABLE chunks (id INTEGER PRIMARY KEY)"))
+        conn.execute(text("CREATE TABLE chunks (id INTEGER PRIMARY KEY, doc_id INTEGER, kb_id INTEGER, content TEXT, char_start INTEGER, char_end INTEGER)"))
+        conn.execute(text("INSERT INTO chunks VALUES (1, 1, 1, '原文内容', 0, 4)"))
 
     calls = []
     with Session(engine) as session:

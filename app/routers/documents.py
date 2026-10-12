@@ -210,6 +210,47 @@ def upload_document(
     return UploadResult(document=_doc_out(doc, task), content_changed=True)
 
 
+@documents_router.post("/{doc_id}/reindex", response_model=UploadResult, status_code=202)
+def reindex_document(
+    doc_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """显式按当前规则重建已保存原文；不受相同内容跳过逻辑影响。
+
+    有未完成候选时返回 409，避免覆盖上传任务。登记后复用版本化入库任务；
+    新索引发布前旧块保持可查询，失败保留旧原文与旧索引。
+    """
+    doc = crud.get_document(db, doc_id, for_update=True)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if doc.status in {"pending", "processing"} or doc.pending_file_path:
+        raise HTTPException(status_code=409, detail="文档已有更新任务，请等待完成后再更新索引")
+    try:
+        text = storage.read(doc.file_path)
+        manifest = package_storage.load_package_manifest(doc.file_path)
+        package_storage.verify_package_source(manifest, text)
+        if manifest is None:
+            storage.verify_hash(storage.resolve_relative(doc.file_path), doc.content_hash)
+    except FileNotFoundError:
+        raise HTTPException(status_code=409, detail="原文文件缺失，请重传原文后更新索引；旧索引仍保留") from None
+    except (OSError, ValueError):
+        raise HTTPException(status_code=409, detail="保存的原文无法通过完整性校验，请核对或重传原文") from None
+    doc.ingest_version += 1
+    doc.pending_file_path = doc.file_path
+    doc.pending_content_hash = doc.content_hash
+    doc.pending_char_count = doc.char_count
+    doc.status = DocStatus.PENDING.value
+    doc.last_error_code = None
+    doc.last_error_message = None
+    task, spec = ingest_tasks.stage_task(db, doc)
+    _commit_document_and_vault(db, doc)
+    db.refresh(doc)
+    db.refresh(task)
+    _schedule_ingest(background_tasks, spec)
+    return UploadResult(document=_doc_out(doc, task), content_changed=False)
+
+
 @documents_router.post("/{doc_id}/reupload", response_model=UploadResult)
 def reupload_document(
     doc_id: int,

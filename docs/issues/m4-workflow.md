@@ -1,13 +1,13 @@
 # [M4] Agent 多步工作流：任务拆解 / 逐步执行 / 缺料可见 / 汇总
 
 > 本文件 = M4 子 Issue 内容（按 `docs/templates/module-design.md` 填写）。
-> 依据：01 §3.3（US-M4-01/02）· 02 §3（M4 边界）· **05 §5（AW1–AW5 已拍板）**。
+> 依据：01 §3.3（US-M4-01/02）· 02 §3（M4 边界）· **05 §5（AW1–AW6 已确认）**。
 
 ## 1. 功能定位与上下游
 
 让用户发起**跨文档综合任务**（如"总结我在 TCP 上记过哪些知识点，逐条给出出处"）：系统自动拆解为子步骤，逐步检索加工，最终汇总为结构化结果，并显式标注哪一步缺料。
 
-- 上游依赖：`M3 问答·溯源·拒答`（每步执行都调 M3 的检索问答，复用同一套检索参数、阈值与防幻觉校验）
+- 上游依赖：`M3 问答·溯源·拒答`（知识步骤调用检索问答，出处步骤调用前序原文核对，复用来源校验；不另造检索与生成逻辑）
 - 下游被依赖：`M5 前端`（展示步骤进度与结果）
 
 ## 2. 数据原型（伪代码）
@@ -16,11 +16,18 @@
 class WorkflowStep:
     index: int
     goal: str                  # 该步要查什么
-    query: str                 # 实际用于检索的问题（规划输出）
+    query: str                 # 规划产生的子问题
     status: str                # answered / needs_review / insufficient / error
     conclusion: str | None     # 该步结论（answered）
     note: str | None           # 缺料或错误说明（insufficient / error）
     citations: list[Citation]  # 该步的引用
+    kind: str                 # research / source_lookup
+    depends_on: list[int]     # 前序步骤编号
+    source_scope: str         # topic / all
+    search_query: str | None  # 实际检索；出处核对无检索
+    evidence: RetrievalEvidence | None
+    refusal_reason: str | None
+    evidence_origin: str | None # retrieval / previous_step
 
 class WorkflowResult:
     task: str
@@ -57,7 +64,10 @@ POST /api/v1/workflow
 - [ ] 步骤上限：默认 5 步，超出的步骤被截断并标注
 - [ ] 执行：逐步调 M3；单步拒答记为 `insufficient`（含原因）、单步技术故障记为 `error` 且**不中断后续步骤**
 - [ ] 汇总：最终答案 + **全局统一编号引用**；越界引用仍被 M3 的纯规则拦截
-- [ ] 缺料可见：最终结果显式标注「第 N 步：知识库无相关内容」（US-M4-02）
+- [ ] 证据不足可见：准确区分检索不足、生成证据不足、前序来源不可用和原文未覆盖，不推断整库无内容
+- [ ] 出处整理通常并入知识回答；独立出处步骤使用前序正式原文，由 M3 核对来源；不再次向量化或检索
+- [ ] 来源范围与已发布版本核对；更新未发布时旧索引仍可使用，已替换或删除的引用不发布
+- [ ] 步骤详情与历史对话保留原因、证据、类型和依赖，旧对话缺失诊断字段时为未知
 - [ ] 测试：规划成功/规划失败退化/单步缺料/单步故障继续/汇总引用统一编号/空任务 422/库不存在 404
 - [ ] Swagger 手工验证 `/workflow` 全流程
 - [ ] PR 关联本 Issue，粒度小

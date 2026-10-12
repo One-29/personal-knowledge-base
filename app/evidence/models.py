@@ -49,6 +49,16 @@ class CitationData:
     char_start: int
     char_end: int
     images: list[ImageReferenceData] = field(default_factory=list)
+    context_chunk_ids: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class SourceSnapshot:
+    """本次问答已发布原文的内部快照；版本指纹不暴露到引用接口。"""
+
+    citation: CitationData
+    kb_id: int
+    indexed_content_hash: str
 
 
 @dataclass(frozen=True)

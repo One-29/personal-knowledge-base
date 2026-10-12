@@ -14,6 +14,7 @@ from ..schemas import (
     WorkflowRequest,
     WorkflowResultOut,
     WorkflowStepOut,
+    RetrievalEvidenceOut,
     citations_out,
     evidence_candidates_out,
 )
@@ -43,6 +44,19 @@ def run_workflow(payload: WorkflowRequest, db: Session = Depends(get_db)):
                 note=step.note,
                 citations=citations_out(step.citations),
                 possible_sources=evidence_candidates_out(step.possible_sources),
+                kind=step.kind,
+                depends_on=step.depends_on,
+                source_scope=step.source_scope,
+                search_query=step.search_query,
+                evidence=(RetrievalEvidenceOut(
+                    band=step.evidence.band,
+                    candidate_count=step.evidence.candidate_count,
+                    max_vector_similarity=step.evidence.max_vector_similarity,
+                    refusal_threshold=step.evidence.refusal_threshold,
+                    answer_threshold=step.evidence.answer_threshold,
+                ) if step.evidence is not None else None),
+                refusal_reason=step.refusal_reason,
+                evidence_origin=step.evidence_origin,
             )
             for step in result.steps
         ],

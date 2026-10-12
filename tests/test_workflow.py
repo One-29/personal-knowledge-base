@@ -100,6 +100,11 @@ def test_remap_citations_keeps_unknown_index():
     assert workflow.remap_citations("甲[9]", {1: 1}) == "甲[9]"
 
 
+def test_remap_citations_rejects_unknown_index_in_strict_mode():
+    with pytest.raises(ValueError, match="没有对应的来源"):
+        workflow.remap_citations("甲[9]", {1: 1}, strict=True)
+
+
 def test_synthesize_numbers_citations_globally():
     """跨步汇总：引用全局连续编号，正文同步重映射。"""
     from app.ask import CitationData
@@ -120,6 +125,76 @@ def test_synthesize_numbers_citations_globally():
     assert "结论甲[1]" in answer
     assert "结论乙[2]和[3]" in answer                        # 第二步的 [1][2] 重映射为 [2][3]
     assert [c.chunk_id for c in citations] == [11, 22, 23]
+    assert steps[1].conclusion == "结论乙[2]和[3]"           # 步骤正文也必须使用全局编号
+    assert [c.index for c in steps[1].citations] == [2, 3]
+
+
+def test_synthesize_reuses_chunk_across_steps_but_keeps_distinct_spans():
+    """同一原文块只分配一个编号；同文档的不同块仍能分别溯源。"""
+    from app.ask import CitationData
+
+    def _cite(index: int, chunk_id: int) -> CitationData:
+        return CitationData(index=index, chunk_id=chunk_id, doc_id=1,
+                            doc_title="极限.md", chunk_text="原文", char_start=0,
+                            char_end=10)
+
+    steps = [
+        workflow.WorkflowStepData(index=1, goal="数列极限", query="q1", status="answered",
+                                  conclusion="定义。[1]", citations=[_cite(1, 11)]),
+        workflow.WorkflowStepData(index=2, goal="函数极限", query="q2", status="answered",
+                                  conclusion="对比。[1][2]",
+                                  citations=[_cite(1, 11), _cite(2, 12)]),
+    ]
+
+    answer, citations = workflow.synthesize("比较两种极限", steps)
+
+    assert [c.chunk_id for c in citations] == [11, 12]
+    assert [c.index for c in citations] == [1, 2]
+    assert steps[1].conclusion == "对比。[1][2]"
+    assert [c.index for c in steps[1].citations] == [1, 2]
+    assert "对比。[1][2]" in answer
+
+
+def test_synthesize_hides_step_with_unmapped_citation():
+    step = workflow.WorkflowStepData(
+        index=1, goal="比较", query="q", status="answered", conclusion="无来源。[3]"
+    )
+
+    answer, citations = workflow.synthesize("比较两种极限", [step])
+
+    assert step.status == "error"
+    assert step.conclusion is None
+    assert step.citations == []
+    assert citations == []
+    assert "无来源" not in answer
+    assert "引用无法与来源对应" in answer
+
+
+def test_unverified_answer_is_not_reported_as_missing_material(monkeypatch):
+    """引用校验失败应报告步骤未完成，不能误称知识库没有材料。"""
+    from app.ask import AnswerData
+    from app.evidence import AnswerStatus
+
+    class Session:
+        def rollback(self):
+            pass
+
+    monkeypatch.setattr(workflow.ask_service, "validate_kb", lambda *args: None)
+    monkeypatch.setattr(
+        workflow.ask_service,
+        "answer_question",
+        lambda *args, **kwargs: AnswerData(
+            question="q", content="引用编号无法核对", status=AnswerStatus.UNVERIFIED,
+        ),
+    )
+    result = workflow.run_workflow(
+        Session(), "比较两种极限", None,
+        llm=_ScriptedLLM(['[{"goal":"核对极限","query":"q"}]']),
+    )
+
+    assert result.steps[0].status == "error"
+    assert "引用编号无法核对" in result.answer
+    assert "知识库无相关内容" not in result.answer
 
 
 # ── 端到端编排（真库 + 脚本化 LLM） ─────────────────────────
@@ -140,7 +215,8 @@ def test_run_workflow_multi_steps(db, client, no_l1_threshold):
     assert [s.status for s in result.steps] == ["answered", "insufficient"]
     assert result.steps[1].note is not None                  # 缺料说明可见（US-M4-02）
     assert "**1. 查握手**" in result.answer
-    assert "知识库无相关内容" in result.answer
+    assert "本步证据不足" in result.answer
+    assert result.steps[1].refusal_reason == "generation_insufficient"
     assert len(result.citations) == 1
 
 
@@ -204,7 +280,7 @@ def test_workflow_step_error_does_not_expose_internal_exception(monkeypatch):
 
 def test_workflow_keeps_gray_step_distinct_and_continues(db, monkeypatch):
     from app.ask import AnswerData
-    from app.evidence import AnswerStatus
+    from app.evidence import AnswerStatus, CitationData
 
     plans = [
         workflow.StepPlan(goal="核对边界材料", query="边界问题"),
@@ -219,7 +295,14 @@ def test_workflow_keeps_gray_step_distinct_and_continues(db, monkeypatch):
                 refused=True,
                 refusal_reason="borderline_relevance",
             ),
-            AnswerData(question="确定问题", content="确定结论 [1]。"),
+            AnswerData(
+                question="确定问题",
+                content="确定结论。[1]",
+                citations=[CitationData(
+                    index=1, chunk_id=42, doc_id=7, doc_title="原文.md",
+                    chunk_text="确定材料", char_start=0, char_end=4,
+                )],
+            ),
         ]
     )
     monkeypatch.setattr(workflow, "plan_steps", lambda *args, **kwargs: plans)

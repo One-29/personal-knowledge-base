@@ -17,7 +17,7 @@ import type {
 const STEP_STATUS: Record<WorkflowStepStatus, string> = {
   answered: "已作答",
   needs_review: "待核对",
-  insufficient: "没有材料",
+  insufficient: "证据不足",
   error: "未完成",
 };
 
@@ -28,6 +28,29 @@ const ANSWER_LABEL: Record<AnswerStatus, string> = {
   unverified: "引用校验未通过",
   error: "服务未完成",
 };
+
+function refusalLabel(reason: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    empty_kb: "检索未取得候选原文",
+    low_relevance: "检索相关性不足",
+    generation_insufficient: "原文不足以支持回答",
+    borderline_relevance: "需人工核对原文",
+    dependency_unavailable: "前序来源尚不可用",
+    source_not_supported: "已有原文未覆盖本项内容",
+    source_changed: "原文来源已变化",
+    source_validation_failed: "原文来源暂无法核对",
+    source_context_limit: "来源核对长度超限",
+    context_incomplete: "必要上下文不完整",
+    invalid_source_selection: "来源核对未通过校验",
+    invalid_citation: "引用编号未通过校验",
+    no_citation: "回答缺少有效引用",
+    llm_unavailable: "回答服务暂不可用",
+    embedding_unavailable: "检索服务暂不可用",
+    embedding_mismatch: "向量模型与索引不一致",
+    step_error: "步骤执行未完成",
+  };
+  return reason ? labels[reason] ?? "未能形成可靠回答" : "未能形成可靠回答";
+}
 
 function relevanceSummary(evidence: RetrievalEvidence | null): string {
   if (evidence === null) return "";
@@ -70,7 +93,7 @@ export function renderAnswerEntry(
 ): string {
   const refusal = answer.refused
     ? `<span class="answer-status ${answer.status}">${escapeHtml(
-      answer.status === "needs_review" ? "未生成回答" : answer.refusal_reason || "未能形成可靠回答",
+      answer.status === "needs_review" ? "未生成回答" : refusalLabel(answer.refusal_reason),
     )}</span>`
     : "";
   const rewritten = answer.search_query && answer.search_query !== question
@@ -90,7 +113,7 @@ export function renderAnswerEntry(
       </div>
       ${rewritten}
       ${relevanceSummary(answer.evidence)}
-      <div class="entry-a rich-text">${withCitations(answer.content)}</div>
+      <div class="entry-a rich-text">${withCitations(answer.content, answer.citations)}</div>
       ${possibleSourceList(answer.possible_sources)}
       ${sourceSummary(answer.citations)}
     </div>`;
@@ -126,20 +149,27 @@ export function renderWorkflowEntry(
   const steps = result.steps.map((step) => {
     const statusLabel = STEP_STATUS[step.status] ?? String(step.status);
     const body = step.status === "answered"
-      ? `<div class="trace-body rich-text">${withCitations(step.conclusion || "")}</div>`
+      ? `<div class="trace-body rich-text">${withCitations(step.conclusion || "", step.citations)}</div>`
       : `<p class="trace-note">${escapeHtml(step.note || "")}</p>`;
-    const citations = step.citations.length > 0
-      ? `<div class="trace-cites">${step.citations.map((citation) => (
-        `<span class="cite" data-chunk="${citation.chunk_id}" data-index="${citation.index}" role="button" tabindex="0" aria-label="打开引用 ${citation.index}">[${citation.index}]</span>`
-      )).join("")}</div>`
+    const sourceLookup = step.kind === "source_lookup";
+    const queryLabel = sourceLookup ? "来源核对问题" : "检索语句";
+    const dependencies = (step.depends_on ?? []).join("、");
+    const sourceOrigin = dependencies ? `第 ${dependencies} 步` : "前序步骤";
+    const origin = step.evidence_origin === "previous_step"
+      ? `<p class="relevance-summary">使用${escapeHtml(sourceOrigin)}的原文核对出处 · 未重复检索</p>`
       : "";
-    return `<li><div class="trace-card">
-      <div class="trace-head">${escapeHtml(step.goal)}
+    const rewritten = !sourceLookup && step.search_query && step.search_query !== step.query
+      ? `<p class="trace-query">实际检索：${escapeHtml(step.search_query)}</p>` : "";
+    const reason = step.refusal_reason
+      ? `<p class="relevance-summary">${escapeHtml(refusalLabel(step.refusal_reason))}</p>` : "";
+    return `<li><details class="trace-card">
+      <summary class="trace-head"><span>${escapeHtml(step.goal)}</span>
         <span class="trace-state ${escapeHtml(step.status)}">${escapeHtml(statusLabel)}</span>
-      </div>
-      <p class="trace-query">检索语句：${escapeHtml(step.query)}</p>
-      ${body}${possibleSourceList(step.possible_sources)}${citations}
-    </div></li>`;
+      </summary>
+      <p class="trace-query">${queryLabel}：${escapeHtml(step.query)}</p>
+      ${rewritten}${origin}${sourceLookup ? "" : relevanceSummary(step.evidence ?? null)}${reason}
+      ${body}${possibleSourceList(step.possible_sources)}
+    </details></li>`;
   }).join("");
   const answered = result.steps.filter((step) => step.status === "answered").length;
   const duration = durationMs === null ? "" : ` · ${Math.max(1, Math.round(durationMs / 1000))} 秒`;
@@ -153,7 +183,7 @@ export function renderWorkflowEntry(
     </div>
     <div class="summary">
       <div class="summary-head"><h3>综合结论</h3><span>${result.citations.length} 条引用</span></div>
-      <div class="entry-a rich-text">${withCitations(result.answer)}</div>
+      <div class="entry-a rich-text">${withCitations(result.answer, result.citations)}</div>
       ${sourceSummary(result.citations)}
     </div>`;
 }

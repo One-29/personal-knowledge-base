@@ -16,7 +16,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -41,10 +42,12 @@ from .evidence import (
     EvidenceBand,
     EvidenceCandidateData,
     RetrievalEvidenceData,
+    SourceSnapshot,
     classify_retrieval_evidence,
 )
 from .generation import LLMError, LLMProvider
-from .models import Document
+from .evidence.context import ContextIncomplete, expand_evidence
+from .models import Chunk, Document
 from .session import Turn as SessionTurn
 
 if TYPE_CHECKING:
@@ -62,7 +65,15 @@ class KnowledgeBaseNotFound(LookupError):
 
 
 REFUSAL_EMPTY_KB = "empty_kb"                 # 库为空 / 无任何命中
-REFUSAL_LOW_RELEVANCE = "low_relevance"       # 最高相似度低于阈值 τ / 模型自述资料不足
+REFUSAL_LOW_RELEVANCE = "low_relevance"       # 检索相似度低于明确拒答线
+REFUSAL_GENERATION_INSUFFICIENT = "generation_insufficient"
+REFUSAL_DEPENDENCY_UNAVAILABLE = "dependency_unavailable"
+REFUSAL_SOURCE_NOT_SUPPORTED = "source_not_supported"
+REFUSAL_SOURCE_CHANGED = "source_changed"
+REFUSAL_SOURCE_VALIDATION_FAILED = "source_validation_failed"
+REFUSAL_INVALID_SOURCE_SELECTION = "invalid_source_selection"
+REFUSAL_SOURCE_CONTEXT_LIMIT = "source_context_limit"
+REFUSAL_CONTEXT_INCOMPLETE = "context_incomplete"
 REFUSAL_BORDERLINE_RELEVANCE = "borderline_relevance"  # 灰区：有候选但不足以自动回答
 REFUSAL_INVALID_CITATION = "invalid_citation"  # 引用越界（幻觉引用）
 REFUSAL_NO_CITATION = "no_citation"           # 有实质内容却零引用（不可溯源）
@@ -71,8 +82,16 @@ REFUSAL_EMBEDDING_UNAVAILABLE = "embedding_unavailable"  # 查询向量服务不
 REFUSAL_EMBEDDING_MISMATCH = "embedding_mismatch"  # 配置与现有向量空间不一致
 
 REFUSAL_MESSAGES = {
-    REFUSAL_EMPTY_KB: "知识库里还没有相关内容，无法回答这个问题。可以先导入相关笔记再试。",
-    REFUSAL_LOW_RELEVANCE: "知识库中没有找到与该问题足够相关的内容，无法给出可信回答。",
+    REFUSAL_CONTEXT_INCOMPLETE: "找到相关内容，但必要的前提、指代或完整原文暂时无法补齐，未生成明确回答。请核对原文、更新索引或缩小问题范围。",
+    REFUSAL_EMPTY_KB: "本次检索未取得候选原文，无法回答这个问题。请核对知识库范围或补充相关笔记。",
+    REFUSAL_LOW_RELEVANCE: "本次检索到的原文相关性未达到回答条件，无法给出可信回答。",
+    REFUSAL_GENERATION_INSUFFICIENT: "已取得相关原文，但提供的内容不足以支持本问题的回答。",
+    REFUSAL_DEPENDENCY_UNAVAILABLE: "前序步骤尚未形成可用的正式引用，无法整理该结论的出处。",
+    REFUSAL_SOURCE_NOT_SUPPORTED: "前序步骤的原文中没有找到能支持本项内容的出处，需要补充检索或资料。",
+    REFUSAL_SOURCE_CHANGED: "原文来源已更新或删除，本次引用无法继续核对，请重新执行。",
+    REFUSAL_SOURCE_VALIDATION_FAILED: "原文来源暂时无法核对，本次结论未发布，请稍后重新执行。",
+    REFUSAL_INVALID_SOURCE_SELECTION: "来源核对结果未通过校验，请重新执行。",
+    REFUSAL_SOURCE_CONTEXT_LIMIT: "待核对的原文超过本次来源核对的长度限制，请按主题拆分任务。",
     REFUSAL_BORDERLINE_RELEVANCE: (
         "找到可能相关的内容，但证据强度处于灰区。系统没有调用回答模型，也没有形成"
         "正式引用；请核对下方候选原文，或换一种更具体的问法。"
@@ -86,7 +105,7 @@ REFUSAL_MESSAGES = {
     ),
 }
 
-# 模型自述"资料不足"的常见说法（此时归入低相关度拒答，文案更贴切）
+# 模型自述资料不足与 L1 检索低相关度分别记录。
 _INSUFFICIENT_MARKERS = ("资料不足", "无法回答", "没有相关", "未提及", "无法确定")
 
 
@@ -103,6 +122,7 @@ class AnswerData:
     refused: bool = False
     refusal_reason: str | None = None
     search_query: str | None = None    # 实际用于检索的问题（有会话时可能被改写）
+    source_snapshots: list[SourceSnapshot] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
         """兼容旧调用方只填写 ``refused``/``refusal_reason`` 的构造方式。"""
@@ -112,17 +132,21 @@ class AnswerData:
             return
         if not self.refused:
             return
-        if self.refusal_reason == REFUSAL_BORDERLINE_RELEVANCE:
+        if self.refusal_reason in {REFUSAL_BORDERLINE_RELEVANCE, REFUSAL_CONTEXT_INCOMPLETE}:
             self.status = AnswerStatus.NEEDS_REVIEW
         elif self.refusal_reason in {
             REFUSAL_INVALID_CITATION,
             REFUSAL_NO_CITATION,
+            REFUSAL_INVALID_SOURCE_SELECTION,
         }:
             self.status = AnswerStatus.UNVERIFIED
         elif self.refusal_reason in {
             REFUSAL_LLM_UNAVAILABLE,
             REFUSAL_EMBEDDING_UNAVAILABLE,
             REFUSAL_EMBEDDING_MISMATCH,
+            REFUSAL_SOURCE_CHANGED,
+            REFUSAL_SOURCE_VALIDATION_FAILED,
+            REFUSAL_SOURCE_CONTEXT_LIMIT,
         }:
             self.status = AnswerStatus.ERROR
         else:
@@ -134,13 +158,15 @@ class AnswerPreparation:
     """已结束数据库读取、可在无连接状态下进入生成阶段的问答快照。"""
 
     question: str
-    search_query: str
+    search_query: str | None
     candidates: list[retrieval.RetrievedChunk]
     candidate_citations: list[CitationData]
     session_id: str | None
     session_store: SessionStore
     retrieval_evidence: RetrievalEvidenceData | None = None
     terminal_result: AnswerData | None = None
+    candidate_source_snapshots: list[SourceSnapshot] = field(default_factory=list)
+    validate_sources: Callable[[list[SourceSnapshot]], set[int]] | None = field(default=None, repr=False)
 
 
 def answer_question(
@@ -239,10 +265,11 @@ def prepare_answer(
             candidates = retrieval.retrieve(
                 db, search_query, query_vector, kb_id, top_k=settings.retrieval_top_k
             )
-            candidate_citations = _build_citations(
+            candidate_sources = _build_source_snapshots(
                 db,
                 list(enumerate(candidates, start=1)),
             )
+            candidate_citations = [source.citation for source in candidate_sources]
         finally:
             db.rollback()
 
@@ -294,14 +321,39 @@ def prepare_answer(
             ),
         )
 
+    # 只在原始检索证据足够时补全；补充块不重新参与 L1 或 RRF。
+    try:
+        with timed_stage("ask.context", anchors=len(candidates)):
+            expanded, dependencies = expand_evidence(
+                db, candidates, max_chars=settings.answer_context_max_chars,
+                neighbor_chars=settings.answer_context_neighbor_chars,
+            )
+            expanded_sources = _build_source_snapshots(db, list(enumerate(expanded, start=1)))
+            for source in expanded_sources:
+                source.citation.context_chunk_ids = dependencies.get(source.citation.chunk_id, ())
+            if len(generation._source_context(expanded, [s.citation for s in expanded_sources])) > settings.answer_context_max_chars:
+                raise ContextIncomplete("含来源元数据的完整证据超过回答预算")
+    except ContextIncomplete as exc:
+        logger.info("context_incomplete: %s", exc)
+        return _terminal_preparation(
+            question=question, search_query=search_query, session_id=session_id, store=store,
+            candidates=candidates, candidate_citations=candidate_citations,
+            result=_refuse(question, REFUSAL_CONTEXT_INCOMPLETE, status=AnswerStatus.NEEDS_REVIEW,
+                           evidence=evidence, possible_sources=_build_possible_sources(candidates, candidate_citations)),
+        )
+    finally:
+        db.rollback()
+
     return AnswerPreparation(
         question=question,
         search_query=search_query,
-        candidates=candidates,
-        candidate_citations=candidate_citations,
+        candidates=expanded,
+        candidate_citations=[source.citation for source in expanded_sources],
         session_id=session_id,
         session_store=store,
         retrieval_evidence=evidence,
+        candidate_source_snapshots=expanded_sources,
+        validate_sources=lambda sources: invalid_source_chunk_ids(db, sources, kb_id),
     )
 
 
@@ -320,6 +372,7 @@ def complete_prepared_answer(
                 prepared.question,
                 prepared.candidates,
                 provider=llm,
+                citations=prepared.candidate_citations,
             )
     except LLMError as exc:
         logger.warning("生成失败: %s", exc)
@@ -331,6 +384,8 @@ def complete_prepared_answer(
 def finish_generated_answer(prepared: AnswerPreparation, content: str) -> AnswerData:
     """对完整模型输出执行 L2 校验，并且只提交经过校验的最终结果。"""
     content = content.strip()
+    if content.startswith("上下文不足"):
+        return refuse_prepared_answer(prepared, REFUSAL_CONTEXT_INCOMPLETE)
 
     # L2：引用越界校验（纯规则，必执行）
     invalid = generation.find_invalid_citations(
@@ -349,12 +404,24 @@ def finish_generated_answer(prepared: AnswerPreparation, content: str) -> Answer
     cited_indexes = generation.parse_citations(content)
     if not cited_indexes:
         reason = (
-            REFUSAL_LOW_RELEVANCE
+            REFUSAL_CONTEXT_INCOMPLETE if "上下文不足" in content else
+            REFUSAL_GENERATION_INSUFFICIENT
             if any(marker in content for marker in _INSUFFICIENT_MARKERS)
             else REFUSAL_NO_CITATION
         )
         logger.info("L2 拒答：回答无有效引用（reason=%s）", reason)
         return refuse_prepared_answer(prepared, reason)
+
+    # 被引用片段依赖的前提同属本次已用证据，后续出处步骤必须保留它们。
+    cited_ids = {c.chunk_id for c in prepared.candidate_citations if c.index in cited_indexes}
+    while True:
+        required = {cid for c in prepared.candidate_citations if c.chunk_id in cited_ids for cid in c.context_chunk_ids}
+        if required <= cited_ids:
+            break
+        if not required <= {c.chunk_id for c in prepared.candidate_citations}:
+            return refuse_prepared_answer(prepared, REFUSAL_CONTEXT_INCOMPLETE)
+        cited_ids.update(required)
+    cited_indexes = [c.index for c in prepared.candidate_citations if c.chunk_id in cited_ids]
 
     result = AnswerData(
         question=prepared.question,
@@ -364,7 +431,18 @@ def finish_generated_answer(prepared: AnswerPreparation, content: str) -> Answer
             for citation in prepared.candidate_citations
             if citation.index in cited_indexes
         ],
+        source_snapshots=[
+            source for source in prepared.candidate_source_snapshots
+            if source.citation.index in cited_indexes
+        ],
     )
+    if prepared.validate_sources is not None:
+        try:
+            if prepared.validate_sources(result.source_snapshots):
+                return refuse_prepared_answer(prepared, REFUSAL_SOURCE_CHANGED)
+        except Exception:
+            logger.warning("回答发布前来源核对失败", exc_info=True)
+            return refuse_prepared_answer(prepared, REFUSAL_SOURCE_VALIDATION_FAILED)
     return finish_prepared_answer(prepared, result)
 
 
@@ -391,7 +469,7 @@ def finish_prepared_answer(
 def _terminal_preparation(
     *,
     question: str,
-    search_query: str,
+    search_query: str | None,
     session_id: str | None,
     store: SessionStore,
     result: AnswerData,
@@ -426,12 +504,112 @@ def _finish(
     store: "SessionStore",
     session_id: str | None,
     result: AnswerData,
-    search_query: str,
+    search_query: str | None,
 ) -> AnswerData:
     """只记录通过两级证据校验的回答，拒答不能成为下一轮的事实前提。"""
     result.search_query = search_query
     if session_id and result.status is AnswerStatus.ANSWERED:
         store.append(session_id, SessionTurn(question=result.question, answer=result.content))
+    return result
+
+
+def invalid_source_chunk_ids(
+    db: Session,
+    sources: list[SourceSnapshot],
+    kb_id: int | None,
+) -> set[int]:
+    """批量核对已发布内容与片段，返回失效/越范围编号；读取后归还连接。"""
+    if not sources:
+        return set()
+    ids = {source.citation.chunk_id for source in sources}
+    try:
+        current = {
+            row.id: row for row in db.execute(
+                select(
+                    Chunk.id, Chunk.doc_id, Chunk.kb_id, Chunk.content,
+                    Chunk.char_start, Chunk.char_end,
+                    Document.content_hash, Document.kb_id.label("document_kb_id"),
+                ).join(Document, Document.id == Chunk.doc_id).where(Chunk.id.in_(ids))
+            ).all()
+        }
+        invalid: set[int] = set()
+        for source in sources:
+            citation = source.citation
+            row = current.get(citation.chunk_id)
+            if row is None or (
+                row.doc_id != citation.doc_id or row.kb_id != source.kb_id
+                or row.document_kb_id != source.kb_id
+                or (kb_id is not None and row.kb_id != kb_id)
+                or row.content_hash != source.indexed_content_hash
+                or row.content != citation.chunk_text
+                or row.char_start != citation.char_start or row.char_end != citation.char_end
+            ):
+                invalid.add(citation.chunk_id)
+        logger.info("source_validation sources=%s invalid=%s", len(ids), len(invalid))
+        return invalid
+    finally:
+        db.rollback()
+
+
+def answer_from_sources(
+    db: Session,
+    question: str,
+    kb_id: int | None,
+    sources: list[SourceSnapshot],
+    *,
+    source_scope: str = "topic",
+    llm: LLMProvider | None = None,
+) -> AnswerData:
+    """核对前序正式引用的出处，复用 L2；不计算查询向量或沿用旧相似度。"""
+    validate_kb(db, kb_id)
+    if source_scope not in {"topic", "all"}:
+        raise ValueError("source_scope 必须是 topic 或 all")
+    if not sources:
+        return _refuse(question, REFUSAL_DEPENDENCY_UNAVAILABLE)
+    if invalid_source_chunk_ids(db, sources, kb_id):
+        return _refuse(question, REFUSAL_SOURCE_CHANGED)
+    unique = {source.citation.chunk_id: source for source in sources}
+    normalized = [
+        replace(source, citation=replace(source.citation, index=index))
+        for index, source in enumerate(unique.values(), start=1)
+    ]
+    citations = [source.citation for source in normalized]
+    chunks = [
+        retrieval.RetrievedChunk(
+            chunk_id=c.chunk_id, doc_id=c.doc_id, content=c.chunk_text,
+            char_start=c.char_start, char_end=c.char_end, rrf_score=0.0,
+            vector_similarity=None, vector_rank=None, keyword_rank=None,
+        ) for c in citations
+    ]
+    if source_scope == "all":
+        indexes = list(range(1, len(citations) + 1))
+    else:
+        if sum(len(c.chunk_text) + len(c.doc_title) for c in citations) > settings.workflow_source_max_chars:
+            return _refuse(question, REFUSAL_SOURCE_CONTEXT_LIMIT)
+        try:
+            with timed_stage("ask.source_selection", candidates=len(citations)):
+                indexes = generation.select_source_indexes(question, chunks, citations, provider=llm)
+        except LLMError:
+            return _refuse(question, REFUSAL_LLM_UNAVAILABLE)
+        except generation.InvalidSourceSelection:
+            return _refuse(question, REFUSAL_INVALID_SOURCE_SELECTION)
+    if not indexes:
+        return _refuse(question, REFUSAL_SOURCE_NOT_SUPPORTED)
+    lines: list[str] = []
+    for index in indexes:
+        citation = citations[index - 1]
+        title = " ".join(citation.doc_title.split()).replace("[", "［").replace("]", "］")
+        lines.append(
+            f"- {title}，原文字符位置 {citation.char_start}–{citation.char_end}。[{index}]"
+        )
+    prepared = AnswerPreparation(
+        question=question, search_query=None, candidates=chunks,
+        candidate_citations=citations, session_id=None, session_store=session.store,
+        candidate_source_snapshots=normalized,
+    )
+    result = finish_generated_answer(prepared, "\n".join(lines))
+    if invalid_source_chunk_ids(db, result.source_snapshots, kb_id):
+        return _refuse(question, REFUSAL_SOURCE_CHANGED)
     return result
 
 
@@ -467,26 +645,31 @@ def _build_possible_sources(
     return result
 
 
-def _build_citations(
+def _build_source_snapshots(
     db: Session,
     cited: list[tuple[int, retrieval.RetrievedChunk]],
-) -> list[CitationData]:
-    """组装引用：批量取文档标题（避免逐条查询）。"""
+) -> list[SourceSnapshot]:
+    """批量复制文档元数据与已发布版本，生成阶段不持有 ORM 对象。"""
     if not cited:
         return []
     doc_ids = {chunk.doc_id for _, chunk in cited}
     documents = {
-        doc_id: (title, file_path)
-        for doc_id, title, file_path in db.execute(
-            select(Document.id, Document.title, Document.file_path).where(
+        doc_id: (title, file_path, kb_id, content_hash)
+        for doc_id, title, file_path, kb_id, content_hash in db.execute(
+            select(
+                Document.id, Document.title, Document.file_path,
+                Document.kb_id, Document.content_hash,
+            ).where(
                 Document.id.in_(doc_ids)
             )
         ).all()
     }
-    result: list[CitationData] = []
+    result: list[SourceSnapshot] = []
     image_cache: dict[tuple[int, str], list[document_images.ImageReferenceData]] = {}
     for index, chunk in cited:
-        title, source_path = documents.get(chunk.doc_id, ("", ""))
+        if chunk.doc_id not in documents:
+            raise RuntimeError("引用文档在检索期间发生变化")
+        title, source_path, kb_id, content_hash = documents[chunk.doc_id]
         try:
             key = (chunk.doc_id, source_path)
             if source_path and key not in image_cache:
@@ -508,7 +691,7 @@ def _build_citations(
                 exc_info=True,
             )
             images = []
-        result.append(CitationData(
+        citation = CitationData(
             index=index,
             chunk_id=chunk.chunk_id,
             doc_id=chunk.doc_id,
@@ -517,6 +700,9 @@ def _build_citations(
             char_start=chunk.char_start,
             char_end=chunk.char_end,
             images=images,
+        )
+        result.append(SourceSnapshot(
+            citation=citation, kb_id=kb_id, indexed_content_hash=content_hash,
         ))
     return result
 
@@ -530,13 +716,21 @@ def _refuse(
     possible_sources: list[EvidenceCandidateData] | None = None,
 ) -> AnswerData:
     if status is None:
-        if reason in {
+        if reason == REFUSAL_CONTEXT_INCOMPLETE:
+            status = AnswerStatus.NEEDS_REVIEW
+        elif reason in {
             REFUSAL_LLM_UNAVAILABLE,
             REFUSAL_EMBEDDING_UNAVAILABLE,
             REFUSAL_EMBEDDING_MISMATCH,
+            REFUSAL_SOURCE_CHANGED,
+            REFUSAL_SOURCE_VALIDATION_FAILED,
+            REFUSAL_SOURCE_CONTEXT_LIMIT,
         }:
             status = AnswerStatus.ERROR
-        elif reason in {REFUSAL_INVALID_CITATION, REFUSAL_NO_CITATION}:
+        elif reason in {
+            REFUSAL_INVALID_CITATION, REFUSAL_NO_CITATION,
+            REFUSAL_INVALID_SOURCE_SELECTION,
+        }:
             status = AnswerStatus.UNVERIFIED
         else:
             status = AnswerStatus.INSUFFICIENT

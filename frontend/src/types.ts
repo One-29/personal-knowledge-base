@@ -139,6 +139,13 @@ export interface WorkflowStep {
   note: string | null;
   citations: Citation[];
   possible_sources: EvidenceCandidate[];
+  kind?: "research" | "source_lookup";
+  depends_on?: number[];
+  source_scope?: "topic" | "all";
+  search_query?: string | null;
+  evidence?: RetrievalEvidence | null;
+  refusal_reason?: string | null;
+  evidence_origin?: "retrieval" | "previous_step" | null;
 }
 
 export interface WorkflowResponse {

@@ -84,13 +84,13 @@ def test_no_heading_plain_text_single_or_windowed():
 @pytest.mark.parametrize(
     ("text", "max_chars", "overlap"),
     [
-        ("# 标题\n" + "中" * 900 + "\n" + "文" * 900, 800, 80),
+        ("# 标题\n" + "中" * 900 + "\n\n" + "文" * 900, 800, 80),
         ("甲" * 150 + "\n" + "乙" * 300 + "\n" + "丙" * 300, 300, 80),
         ("一\n" + "二" * 50, 10, 9),
         ("一\n二\n三\n四\n五\n", 4, 0),
         ("逐字切块", 1, 0),
         ("# 前言\n短段\n# 长段\n" + "长" * 100, 20, 5),
-    ],
+    ], ids=["long-paragraphs", "soft-lines", "large-overlap", "short-lines", "single-char-target", "headings"],
 )
 def test_window_spans_cover_every_character_without_gaps(text, max_chars, overlap):
     """含长行、标题与极端重叠的原文都可由块区间无损拼回。"""
@@ -101,7 +101,7 @@ def test_window_spans_cover_every_character_without_gaps(text, max_chars, overla
     for chunk in chunks:
         assert previous_start < chunk.char_start <= covered_end
         assert chunk.char_start < chunk.char_end <= len(text)
-        assert len(chunk.text) <= max_chars
+        assert len(chunk.text) <= 1600
         assert chunk.text == text[chunk.char_start:chunk.char_end]
         assert chunk.char_end > covered_end
         reconstructed += chunk.text[covered_end - chunk.char_start:]
@@ -111,12 +111,12 @@ def test_window_spans_cover_every_character_without_gaps(text, max_chars, overla
     assert reconstructed == text
 
 
-def test_window_overlap_uses_actual_newline_boundary():
-    """换行导致块尾提前时仍保留指定重叠，不跳过其后的长行。"""
+def test_soft_newline_does_not_break_a_sentence():
+    """无句末标点的软换行不能把条件与后半句分开。"""
     text = "甲" * 150 + "\n" + "乙" * 500
     chunks = split_markdown(text, max_chars=300, overlap_chars=80)
-    assert chunks[0].char_end == 151
-    assert chunks[1].char_start == 71
+    assert len(chunks) == 1
+    assert chunks[0].text == text
 
 
 def test_protected_spans_remain_atomic_and_chunks_still_cover_the_source():
