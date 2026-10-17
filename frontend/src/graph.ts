@@ -3,6 +3,9 @@ import { byId } from "./dom";
 import { friendlyError } from "./format";
 import { notify } from "./notifications";
 import { state } from "./state";
+import { parseGraph } from "./validation/graph";
+import { parseDomId } from "./validation/input";
+import { number } from "./validation/base";
 import type { GraphEdge, GraphNode, GraphResponse } from "./types";
 
 interface PositionedNode extends GraphNode {
@@ -164,11 +167,8 @@ function prepareGraph(data: GraphResponse): void {
     };
   });
   const nodeById = new Map(graphState.nodes.map((node) => [node.doc_id, node]));
-  graphState.edges = data.edges.flatMap((edge) => {
-    const left = nodeById.get(edge.source);
-    const right = nodeById.get(edge.target);
-    return left === undefined || right === undefined ? [] : [{ ...edge, a: left, b: right }];
-  });
+  // Endpoint membership was checked once at the response boundary.
+  graphState.edges = data.edges.map(edge => ({ ...edge, a: nodeById.get(edge.source)!, b: nodeById.get(edge.target)! }));
   graphState.alpha = 1;
   if (graphState.frame !== null) window.cancelAnimationFrame(graphState.frame);
   tickGraph();
@@ -196,7 +196,10 @@ export async function loadGraph(): Promise<void> {
   empty.classList.add("hidden");
   status.textContent = `正在按 ${threshold} 阈值计算…`;
   try {
-    const data = await api<GraphResponse>(`/graph?kb_id=${encodeURIComponent(kbId)}&min_similarity=${encodeURIComponent(threshold)}`);
+    const selectedId = parseDomId(kbId);
+    if (!threshold.trim()) throw new Error("请选择关联阈值");
+    const selectedThreshold = number(Number(threshold), "关联阈值", 0, 1);
+    const data = await api(`/graph?kb_id=${selectedId}&min_similarity=${selectedThreshold}`, parseGraph);
     if (requestId !== graphState.requestId) return;
     if (data.nodes.length < 2) {
       empty.textContent = "这个知识库至少需要两篇已完成处理的文档，才能展示语义关联。";

@@ -110,7 +110,17 @@ export interface DocumentContent {
   images: DocumentImage[];
 }
 
-export interface AnswerResponse {
+export interface UnavailableSource {
+  index: number | null;
+  reason: string;
+}
+
+/** Local recovery diagnostics only; never used as citation identities. */
+export interface SourceRecovery {
+  unavailable_sources?: UnavailableSource[];
+}
+
+export interface AnswerResponse extends SourceRecovery {
   question: string;
   content: string;
   status: AnswerStatus;
@@ -130,7 +140,7 @@ export interface AskStreamMetadata {
 
 export type WorkflowStepStatus = "answered" | "needs_review" | "insufficient" | "error";
 
-export interface WorkflowStep {
+export interface WorkflowStep extends SourceRecovery {
   index: number;
   goal: string;
   query: string;
@@ -148,7 +158,7 @@ export interface WorkflowStep {
   evidence_origin?: "retrieval" | "previous_step" | null;
 }
 
-export interface WorkflowResponse {
+export interface WorkflowResponse extends SourceRecovery {
   task: string;
   steps: WorkflowStep[];
   answer: string;

@@ -18,7 +18,7 @@ docs/
 │   ├── 04-retrieval.md    # 检索链路：完整语句组块 / 上下文 / 混合检索 / 防幻（v0.9）
 │   ├── 05-agent-workflow.md   # Agent 多步工作流：规划 / 来源依赖 / 执行 / 汇总（v0.5）
 │   ├── 06-evaluation.md   # 评估方案：多库分层基线 / recall@k / τ 校准（v0.4）
-│   ├── 07-frontend-design.md  # 前端界面设计：token 系统 / 关键决策（v0.1）
+│   ├── 07-frontend-design.md  # 前端界面：分层 / 数据校验 / 历史引用 / 输入限制（v0.9）
 │   ├── 08-graph-view.md   # 关联图：边的计算 / 权重合成 / 决策（v0.1）
 │   └── 09-sqlite-desktop-migration.md # SQLite 桌面化：迁移 / 文件真相 / 桌面壳 / 本地诊断 / 发布门
 ├── templates/

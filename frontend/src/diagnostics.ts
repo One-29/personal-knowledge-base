@@ -2,7 +2,7 @@ import { api } from "./api";
 import { byId } from "./dom";
 import { friendlyError } from "./format";
 import { notify } from "./notifications";
-import type { DiagnosticsResponse } from "./types";
+import { parseDiagnostics } from "./validation/diagnostics";
 
 export function initDiagnostics(): void {
   const button = byId<HTMLButtonElement>("copy-diagnostics");
@@ -12,7 +12,7 @@ export function initDiagnostics(): void {
 async function copyDiagnostics(button: HTMLButtonElement): Promise<void> {
   button.disabled = true;
   try {
-    const diagnostics = await api<DiagnosticsResponse>("/diagnostics");
+    const diagnostics = await api("/diagnostics", parseDiagnostics);
     await copyText(diagnostics.report);
     button.title = diagnostics.log_path
       ? `${diagnostics.privacy_notice} 本地日志：${diagnostics.log_path}`

@@ -1,5 +1,7 @@
 import { api } from "./api";
 import { streamAnswer } from "./ask-stream";
+import { parseWorkflow } from "./validation/workflow";
+import { parseDomId, parseQuestion } from "./validation/input";
 import { ConversationStore } from "./conversations";
 import { byId, isAbortError, queryAll } from "./dom";
 import { bindCitations } from "./evidence";
@@ -15,9 +17,7 @@ import {
 import type {
   ActivityOutcome,
   AskStreamMetadata,
-  WorkflowResponse,
 } from "./types";
-import { normalizeWorkflowCitations } from "./workflow-citations";
 let conversations: ConversationStore;
 let savedTimer: number | null = null;
 let storageWarningShown = false;
@@ -86,6 +86,7 @@ export function renderConversation(): void {
       entry.innerHTML = renderWorkflowEntry(turn.question, turn.result, turn.durationMs);
       bindCitations(entry, [
         ...turn.result.citations,
+        ...turn.result.steps.flatMap((step) => step.citations),
         ...turn.result.steps.flatMap((step) => step.possible_sources),
       ]);
     } else {
@@ -99,14 +100,19 @@ export function renderConversation(): void {
   });
 }
 
-async function submitQuestion(): Promise<void> {
+export async function submitQuestion(): Promise<void> {
   if (controllerFor("ask") !== null) {
     notify("上一个提问还在进行中", true);
     return;
   }
   const input = byId<HTMLTextAreaElement>("ask-input");
-  const question = input.value.trim();
-  if (!question) return;
+  let question: string;
+  try {
+    question = parseQuestion(input.value);
+  } catch (error) {
+    notify(friendlyError(error, "发送问题"), true);
+    return;
+  }
   input.value = "";
   resizeComposer("ask-input");
 
@@ -217,14 +223,22 @@ async function submitQuestion(): Promise<void> {
   }
 }
 
-async function submitWorkflow(): Promise<void> {
+export async function submitWorkflow(): Promise<void> {
   if (controllerFor("trace") !== null) {
     notify("上一个任务还在进行中", true);
     return;
   }
   const input = byId<HTMLTextAreaElement>("trace-input");
-  const task = input.value.trim();
-  if (!task) return;
+  let task: string;
+  let knowledgeBase: number | null;
+  try {
+    task = parseQuestion(input.value);
+    const selected = byId<HTMLSelectElement>("trace-kb").value;
+    knowledgeBase = selected ? parseDomId(selected) : null;
+  } catch (error) {
+    notify(friendlyError(error, "执行工作流"), true);
+    return;
+  }
   input.value = "";
   resizeComposer("trace-input");
 
@@ -237,19 +251,17 @@ async function submitWorkflow(): Promise<void> {
   const stopRunState = mountRunState(entry, task, "trace");
   focusLatest(entry);
 
-  const knowledgeBase = byId<HTMLSelectElement>("trace-kb").value;
   const controller = new AbortController();
   setController("trace", controller);
   setTaskBusy("trace", true);
   const startedAt = Date.now();
   let outcome: ActivityOutcome = "done";
   try {
-    const response = await api<WorkflowResponse>("/workflow", {
+    const result = await api("/workflow", parseWorkflow, {
       method: "POST",
       signal: controller.signal,
-      body: JSON.stringify({ task, kb_id: knowledgeBase ? Number(knowledgeBase) : null }),
+      body: JSON.stringify({ task, kb_id: knowledgeBase }),
     });
-    const result = normalizeWorkflowCitations(response);
     const durationMs = Date.now() - startedAt;
     entry.innerHTML = renderWorkflowEntry(task, result, durationMs);
     bindCitations(entry, [
@@ -297,7 +309,12 @@ export function initTasks(store: ConversationStore): void {
 
   const askKnowledgeBase = byId<HTMLSelectElement>("ask-kb");
   askKnowledgeBase.addEventListener("change", () => {
-    state.askKbId = askKnowledgeBase.value ? Number(askKnowledgeBase.value) : null;
+    try {
+      state.askKbId = askKnowledgeBase.value ? parseDomId(askKnowledgeBase.value) : null;
+    } catch (error) {
+      notify(friendlyError(error, "选择知识库"), true);
+      askKnowledgeBase.value = state.askKbId === null ? "" : String(state.askKbId);
+    }
   });
   const conversationSelect = byId<HTMLSelectElement>("ask-conv");
   conversationSelect.addEventListener("change", () => {
