@@ -3,10 +3,11 @@ import { byId, queryAll, queryOne } from "./dom";
 import { escapeHtml, friendlyError } from "./format";
 import { readLocalValue, writeLocalValue } from "./local-storage";
 import { notify } from "./notifications";
+import { parseCitationDetail } from "./validation/evidence";
+import { parseDocumentContent } from "./validation/library";
 import type {
   Citation,
   CitationDetail,
-  DocumentContent,
   DocumentImage,
 } from "./types";
 
@@ -42,24 +43,14 @@ function removeMarginItem(key: string, chunkId: number | null = null): void {
 }
 
 function citationSnapshotDetail(citation: Citation | null): CitationDetail | null {
-  if (citation === null || typeof citation.chunk_text !== "string") return null;
-  const charStart = Number(citation.char_start);
-  const charEnd = Number(citation.char_end);
-  if (
-    !Number.isInteger(charStart)
-    || !Number.isInteger(charEnd)
-    || charStart < 0
-    || charEnd < charStart
-  ) {
-    return null;
-  }
+  if (citation === null) return null;
   return {
-    doc_id: Number(citation.doc_id),
-    doc_title: citation.doc_title || "原文标题未知",
+    doc_id: citation.doc_id,
+    doc_title: citation.doc_title,
     chunk_text: citation.chunk_text,
-    char_start: charStart,
-    char_end: charEnd,
-    images: Array.isArray(citation.images) ? citation.images : [],
+    char_start: citation.char_start,
+    char_end: citation.char_end,
+    images: citation.images,
   };
 }
 
@@ -70,25 +61,14 @@ export function renderSourceWithImages(
   baseOffset = 0,
 ): void {
   const characters = Array.from(content);
-  const ordered = [...images].sort((left, right) => (
-    left.char_start - right.char_start || left.ordinal - right.ordinal
-  ));
   let cursor = 0;
 
-  for (const image of ordered) {
-    const start = Number(image.char_start) - baseOffset;
-    const end = Number(image.char_end) - baseOffset;
-    const sourceUrl = String(image.content_url || "");
-    if (
-      !Number.isInteger(start)
-      || !Number.isInteger(end)
-      || start < cursor
-      || end <= start
-      || end > characters.length
-      || !sourceUrl.startsWith("/api/v1/")
-    ) {
-      continue;
-    }
+  for (const image of images) {
+    // Image ranges are validated at entry. Clip intersecting occurrences to this
+    // excerpt for slicing; do not treat a partial Markdown token as a negative index.
+    const start = Math.max(0, image.char_start - baseOffset);
+    const end = Math.min(characters.length, image.char_end - baseOffset);
+    const sourceUrl = image.content_url;
 
     host.append(document.createTextNode(characters.slice(cursor, start).join("")));
     const figure = document.createElement("figure");
@@ -104,8 +84,8 @@ export function renderSourceWithImages(
     element.alt = image.alt_text;
     element.loading = "lazy";
     element.decoding = "async";
-    if (Number.isInteger(image.width) && image.width > 0) element.width = image.width;
-    if (Number.isInteger(image.height) && image.height > 0) element.height = image.height;
+    element.width = image.width;
+    element.height = image.height;
     element.addEventListener("error", () => {
       figure.classList.add("broken");
       element.alt = `图片读取失败：${image.source_reference || "原图"}`;
@@ -143,7 +123,7 @@ async function pinToMargin(
     let detail: CitationDetail;
     let isHistoricalSnapshot = false;
     try {
-      detail = await api<CitationDetail>(`/citations/${chunkId}`);
+      detail = await api(`/citations/${chunkId}`, parseCitationDetail);
     } catch (error) {
       const snapshot = error instanceof ApiError && error.status === 404
         ? citationSnapshotDetail(citation)
@@ -197,7 +177,7 @@ export async function openDocument(docId: number, title = ""): Promise<void> {
       existing.scrollIntoView({ behavior: "smooth", block: "nearest" });
       return;
     }
-    const detail = await api<DocumentContent>(`/documents/${docId}/content`);
+    const detail = await api(`/documents/${docId}/content`, parseDocumentContent);
     const item = document.createElement("article");
     item.className = "margin-item document-preview margin-item-enter";
     item.innerHTML = `
@@ -238,14 +218,6 @@ export function bindCitations(scope: ParentNode, citations: Citation[]): void {
       const hit = element.dataset.chunk !== undefined
         ? citations.find((citation) => String(citation.chunk_id) === element.dataset.chunk)
         : citations.find((citation) => String(citation.index) === element.dataset.index);
-      if (element.dataset.chunk !== undefined) {
-        void pinToMargin(
-          Number(element.dataset.chunk),
-          element.dataset.index ?? null,
-          hit ?? null,
-        );
-        return;
-      }
       if (hit !== undefined) {
         element.dataset.chunk = String(hit.chunk_id);
         void pinToMargin(hit.chunk_id, hit.index, hit);

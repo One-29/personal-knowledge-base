@@ -105,7 +105,7 @@
           <div class="composer-dock">
             <form id="ask-form" class="composer">
               <label class="sr-only" for="ask-input">输入问题</label>
-              <textarea id="ask-input" rows="1" maxlength="1000" placeholder="输入你想从笔记中查找的问题…" autocomplete="off"></textarea>
+              <textarea id="ask-input" rows="1" data-max-code-points="500" aria-description="最多 500 个 Unicode 码点，超限会提示并保留输入" placeholder="输入你想从笔记中查找的问题（最多 500 字符）…" autocomplete="off"></textarea>
               <div class="composer-submit">
                 <button type="button" id="ask-stop" class="stop hidden">停止等待</button>
                 <button type="submit" id="ask-send" class="primary-action">
@@ -150,7 +150,7 @@
           <div class="composer-dock">
             <form id="trace-form" class="composer">
               <label class="sr-only" for="trace-input">输入综合任务</label>
-              <textarea id="trace-input" rows="1" maxlength="500" placeholder="例如：比较数列极限与函数极限的判定方法，并逐条给出出处…" autocomplete="off"></textarea>
+              <textarea id="trace-input" rows="1" data-max-code-points="500" aria-description="最多 500 个 Unicode 码点，超限会提示并保留输入" placeholder="例如：比较数列极限与函数极限的判定方法，并逐条给出出处（最多 500 字符）…" autocomplete="off"></textarea>
               <div class="composer-submit">
                 <button type="button" id="trace-stop" class="stop hidden">停止等待</button>
                 <button type="submit" id="trace-send" class="primary-action">

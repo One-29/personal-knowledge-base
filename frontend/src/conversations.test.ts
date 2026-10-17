@@ -67,6 +67,28 @@ function turn(index: number): AskConversationTurn {
 }
 
 describe("ConversationStore", () => {
+  it("keeps damaged sources unavailable without shifting a valid reference into their numbers", () => {
+    const storage = new MemoryStorage();
+    const source = (index: number, chunkId: unknown, docId: number) => ({
+      index, chunk_id: chunkId, doc_id: docId, doc_title: `文档${docId}`,
+      chunk_text: "原文", char_start: 0, char_end: 2, images: [],
+    });
+    storage.setItem("kb_conversations", JSON.stringify([{
+      id: "damaged", title: "历史", at: 1, turns: [{
+        kind: "workflow", question: "出处", at: 1, durationMs: null,
+        result: { task: "出处", steps: [], answer: "甲。[1] 乙。[2] 丙。[3]",
+          citations: [source(1, "broken", 11), source(2, null, 22), source(3, 30, 33)] },
+      }],
+    }]));
+    const saved = new ConversationStore(storage).load()[0]?.turns[0];
+    expect(saved?.kind).toBe("workflow");
+    if (saved?.kind !== "workflow") return;
+    expect(saved.result.citations.map(c => [c.index, c.chunk_id, c.doc_id])).toEqual([[3, 30, 33]]);
+    expect(saved.result.answer).toBe("甲。[1] 乙。[2] 丙。[3]");
+    expect(saved.result).toHaveProperty("unavailable_sources", expect.arrayContaining([
+      expect.objectContaining({ index: 1 }), expect.objectContaining({ index: 2 }),
+    ]));
+  });
   it("treats corrupt or structurally invalid local data as empty", () => {
     const storage = new MemoryStorage();
     storage.setItem("kb_conversations", "not-json");
@@ -120,6 +142,16 @@ describe("ConversationStore", () => {
     const active = store.active();
     expect(active?.turns).toHaveLength(2);
     expect(store.history(active!)).toEqual([{ question: "q1", answer: "a1" }]);
+  });
+
+  it("keeps oversized legacy questions visible without sending invalid follow-up history", () => {
+    const store = new ConversationStore(null, () => "c-1");
+    const conversation = store.start();
+    store.remember(conversation.id, { ...turn(1), question: "😀".repeat(501) });
+    store.remember(conversation.id, { ...turn(2), question: "😀".repeat(500), answerText: "😀".repeat(1501) });
+    const active = store.active()!;
+    expect(active.turns).toHaveLength(2);
+    expect(store.history(active)).toEqual([{ question: "😀".repeat(500), answer: "😀".repeat(1500) }]);
   });
 
   it("keeps a completed answer in memory when persistent storage becomes full", () => {

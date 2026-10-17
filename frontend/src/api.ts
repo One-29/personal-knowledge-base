@@ -1,3 +1,5 @@
+import { isRecord, ValidationError, type Parser } from "./validation/base";
+
 const API_PREFIX = "/api/v1";
 
 export class ApiError extends Error {
@@ -10,10 +12,6 @@ export class ApiError extends Error {
     this.status = status;
     this.detail = detail;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function errorDetail(body: unknown, fallback: string): string {
@@ -48,8 +46,27 @@ export async function apiResponse(path: string, options: RequestInit = {}): Prom
   return response;
 }
 
-export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+/** JSON is untrusted until the endpoint's parser accepts it. */
+export async function api<T>(path: string, parse: Parser<T>, options: RequestInit = {}): Promise<T> {
   const response = await apiResponse(path, options);
-  if (response.status === 204) return undefined as T;
-  return await response.json() as T;
+  if (response.status === 204 || response.status === 205) throw new ApiError(500, "响应格式错误：预期 JSON，却收到无正文响应");
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    throw new ApiError(500, "响应格式错误：本机服务未返回有效 JSON");
+  }
+  try {
+    return parse(value);
+  } catch (error) {
+    if (error instanceof ValidationError) throw new ApiError(500, error.message);
+    throw error;
+  }
+}
+
+/** DELETE and other no-content operations do not fabricate a JSON business value. */
+export async function apiNoContent(path: string, options: RequestInit = {}): Promise<void> {
+  const response = await apiResponse(path, options);
+  if (response.status !== 204 && response.status !== 205) throw new ApiError(500, "响应格式错误：预期 204/205 无正文响应");
 }

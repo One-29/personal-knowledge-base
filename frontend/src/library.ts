@@ -1,4 +1,6 @@
-import { api } from "./api";
+import { api, apiNoContent } from "./api";
+import { parseKnowledgeBase, parseKnowledgeBases, parseDocuments, parseUploadResult } from "./validation/library";
+import { parseDomId } from "./validation/input";
 import { byId, queryAll, queryOne } from "./dom";
 import { openDocument } from "./evidence";
 import { escapeHtml, formatCount, formatTimestamp, friendlyError } from "./format";
@@ -8,9 +10,7 @@ import { notify } from "./notifications";
 import { state } from "./state";
 import type {
   DocumentStatus,
-  KnowledgeBase,
   KnowledgeDocument,
-  UploadResult,
 } from "./types";
 
 const DOCUMENT_STATUS: Record<DocumentStatus, string> = {
@@ -24,7 +24,7 @@ type EmptyAction = "upload" | "reset" | "create";
 let documentsRequestId = 0;
 
 export async function loadKnowledgeBases(): Promise<void> {
-  state.kbs = await api<KnowledgeBase[]>("/kbs");
+  state.kbs = await api("/kbs", parseKnowledgeBases);
   renderShelf();
   renderKnowledgeBaseSelects();
 }
@@ -55,7 +55,7 @@ function renderShelf(): void {
 
   queryAll<HTMLButtonElement>("[data-open-kb]", list).forEach((button) => {
     button.addEventListener("click", () => {
-      state.docsKbId = Number(button.dataset.openKb);
+      state.docsKbId = parseDomId(button.dataset.openKb);
       renderKnowledgeBaseSelects();
       activateView("docs");
     });
@@ -70,7 +70,7 @@ function renderShelf(): void {
 async function deleteKnowledgeBase(id: string): Promise<void> {
   if (!id || !window.confirm("删除这个知识库？它下面的文档和索引会一起清理。")) return;
   try {
-    await api<null>(`/kbs/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await apiNoContent(`/kbs/${parseDomId(id)}`, { method: "DELETE" });
     notify("知识库已删除");
     await loadKnowledgeBases();
     if (state.activeView === "docs") await loadDocuments();
@@ -96,7 +96,7 @@ export function renderKnowledgeBaseSelects(): void {
   trace.innerHTML = allOptions;
   if (Array.from(ask.options).some((option) => option.value === askKeep)) ask.value = askKeep;
   if (Array.from(trace.options).some((option) => option.value === traceKeep)) trace.value = traceKeep;
-  state.askKbId = ask.value ? Number(ask.value) : null;
+  state.askKbId = ask.value ? parseDomId(ask.value) : null;
 
   const scopedOptions = state.kbs.length > 0
     ? state.kbs.map((knowledgeBase) => (
@@ -111,7 +111,7 @@ export function renderKnowledgeBaseSelects(): void {
   else if (state.kbs[0] !== undefined) docs.value = String(state.kbs[0].id);
   if (Array.from(map.options).some((option) => option.value === mapKeep)) map.value = mapKeep;
   else if (state.kbs[0] !== undefined) map.value = String(state.kbs[0].id);
-  state.docsKbId = docs.value ? Number(docs.value) : null;
+  state.docsKbId = docs.value ? parseDomId(docs.value) : null;
 }
 
 function updateDocumentStats(documents: KnowledgeDocument[]): void {
@@ -206,24 +206,24 @@ function renderDocuments(): void {
 
   queryAll<HTMLButtonElement>("[data-open-doc]", body).forEach((button) => {
     button.addEventListener("click", () => {
-      void openDocument(Number(button.dataset.openDoc), button.dataset.title ?? "");
+      void openDocument(parseDomId(button.dataset.openDoc), button.dataset.title ?? "");
     });
   });
   queryAll<HTMLButtonElement>("[data-remove]", body).forEach((button) => {
     button.addEventListener("click", () => { void deleteDocument(button.dataset.remove ?? ""); });
   });
   queryAll<HTMLButtonElement>("[data-again]", body).forEach((button) => {
-    button.addEventListener("click", () => reuploadDocument(Number(button.dataset.again)));
+    button.addEventListener("click", () => reuploadDocument(parseDomId(button.dataset.again)));
   });
   queryAll<HTMLButtonElement>("[data-reindex]", body).forEach((button) => {
-    button.addEventListener("click", () => { void reindexDocument(Number(button.dataset.reindex), button); });
+    button.addEventListener("click", () => { void reindexDocument(parseDomId(button.dataset.reindex), button); });
   });
 }
 
 async function reindexDocument(documentId: number, button: HTMLButtonElement): Promise<void> {
   button.disabled = true;
   try {
-    await api<UploadResult>(`/documents/${documentId}/reindex`, { method: "POST" });
+    await api(`/documents/${documentId}/reindex`, parseUploadResult, { method: "POST" });
     notify("正在按当前规则更新索引；完成前仍可使用旧索引");
     await loadDocuments();
   } catch (error) {
@@ -235,7 +235,7 @@ async function reindexDocument(documentId: number, button: HTMLButtonElement): P
 async function deleteDocument(id: string): Promise<void> {
   if (!id || !window.confirm("删除这篇文档？它的索引和原文会一并清理。")) return;
   try {
-    await api<null>(`/documents/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await apiNoContent(`/documents/${parseDomId(id)}`, { method: "DELETE" });
     notify("文档已删除");
     await loadDocuments();
     await loadKnowledgeBases();
@@ -264,7 +264,7 @@ export async function loadDocuments({ quiet = false }: { quiet?: boolean } = {})
     byId("docs-empty").classList.add("hidden");
   }
   try {
-    const documents = await api<KnowledgeDocument[]>(`/kbs/${requestedKnowledgeBase}/documents`);
+    const documents = await api(`/kbs/${requestedKnowledgeBase}/documents`, parseDocuments);
     if (requestId !== documentsRequestId || state.docsKbId !== requestedKnowledgeBase) return;
     state.docs = documents;
     renderDocuments();
@@ -301,7 +301,7 @@ async function uploadDocument(file: File): Promise<void> {
   form.append("file", file);
   setUploadBusy(true);
   try {
-    await api<UploadResult>(`/kbs/${state.docsKbId}/documents`, { method: "POST", body: form });
+    await api(`/kbs/${state.docsKbId}/documents`, parseUploadResult, { method: "POST", body: form });
     notify(`「${file.name}」已上传，正在建立索引`);
     await loadDocuments();
     await loadKnowledgeBases();
@@ -327,7 +327,7 @@ async function submitReupload(documentId: number, file: File): Promise<void> {
   const form = new FormData();
   form.append("file", file);
   try {
-    const result = await api<UploadResult>(`/documents/${documentId}/reupload`, {
+    const result = await api(`/documents/${documentId}/reupload`, parseUploadResult, {
       method: "POST",
       body: form,
     });
@@ -346,7 +346,7 @@ async function createKnowledgeBase(form: HTMLFormElement): Promise<void> {
   submit.disabled = true;
   submit.textContent = "正在创建…";
   try {
-    await api<KnowledgeBase>("/kbs", {
+    await api("/kbs", parseKnowledgeBase, {
       method: "POST",
       body: JSON.stringify({ name, description: description || null }),
     });
@@ -370,7 +370,7 @@ export function initLibrary(): void {
   const documentsKnowledgeBase = byId<HTMLSelectElement>("docs-kb");
   documentsKnowledgeBase.addEventListener("change", () => {
     state.docsKbId = documentsKnowledgeBase.value
-      ? Number(documentsKnowledgeBase.value)
+      ? parseDomId(documentsKnowledgeBase.value)
       : null;
     void loadDocuments();
   });

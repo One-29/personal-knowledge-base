@@ -12,6 +12,7 @@ import type {
   RetrievalEvidence,
   WorkflowResponse,
   WorkflowStepStatus,
+  UnavailableSource,
 } from "./types";
 
 const STEP_STATUS: Record<WorkflowStepStatus, string> = {
@@ -28,6 +29,12 @@ const ANSWER_LABEL: Record<AnswerStatus, string> = {
   unverified: "引用校验未通过",
   error: "服务未完成",
 };
+
+function recoveryWarning(sources: UnavailableSource[] | undefined): string {
+  if (!sources?.length) return "";
+  const entries = sources.map(source => source.index === null ? "编号不明" : `[${source.index}]`).join("、");
+  return `<p class="trace-note" role="status">部分历史引用无法恢复（${escapeHtml(entries)}），相关来源不可用；正文保留，不能将这些编号当作有效出处。</p>`;
+}
 
 function refusalLabel(reason: string | null | undefined): string {
   const labels: Record<string, string> = {
@@ -113,6 +120,7 @@ export function renderAnswerEntry(
       </div>
       ${rewritten}
       ${relevanceSummary(answer.evidence)}
+      ${recoveryWarning(answer.unavailable_sources)}
       <div class="entry-a rich-text">${withCitations(answer.content, answer.citations)}</div>
       ${possibleSourceList(answer.possible_sources)}
       ${sourceSummary(answer.citations)}
@@ -168,7 +176,7 @@ export function renderWorkflowEntry(
       </summary>
       <p class="trace-query">${queryLabel}：${escapeHtml(step.query)}</p>
       ${rewritten}${origin}${sourceLookup ? "" : relevanceSummary(step.evidence ?? null)}${reason}
-      ${body}${possibleSourceList(step.possible_sources)}
+      ${recoveryWarning(step.unavailable_sources)}${body}${possibleSourceList(step.possible_sources)}
     </details></li>`;
   }).join("");
   const answered = result.steps.filter((step) => step.status === "answered").length;
@@ -183,6 +191,7 @@ export function renderWorkflowEntry(
     </div>
     <div class="summary">
       <div class="summary-head"><h3>综合结论</h3><span>${result.citations.length} 条引用</span></div>
+      ${recoveryWarning(result.unavailable_sources)}
       <div class="entry-a rich-text">${withCitations(result.answer, result.citations)}</div>
       ${sourceSummary(result.citations)}
     </div>`;

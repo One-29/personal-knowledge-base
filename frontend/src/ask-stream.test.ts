@@ -37,6 +37,33 @@ afterEach(() => {
 });
 
 describe("streamAnswer", () => {
+  it.each([
+    'event: metadata\ndata: {"question":"问题","search_query":12}\n\n',
+    'event: metadata\ndata: {"question":"问题","search_query":"问题"}\n\nevent: delta\ndata: {"content":12}\n\n',
+  ])("validates metadata and deltas even without registered callbacks", async body => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamedResponse(body, [])));
+    await expect(streamAnswer({ question: "问题", kb_id: null, history: [] }, { signal: new AbortController().signal }))
+      .rejects.toMatchObject({ detail: expect.stringContaining("数据格式错误") });
+  });
+  it.each(["metadata", "result", "delta"])("rejects events after a final result: %s", async event => {
+    const metadata = `event: metadata\ndata: ${JSON.stringify({ question: "问题", search_query: "问题" })}\n\n`;
+    const payload = event === "result" ? RESULT : event === "delta" ? { content: "尾部" } : { question: "问题", search_query: "问题" };
+    const body = `${metadata}event: result\ndata: ${JSON.stringify(RESULT)}\n\nevent: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamedResponse(body, [])));
+    await expect(streamAnswer({ question: "问题", kb_id: null, history: [] }, { signal: new AbortController().signal }))
+      .rejects.toMatchObject({ status: 500, detail: expect.stringContaining("错序") });
+  });
+  it.each(["12", 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])("rejects invalid citation IDs: %s", async (id) => {
+    const malformed = { ...RESULT, citations: [{
+      index: 1, chunk_id: id, doc_id: 4, doc_title: "极限.md",
+      chunk_text: "原文", char_start: 0, char_end: 2, images: [],
+    }] };
+    const body = `event: metadata\ndata: ${JSON.stringify({ question: "问题", search_query: "问题" })}\n\nevent: result\ndata: ${JSON.stringify(malformed)}\n\n`;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(streamedResponse(body, [])));
+    await expect(streamAnswer({ question: "问题", kb_id: null, history: [] }, {
+      signal: new AbortController().signal,
+    })).rejects.toBeInstanceOf(Error);
+  });
   it("decodes arbitrary byte chunks and publishes metadata and deltas", async () => {
     const body = [
       `event: metadata\ndata: ${JSON.stringify({ question: RESULT.question, search_query: RESULT.search_query })}\n\n`,
@@ -179,6 +206,6 @@ describe("streamAnswer", () => {
     await expect(streamAnswer(
       { question: malformed.question, kb_id: null, history: [] },
       { signal: new AbortController().signal },
-    )).rejects.toMatchObject({ detail: "本机服务返回的最终回答格式无效" });
+    )).rejects.toMatchObject({ detail: expect.stringContaining("最终回答格式无效：数据格式错误：answer.possible_sources[0].index") });
   });
 });

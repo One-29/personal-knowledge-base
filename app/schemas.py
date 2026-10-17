@@ -125,21 +125,33 @@ class UploadResult(BaseModel):
     content_changed: bool
 
 
-class TurnIn(_CleanInputModel):
+QUESTION_MAX_CODE_POINTS = 500
+
+
+class _QuestionInputModel(_CleanInputModel):
+    """问题按 Python Unicode 码点计数；首尾空白规则与前端一致。"""
+
+    @field_validator("question", "task", mode="before", check_fields=False)
+    @classmethod
+    def strip_question(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class TurnIn(_QuestionInputModel):
     """一轮历史问答（前端持久化后随请求回传，用于追问改写）。"""
 
-    question: str = Field(min_length=1, max_length=500)
+    question: str = Field(min_length=1, max_length=QUESTION_MAX_CODE_POINTS)
     answer: str = Field(min_length=1, max_length=4000)
 
 
-class AskRequest(_CleanInputModel):
+class AskRequest(_QuestionInputModel):
     """问答请求（M3 契约 §3）。kb_id 为 None 表示全库检索。
 
     对话历史由前端持久化并回传（history）：服务端保持无状态——
     刷新页面或重启服务都不会丢上下文，会话体验无需落库。
     """
 
-    question: str = Field(min_length=1, max_length=500)
+    question: str = Field(min_length=1, max_length=QUESTION_MAX_CODE_POINTS)
     kb_id: int | None = None
     # 兼容旧客户端的进程内会话键。浏览器的新会话机制以 history 为准；
     # 仍需限制这个键，避免任意大字符串长期驻留在 SessionStore 的字典中。
@@ -244,10 +256,10 @@ class CitationDetailOut(BaseModel):
     images: list[DocumentImageOut] = Field(default_factory=list)
 
 
-class WorkflowRequest(_CleanInputModel):
+class WorkflowRequest(_QuestionInputModel):
     """多步任务请求（05 §4）。kb_id 缺省表示全库。"""
 
-    task: str = Field(min_length=1, max_length=500)
+    task: str = Field(min_length=1, max_length=QUESTION_MAX_CODE_POINTS)
     kb_id: int | None = None
     max_steps: int | None = Field(default=None, ge=1, le=10)
 
