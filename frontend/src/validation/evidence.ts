@@ -63,13 +63,19 @@ export function parseCandidates(value: unknown, path: string): EvidenceCandidate
   return consistentSources(unique(array(value, parseEvidenceCandidate, path), citation => citation.index, path), path);
 }
 
-function consistentSources<T extends Citation>(sources: T[], path: string): T[] {
+export function conflictingSourceIds(sources: readonly Citation[]): Set<number> {
   const chunks = new Map<number, Citation>();
+  const conflicts = new Set<number>();
   for (const source of sources) {
     const previous = chunks.get(source.chunk_id);
-    if (previous && !sameSource(previous, source)) throw new ValidationError(path, "同一引用 ID 对应不同来源快照");
+    if (previous && !sameSource(previous, source)) conflicts.add(source.chunk_id);
     chunks.set(source.chunk_id, source);
   }
+  return conflicts;
+}
+
+export function consistentSources<T extends Citation>(sources: T[], path: string): T[] {
+  if (conflictingSourceIds(sources).size) throw new ValidationError(path, "同一引用 ID 对应不同来源快照");
   return sources;
 }
 
@@ -85,7 +91,12 @@ export function parseRetrievalEvidence(value: unknown, path = "evidence"): Retri
 
 /** A shared chunk ID is not enough to merge conflicting saved snapshots. */
 export function sameSource(left: Citation, right: Citation): boolean {
-  return left.chunk_id === right.chunk_id && left.doc_id === right.doc_id
+  return left.chunk_id === right.chunk_id && sameSourceDetail(left, right);
+}
+
+/** Online details must match the saved source, even when the ID still exists. */
+export function sameSourceDetail(left: CitationDetail, right: CitationDetail): boolean {
+  return left.doc_id === right.doc_id
     && left.char_start === right.char_start && left.char_end === right.char_end
     && left.doc_title === right.doc_title && left.chunk_text === right.chunk_text
     && JSON.stringify(left.images) === JSON.stringify(right.images);

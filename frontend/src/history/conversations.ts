@@ -2,10 +2,11 @@
 import type { AnswerResponse, AnswerStatus, Conversation, ConversationTurn, WorkflowResponse, WorkflowStep } from "../types";
 import { parseAnswer } from "../validation/answers";
 import { isRecord, number, string } from "../validation/base";
-import { parseCitation, parseEvidenceCandidate } from "../validation/evidence";
+import { conflictingSourceIds, parseCitation, parseEvidenceCandidate } from "../validation/evidence";
 import { parseWorkflowStep } from "../validation/workflow";
 import { normalizeWorkflowCitations } from "../workflow-citations";
 import { recoverSources, savedWarnings, tryParse } from "./sources";
+import { quarantineSourceConflicts } from "./source-conflicts";
 
 function oldStatus(refused: boolean, reason: unknown): AnswerStatus {
   if (!refused) return "answered";
@@ -19,18 +20,21 @@ function recoverAnswer(value: unknown, question: string): AnswerResponse | null 
   if (!isRecord(value) || typeof value.content !== "string") return null;
   const citations = recoverSources(value.citations, parseCitation);
   const candidates = recoverSources(value.possible_sources === undefined ? [] : value.possible_sources, parseEvidenceCandidate);
-  const unavailable_sources = [...savedWarnings(value.unavailable_sources), ...citations.unavailable_sources, ...candidates.unavailable_sources];
+  const recovered = quarantineSourceConflicts({ citations: citations.sources, possible_sources: candidates.sources,
+    unavailable_sources: [...savedWarnings(value.unavailable_sources), ...citations.unavailable_sources, ...candidates.unavailable_sources] },
+  conflictingSourceIds([...citations.sources, ...candidates.sources]));
+  const unavailable_sources = recovered.unavailable_sources;
   // Pre-gray-zone records (9d15b8d) lack status/evidence/possible_sources;
   // refused, session_id, search_query and refusal_reason already existed.
   const normalized = {
     question, status: oldStatus(value.refused === true, value.refusal_reason), evidence: null, ...value,
-    citations: citations.sources, possible_sources: candidates.sources,
+    citations: recovered.citations, possible_sources: recovered.possible_sources,
   };
   const parsed = tryParse(parseAnswer, normalized);
   if (parsed) return { ...parsed, ...(unavailable_sources.length ? { unavailable_sources } : {}) };
   // Preserve readable text, but invalid status/score metadata cannot become follow-up facts.
   return { question, content: value.content, status: "unverified", refused: true, refusal_reason: "history_data_invalid",
-    session_id: null, search_query: null, citations: citations.sources, possible_sources: candidates.sources, evidence: null,
+    session_id: null, search_query: null, citations: recovered.citations, possible_sources: recovered.possible_sources, evidence: null,
     unavailable_sources: [...unavailable_sources, { index: null, reason: "历史回答字段损坏" }] };
 }
 

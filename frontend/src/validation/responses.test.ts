@@ -59,6 +59,16 @@ describe("response boundaries", () => {
   it("rejects conflicting snapshots sharing one chunk ID", () => {
     expect(() => parseCitations([source, { ...source, index: 2, doc_id: 4 }], "citations")).toThrow("citations");
   });
+  it("rejects conflicts across candidates, steps and formal citations", () => {
+    const candidate = { ...source, vector_similarity: .5, rrf_score: .03, vector_rank: 1, keyword_rank: null };
+    const conflict = { ...candidate, doc_id: 99 };
+    expect(() => parseAnswer({ ...answer, possible_sources: [conflict] })).toThrow("sources");
+    expect(() => parseWorkflow({ ...workflow, steps: [{ ...workflow.steps[0], possible_sources: [conflict] }] })).toThrow("sources");
+    expect(() => parseWorkflow({ ...workflow, citations: [], steps: [
+      { ...workflow.steps[0], citations: [], possible_sources: [candidate] },
+      { ...workflow.steps[0], index: 2, citations: [], possible_sources: [conflict] },
+    ] })).toThrow("sources");
+  });
   it("accepts intersecting citation images but bounds full-document images", () => {
     const image = { ordinal: 1, source_reference: "a.png", alt_text: "图", char_start: 0, char_end: 20,
       content_hash: "a".repeat(64), mime_type: "image/png", file_size: 100, width: 10, height: 10,

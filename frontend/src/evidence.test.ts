@@ -8,6 +8,7 @@ const ui = vi.hoisted(() => {
       classList: { toggle: vi.fn(), add: vi.fn(), remove: vi.fn() }, scrollIntoView: vi.fn(), setAttribute: vi.fn(),
       append(...items: unknown[]) { this.children.push(...items); },
       addEventListener(name: string, handler: (event?: unknown) => void) { listeners.set(name, handler); },
+      closest: vi.fn(() => null as { dataset: { sourceScope: string } } | null),
       click() { listeners.get("click")?.(); } };
   };
   const nodes = new Map<string, ReturnType<typeof node>>();
@@ -56,12 +57,61 @@ describe("citation detail and snapshot recovery", () => {
     await vi.waitFor(() => expect(ui.notify).toHaveBeenCalledWith(expect.stringContaining("doc_id"), true));
     expect(ui.get("margin-list").children).toEqual([]);
   });
+  it("uses the saved snapshot when a successful response belongs to a replacement", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ...snapshot, doc_id: 99, doc_title: "替换.md", chunk_text: "后来替换的不同原文",
+    }))));
+    await clickCitation();
+    await vi.waitFor(() => expect(ui.get("margin-list").children).toHaveLength(1));
+    const item = ui.get("margin-list").children[0] as ReturnType<typeof ui.node>;
+    expect(item.innerHTML).toContain("回答时引用快照");
+    expect(item.innerHTML).toContain(snapshot.doc_title);
+    expect(item.children).toEqual([expect.objectContaining({ children: [{ text: snapshot.chunk_text }] })]);
+  });
+  it("keeps different snapshots of a reused ID in separate preview cards", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response("{}", { status: 404 }))));
+    await clickCitation();
+    await vi.waitFor(() => expect(ui.get("margin-list").children).toHaveLength(1));
+    await clickCitation([{ ...snapshot, doc_id: 99, chunk_text: "另一份历史原文" }]);
+    await vi.waitFor(() => expect(ui.get("margin-list").children).toHaveLength(2));
+  });
+  it("preserves the selected local number when another scope uses the same snapshot", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(new Response("{}", { status: 404 }))));
+    await clickCitation();
+    await vi.waitFor(() => expect(ui.get("margin-list").children).toHaveLength(1));
+    const { bindCitations } = await import("./evidence");
+    const button = ui.node();
+    button.dataset.chunk = "30";
+    button.dataset.index = "1";
+    ui.buttons = [button];
+    bindCitations({} as ParentNode, [{ ...snapshot, index: 1 }]);
+    button.click();
+    await vi.waitFor(() => expect(ui.get("margin-list").children).toHaveLength(2));
+    const item = ui.get("margin-list").children[1] as ReturnType<typeof ui.node>;
+    expect(item.innerHTML).toContain("[1]");
+  });
   it("does not derive a request ID from an unbound DOM citation", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     await clickCitation([]);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(ui.notify).toHaveBeenCalledWith("这条编号不在本次引用列表中", true);
+  });
+  it("binds the selected step scope and its local number instead of the first chunk match", async () => {
+    const { bindCitations } = await import("./evidence");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 404 })));
+    const local = { ...snapshot, index: 1, doc_id: 99, doc_title: "第二步快照.md" };
+    const button = ui.node();
+    button.dataset.chunk = "30";
+    button.dataset.index = "1";
+    button.closest.mockReturnValue({ dataset: { sourceScope: "step-1" } });
+    ui.buttons = [button];
+    bindCitations({} as ParentNode, [snapshot], new Map([["step-1", [local]]]));
+    button.click();
+    await vi.waitFor(() => expect(ui.get("margin-list").children).toHaveLength(1));
+    const item = ui.get("margin-list").children[0] as ReturnType<typeof ui.node>;
+    expect(item.innerHTML).toContain(local.doc_title);
+    expect(item.innerHTML).toContain("[1]");
   });
   it("clips a validated intersecting image without moving the following text", async () => {
     const { renderSourceWithImages } = await import("./evidence");

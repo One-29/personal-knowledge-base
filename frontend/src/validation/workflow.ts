@@ -1,6 +1,6 @@
 import type { WorkflowResponse, WorkflowStep } from "../types";
 import { array, enumeration, id, nullable, record, string, unique, ValidationError } from "./base";
-import { parseCandidates, parseCitations, parseRetrievalEvidence, sameSource } from "./evidence";
+import { consistentSources, parseCandidates, parseCitations, parseRetrievalEvidence, sameSource } from "./evidence";
 
 export function parseWorkflowStep(value: unknown, path = "step"): WorkflowStep {
   const v = record(value, path);
@@ -28,5 +28,6 @@ export function parseWorkflow(value: unknown, path = "workflow"): WorkflowRespon
     }
     previous.add(step.index);
   }
+  consistentSources([...citations, ...steps.flatMap(step => [...step.citations, ...step.possible_sources])], `${path}.sources`);
   return { task: string(v.task, `${path}.task`), answer: string(v.answer, `${path}.answer`), citations, steps };
 }

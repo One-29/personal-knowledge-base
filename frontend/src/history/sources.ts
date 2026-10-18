@@ -11,7 +11,8 @@ export function tryParse<T>(parse: Parser<T>, value: unknown): T | null {
 
 export function savedWarnings(value: unknown): UnavailableSource[] {
   if (!Array.isArray(value)) return [];
-  return value.filter(isRecord).map(item => ({ index: tryParse(id, item.index), reason: "历史来源无法恢复" }));
+  return value.filter(isRecord).map(item => ({ index: tryParse(id, item.index),
+    reason: typeof item.reason === "string" && item.reason ? item.reason : "历史来源无法恢复" }));
 }
 
 /** Invalid entries have no chunk identity and never enter citation deduplication. */

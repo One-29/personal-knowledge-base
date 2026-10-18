@@ -3,7 +3,8 @@ import { byId, queryAll, queryOne } from "./dom";
 import { escapeHtml, friendlyError } from "./format";
 import { readLocalValue, writeLocalValue } from "./local-storage";
 import { notify } from "./notifications";
-import { parseCitationDetail } from "./validation/evidence";
+import type { CitationScopes } from "./citation-scopes";
+import { parseCitationDetail, sameSourceDetail } from "./validation/evidence";
 import { parseDocumentContent } from "./validation/library";
 import type {
   Citation,
@@ -107,7 +108,8 @@ async function pinToMargin(
   displayIndex: string | number | null = null,
   citation: Citation | null = null,
 ): Promise<void> {
-  const key = `chunk-${chunkId}`;
+  // Old IDs may be reused, and each scope can assign a different display number.
+  const key = `chunk-${chunkId}-${displayIndex}-${JSON.stringify(citationSnapshotDetail(citation))}`;
   try {
     setEvidenceOpen(true);
     const existing = marginItems.get(key);
@@ -124,6 +126,10 @@ async function pinToMargin(
     let isHistoricalSnapshot = false;
     try {
       detail = await api(`/citations/${chunkId}`, parseCitationDetail);
+      if (citation !== null && !sameSourceDetail(citation, detail)) {
+        detail = citationSnapshotDetail(citation)!;
+        isHistoricalSnapshot = true;
+      }
     } catch (error) {
       const snapshot = error instanceof ApiError && error.status === 404
         ? citationSnapshotDetail(citation)
@@ -212,12 +218,13 @@ function markActiveCitation(chunkId: number): void {
     .forEach((element) => element.classList.add("on"));
 }
 
-export function bindCitations(scope: ParentNode, citations: Citation[]): void {
+export function bindCitations(scope: ParentNode, citations: readonly Citation[], scopes?: CitationScopes): void {
   queryAll<HTMLElement>(".cite, .source-pill", scope).forEach((element) => {
     const open = (): void => {
-      const hit = element.dataset.chunk !== undefined
-        ? citations.find((citation) => String(citation.chunk_id) === element.dataset.chunk)
-        : citations.find((citation) => String(citation.index) === element.dataset.index);
+      const pool = scopes === undefined ? citations
+        : scopes.get(element.closest<HTMLElement>("[data-source-scope]")?.dataset.sourceScope ?? "") ?? [];
+      const hit = pool.find(citation => String(citation.index) === element.dataset.index
+        && (element.dataset.chunk === undefined || String(citation.chunk_id) === element.dataset.chunk));
       if (hit !== undefined) {
         element.dataset.chunk = String(hit.chunk_id);
         void pinToMargin(hit.chunk_id, hit.index, hit);

@@ -5,6 +5,7 @@ import { parseDomId, parseQuestion } from "./validation/input";
 import { ConversationStore } from "./conversations";
 import { byId, isAbortError, queryAll } from "./dom";
 import { bindCitations } from "./evidence";
+import { answerSourceScopes, workflowSourceScopes } from "./citation-scopes";
 import { escapeHtml, friendlyError, questionHeader, renderRichText } from "./format";
 import { notify } from "./notifications";
 import { controllerFor, setController, state } from "./state";
@@ -84,14 +85,10 @@ export function renderConversation(): void {
     entry.className = "entry";
     if (turn.kind === "workflow") {
       entry.innerHTML = renderWorkflowEntry(turn.question, turn.result, turn.durationMs);
-      bindCitations(entry, [
-        ...turn.result.citations,
-        ...turn.result.steps.flatMap((step) => step.citations),
-        ...turn.result.steps.flatMap((step) => step.possible_sources),
-      ]);
+      bindCitations(entry, [], workflowSourceScopes(turn.result));
     } else {
       entry.innerHTML = renderAnswerEntry(turn.question, turn.answer, turn.durationMs);
-      bindCitations(entry, [...turn.answer.citations, ...turn.answer.possible_sources]);
+      bindCitations(entry, [], answerSourceScopes(turn.answer));
     }
     flow.append(entry);
   }
@@ -183,7 +180,7 @@ export async function submitQuestion(): Promise<void> {
     }
     const durationMs = Date.now() - startedAt;
     entry.innerHTML = renderAnswerEntry(question, answer, durationMs);
-    bindCitations(entry, [...answer.citations, ...answer.possible_sources]);
+    bindCitations(entry, [], answerSourceScopes(answer));
     const saved = rememberTurn(conversation.id, {
       kind: "ask",
       question,
@@ -264,10 +261,7 @@ export async function submitWorkflow(): Promise<void> {
     });
     const durationMs = Date.now() - startedAt;
     entry.innerHTML = renderWorkflowEntry(task, result, durationMs);
-    bindCitations(entry, [
-      ...result.citations,
-      ...result.steps.flatMap((step) => step.possible_sources),
-    ]);
+    bindCitations(entry, [], workflowSourceScopes(result));
     const saved = rememberTurn(conversation.id, {
       kind: "workflow",
       question: task,
