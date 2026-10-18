@@ -45,6 +45,8 @@ describe("gray-zone rendering", () => {
     expect(html).toContain("需人工核对，不是正式引用");
     expect(html).toContain("最高向量相似度 0.503");
     expect(html).toContain('data-chunk="42"');
+    expect(html).toContain('data-source-scope="citations"');
+    expect(html).toContain('data-source-scope="candidates"');
     expect(html).not.toContain("1 条引用");
   });
 
@@ -72,6 +74,8 @@ describe("gray-zone rendering", () => {
     expect(html).toContain("待核对");
     expect(html).toContain("可能相关的原文");
     expect(html).toContain("0/1 步完成");
+    expect(html).toContain('data-source-scope="step-0"');
+    expect(html).toContain('data-source-scope="step-0-candidates"');
   });
 });
 

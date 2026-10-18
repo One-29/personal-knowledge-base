@@ -14,11 +14,11 @@ docs/
 │   ├── 00-overview.md     # 项目总览：定位/能力/边界/进度（冷读者入口）
 │   ├── 01-requirements.md # 产品需求 PRD：定位/范围/NFR/用户故事/流程/决策（v0.4 已拍板）
 │   ├── 02-modules.md      # 模块拆分：业务边界 / 桌面宿主 / 诊断基础设施 / 时序（v0.7）
-│   ├── 03-data-model.md   # 数据模型：ER / DDL / 状态机 / 双方言存储（v0.7）
-│   ├── 04-retrieval.md    # 检索链路：完整语句组块 / 上下文 / 混合检索 / 防幻（v0.9）
+│   ├── 03-data-model.md   # 数据模型：ER / DDL / 状态机 / 双方言存储（v0.9）
+│   ├── 04-retrieval.md    # 检索链路：语句窗口 / 混合检索 / 引用与语义核对（v0.10）
 │   ├── 05-agent-workflow.md   # Agent 多步工作流：规划 / 来源依赖 / 执行 / 汇总（v0.5）
 │   ├── 06-evaluation.md   # 评估方案：多库分层基线 / recall@k / τ 校准（v0.4）
-│   ├── 07-frontend-design.md  # 前端界面：分层 / 数据校验 / 历史引用 / 输入限制（v0.9）
+│   ├── 07-frontend-design.md  # 前端界面：数据校验 / 历史快照 / 作用域绑定（v0.10）
 │   ├── 08-graph-view.md   # 关联图：边的计算 / 权重合成 / 决策（v0.1）
 │   └── 09-sqlite-desktop-migration.md # SQLite 桌面化：迁移 / 文件真相 / 桌面壳 / 本地诊断 / 发布门
 ├── templates/

@@ -62,6 +62,7 @@ def stream_prepared_answer(
                 prepared.candidates,
                 provider=llm,
                 citations=prepared.candidate_citations,
+                resolved_question=prepared.search_query,
             ):
                 if not content:
                     continue

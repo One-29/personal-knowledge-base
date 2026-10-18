@@ -5,8 +5,8 @@
 2. **会话追问改写**（D5/DR5）：带 session_id 且存在上文时，把指代句改写为自包含问题
 3. 问题向量化 → 双通道检索 → RRF 合并（retrieval）
 4. **L1 双阈值证据门**：低相关拒答，中间灰区只展示候选，高相关才进入生成
-5. LLM 生成带 [n] 标注的回答（灰区不会调用模型）
-6. **L2 引用校验**：越界或零引用 → 拒答（严格策略，04 §5）
+5. LLM 生成带 [n] 标注的回答（灰区不会调用回答模型）
+6. **L2 核对**：引用结构、可配置语义支持和来源版本；失败不发布可信回答
 7. 只记录通过校验的回答供下一轮追问改写；所有拒答都不进入历史；
    组装 Answer（含 citations 供前端溯源）
 
@@ -47,6 +47,7 @@ from .evidence import (
 )
 from .generation import LLMError, LLMProvider
 from .evidence.context import ContextIncomplete, expand_evidence
+from .evidence import support
 from .models import Chunk, Document
 from .session import Turn as SessionTurn
 
@@ -80,8 +81,14 @@ REFUSAL_NO_CITATION = "no_citation"           # 有实质内容却零引用（�
 REFUSAL_LLM_UNAVAILABLE = "llm_unavailable"   # 生成服务不可用
 REFUSAL_EMBEDDING_UNAVAILABLE = "embedding_unavailable"  # 查询向量服务不可用
 REFUSAL_EMBEDDING_MISMATCH = "embedding_mismatch"  # 配置与现有向量空间不一致
+REFUSAL_ANSWER_NOT_SUPPORTED = "answer_not_supported"
+REFUSAL_SUPPORT_VERIFICATION_FAILED = "support_verification_failed"
+REFUSAL_SUPPORT_CONTEXT_LIMIT = "support_context_limit"
 
 REFUSAL_MESSAGES = {
+    REFUSAL_ANSWER_NOT_SUPPORTED: "回答草稿未通过原文支持核对，可能包含缺失条件、对象错位或与原文矛盾的结论，未发布正式回答。请核对候选原文或缩小问题范围。",
+    REFUSAL_SUPPORT_VERIFICATION_FAILED: "回答的语义支持程度暂时无法核实，未发布正式回答。请稍后重试。",
+    REFUSAL_SUPPORT_CONTEXT_LIMIT: "完整回答与原文超过语义核对长度限制，未截断材料或发布未经完整核对的回答。请拆分问题。",
     REFUSAL_CONTEXT_INCOMPLETE: "找到相关内容，但必要的前提、指代或完整原文暂时无法补齐，未生成明确回答。请核对原文、更新索引或缩小问题范围。",
     REFUSAL_EMPTY_KB: "本次检索未取得候选原文，无法回答这个问题。请核对知识库范围或补充相关笔记。",
     REFUSAL_LOW_RELEVANCE: "本次检索到的原文相关性未达到回答条件，无法给出可信回答。",
@@ -138,6 +145,9 @@ class AnswerData:
             REFUSAL_INVALID_CITATION,
             REFUSAL_NO_CITATION,
             REFUSAL_INVALID_SOURCE_SELECTION,
+            REFUSAL_ANSWER_NOT_SUPPORTED,
+            REFUSAL_SUPPORT_VERIFICATION_FAILED,
+            REFUSAL_SUPPORT_CONTEXT_LIMIT,
         }:
             self.status = AnswerStatus.UNVERIFIED
         elif self.refusal_reason in {
@@ -327,6 +337,7 @@ def prepare_answer(
             expanded, dependencies = expand_evidence(
                 db, candidates, max_chars=settings.answer_context_max_chars,
                 neighbor_chars=settings.answer_context_neighbor_chars,
+                neighbor_units=settings.answer_context_neighbor_units,
             )
             expanded_sources = _build_source_snapshots(db, list(enumerate(expanded, start=1)))
             for source in expanded_sources:
@@ -373,6 +384,7 @@ def complete_prepared_answer(
                 prepared.candidates,
                 provider=llm,
                 citations=prepared.candidate_citations,
+                resolved_question=prepared.search_query,
             )
     except LLMError as exc:
         logger.warning("生成失败: %s", exc)
@@ -381,8 +393,8 @@ def complete_prepared_answer(
     return finish_generated_answer(prepared, content)
 
 
-def finish_generated_answer(prepared: AnswerPreparation, content: str) -> AnswerData:
-    """对完整模型输出执行 L2 校验，并且只提交经过校验的最终结果。"""
+def finish_generated_answer(prepared: AnswerPreparation, content: str, *, check_support: bool = True) -> AnswerData:
+    """检查引用、可配置语义支持和来源版本；规则式出处整理可跳过语义调用。"""
     content = content.strip()
     if content.startswith("上下文不足"):
         return refuse_prepared_answer(prepared, REFUSAL_CONTEXT_INCOMPLETE)
@@ -436,6 +448,19 @@ def finish_generated_answer(prepared: AnswerPreparation, content: str) -> Answer
             if source.citation.index in cited_indexes
         ],
     )
+    if check_support and settings.answer_support_check_enabled:
+        try:
+            with timed_stage("ask.support_verification", answer_chars=len(content), sources=len(result.citations)):
+                supported = support.verify_answer_support(prepared.question, prepared.search_query, content,
+                                                           result.citations, max_chars=settings.answer_support_max_chars)
+        except support.SupportContextLimit:
+            return refuse_prepared_answer(prepared, REFUSAL_SUPPORT_CONTEXT_LIMIT)
+        except (support.SupportVerificationError, LLMError):
+            logger.warning("回答语义核对未完成，未发布草稿")
+            return refuse_prepared_answer(prepared, REFUSAL_SUPPORT_VERIFICATION_FAILED)
+        if not supported:
+            return finish_prepared_answer(prepared, _refuse(prepared.question, REFUSAL_ANSWER_NOT_SUPPORTED,
+                possible_sources=_build_possible_sources(prepared.candidates, prepared.candidate_citations)))
     if prepared.validate_sources is not None:
         try:
             if prepared.validate_sources(result.source_snapshots):
@@ -607,7 +632,8 @@ def answer_from_sources(
         candidate_citations=citations, session_id=None, session_store=session.store,
         candidate_source_snapshots=normalized,
     )
-    result = finish_generated_answer(prepared, "\n".join(lines))
+    # 来源整理是文档名称/区间的规则输出，不包含新的模型知识结论。
+    result = finish_generated_answer(prepared, "\n".join(lines), check_support=False)
     if invalid_source_chunk_ids(db, result.source_snapshots, kb_id):
         return _refuse(question, REFUSAL_SOURCE_CHANGED)
     return result
@@ -730,6 +756,7 @@ def _refuse(
         elif reason in {
             REFUSAL_INVALID_CITATION, REFUSAL_NO_CITATION,
             REFUSAL_INVALID_SOURCE_SELECTION,
+            REFUSAL_ANSWER_NOT_SUPPORTED, REFUSAL_SUPPORT_VERIFICATION_FAILED, REFUSAL_SUPPORT_CONTEXT_LIMIT,
         }:
             status = AnswerStatus.UNVERIFIED
         else:

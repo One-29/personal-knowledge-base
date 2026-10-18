@@ -136,3 +136,59 @@ def test_gray_retrieval_does_not_expand_or_generate(context_db, monkeypatch):
     _, chunks = add_source(db, kb, text, [(0, len(text))])
     result = run_answer(monkeypatch, db, kb, [replace(chunks[0], vector_similarity=.5)], callback=lambda _: pytest.fail("灰区不生成"))
     assert result.refusal_reason == "borderline_relevance"
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_resolved_followup_reaches_generation_without_losing_original_request(context_db, monkeypatch, streaming):
+    from app.answer_stream import AnswerCompleted, stream_prepared_answer
+    db, kb = context_db
+    text = "关闭缓存会增加重复查询的计算次数。"
+    _, chunks = add_source(db, kb, text, [(0, len(text))])
+    monkeypatch.setattr(ask, "_embed_query", lambda _: [1.0])
+    monkeypatch.setattr(retrieval, "retrieve", lambda *a, **kw: chunks)
+    monkeypatch.setattr(generation, "rewrite_query", lambda *a, **kw: "关闭缓存会影响重复查询吗？")
+    prompts = []
+    class Model:
+        def complete(self, system, user):
+            prompts.append(user)
+            return "关闭缓存会增加计算次数。[1]"
+    prepared = ask.prepare_answer(db, "它会有影响吗？请用两点说明。", kb,
+                                  history=[("关闭缓存是什么意思？", "不复用缓存结果。")], llm=Model())
+    if streaming:
+        assert isinstance(list(stream_prepared_answer(prepared, llm=Model()))[-1], AnswerCompleted)
+    else:
+        ask.complete_prepared_answer(prepared, llm=Model())
+    assert "关闭缓存会影响重复查询吗？" in prompts[0]
+    assert "它会有影响吗？请用两点说明。" in prompts[0]
+
+
+def test_implicit_condition_is_included_even_without_a_recognized_sentence_prefix(context_db):
+    from app.chunking import split_markdown
+    db, kb = context_db
+    first = "# Cache experiment\n\n" + "The system receives repeated queries. " * 16 + "\n\n"
+    condition = "For the experiment, the cache is disabled and all requests bypass any previously stored lookup results, so each repeated query must be recomputed from the source data.\n\n"
+    conclusion = "In this situation, repeated queries are slower than with caching enabled."
+    text = first + condition + conclusion
+    split = split_markdown(text)
+    assert len(split) == 2 and "cache is disabled" not in split[-1].text
+    _, chunks = add_source(db, kb, text, [(c.char_start, c.char_end) for c in split])
+    expanded, dependencies = expand_evidence(db, [chunks[-1]], max_chars=12000, neighbor_chars=1600)
+    assert any("cache is disabled" in c.content for c in expanded)
+    assert chunks[0].chunk_id in dependencies[chunks[-1].chunk_id]
+
+
+def test_neutral_prefix_keeps_previous_sentence_window_without_recursive_full_document(context_db):
+    db, kb = context_db
+    sentences = [f"实验场景{i}的详细说明。" for i in range(8)]
+    sentences[-2] = "实验中关闭了缓存。"
+    sentences[-1] = "重复查询的耗时增加。"
+    text = "".join(sentences)
+    ends = [0]
+    for sentence in sentences:
+        ends.append(ends[-1] + len(sentence))
+    _, chunks = add_source(db, kb, text, list(zip(ends, ends[1:])))
+    expanded, dependencies = expand_evidence(db, [chunks[-1]], max_chars=12000, neighbor_chars=1600)
+    assert chunks[-2].chunk_id in {c.chunk_id for c in expanded}
+    # 普通窗口供生成理解，不强迫出处步骤把无显式依赖的相邻内容当成正式引用。
+    assert dependencies[chunks[-1].chunk_id] == ()
+    assert chunks[0].chunk_id not in {c.chunk_id for c in expanded}

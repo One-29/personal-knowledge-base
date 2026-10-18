@@ -37,11 +37,14 @@ def expand_evidence(
     *,
     max_chars: int,
     neighbor_chars: int,
+    neighbor_units: int = 1,
 ) -> tuple[list[RetrievedChunk], dict[int, tuple[int, ...]]]:
-    """保留命中顺序，追加无分数的必要原始块，返回各块的上下文依赖。
+    """保留命中顺序，追加无分数的语句上下文，返回各块的必要依赖。
 
     全文由当前索引区间还原，避免磁盘上尚未发布的修改混入本次问答；不读取
-    embedding 列。任何覆盖缺口、冲突和预算不足都显式拒绝，不硬截上下文。
+    embedding 列。命中块增加有界相邻语句窗口，补充块仅递归恢复显式依赖；
+    窗口不自动成为必要引用，也不跨章节。任何覆盖缺口、冲突和预算不足
+    都显式拒绝，不硬截上下文。
     """
     doc_ids = {c.doc_id for c in anchors}
     documents = dict(db.execute(select(Document.id, Document.char_count).where(Document.id.in_(doc_ids))).all())
@@ -59,6 +62,7 @@ def expand_evidence(
         protected = protected_ranges(text)
         analyses[doc_id] = (text, [(a, b, safe_units(text, a, b, protected)) for a, b in sections(text, protected)])
     selected = {c.chunk_id: c for c in anchors}
+    anchor_ids = set(selected)
     groups: dict[int, set[int]] = defaultdict(set)
     pending = list(anchors)
     for anchor in pending:
@@ -80,8 +84,16 @@ def expand_evidence(
             first -= 1
         while last + 1 < len(units) and depends_on_previous(text[units[last + 1].start:units[last + 1].end]):
             last += 1
+        required_start, required_end = units[first].start, units[last].end
+        if anchor.chunk_id in anchor_ids:
+            for _ in range(neighbor_units):
+                if first > 0 and not HEADING.match(text[units[first - 1].start:units[first - 1].end]):
+                    first -= 1
+                if last + 1 < len(units) and not HEADING.match(text[units[last + 1].start:units[last + 1].end]):
+                    last += 1
         start, end = units[first].start, units[last].end
         required = {anchor.chunk_id}
+        included = {anchor.chunk_id}
         cursor = start
         while cursor < end:
             covering = [r for r in rows if section_start <= r.char_start <= cursor < r.char_end <= section_end]
@@ -89,7 +101,9 @@ def expand_evidence(
                 raise ContextIncomplete("必要上下文无法在同一章节内补齐")
             # 已选块优先，避免因重叠而重复加入被完全覆盖的片段。
             row = max(covering, key=lambda r: (r.id in selected, r.char_end))
-            required.add(row.id)
+            included.add(row.id)
+            if row.char_start < required_end and row.char_end > required_start:
+                required.add(row.id)
             if row.id not in selected:
                 selected[row.id] = RetrievedChunk(
                     chunk_id=row.id, doc_id=row.doc_id, content=row.content,
@@ -98,7 +112,7 @@ def expand_evidence(
                 )
                 pending.append(selected[row.id])
             cursor = row.char_end
-        added_chars = sum(len(selected[cid].content) for cid in required if cid != anchor.chunk_id)
+        added_chars = sum(len(selected[cid].content) for cid in included if cid != anchor.chunk_id)
         if added_chars > neighbor_chars:
             raise ContextIncomplete("必要前后文超过单处补充预算")
         for cid in required:

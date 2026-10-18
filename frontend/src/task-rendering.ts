@@ -26,7 +26,7 @@ const ANSWER_LABEL: Record<AnswerStatus, string> = {
   answered: "KNOWBASE 回答",
   needs_review: "灰区 · 待核对",
   insufficient: "检索结果",
-  unverified: "引用校验未通过",
+  unverified: "来源核对未通过",
   error: "服务未完成",
 };
 
@@ -51,6 +51,9 @@ function refusalLabel(reason: string | null | undefined): string {
     invalid_source_selection: "来源核对未通过校验",
     invalid_citation: "引用编号未通过校验",
     no_citation: "回答缺少有效引用",
+    answer_not_supported: "回答未获原文支持",
+    support_verification_failed: "语义支持暂无法核实",
+    support_context_limit: "语义核对材料超限",
     llm_unavailable: "回答服务暂不可用",
     embedding_unavailable: "检索服务暂不可用",
     embedding_mismatch: "向量模型与索引不一致",
@@ -69,7 +72,7 @@ function relevanceSummary(evidence: RetrievalEvidence | null): string {
     ${evidence.answer_threshold.toFixed(2)} · 共 ${evidence.candidate_count} 条候选</p>`;
 }
 
-function possibleSourceList(sources: EvidenceCandidate[]): string {
+function possibleSourceList(sources: EvidenceCandidate[], scope = "candidates"): string {
   if (sources.length === 0) return "";
   const items = sources.map((source) => {
     const score = source.vector_similarity === null
@@ -87,7 +90,7 @@ function possibleSourceList(sources: EvidenceCandidate[]): string {
       <q>${escapeHtml(excerpt)}</q>
     </button>`;
   }).join("");
-  return `<section class="possible-sources" aria-label="可能相关的候选原文">
+  return `<section class="possible-sources" data-source-scope="${scope}" aria-label="可能相关的候选原文">
     <div class="possible-sources-head"><strong>可能相关的原文</strong><span>需人工核对，不是正式引用</span></div>
     <div class="candidate-source-list">${items}</div>
   </section>`;
@@ -110,7 +113,7 @@ export function renderAnswerEntry(
     ? ""
     : `<span class="meta-dot">${Math.max(1, Math.round(durationMs / 1000))} 秒</span>`;
   return `${questionHeader(question)}
-    <div class="answer-shell">
+    <div class="answer-shell" data-source-scope="citations">
       <div class="answer-meta">
         <span class="answer-label">${ANSWER_LABEL[answer.status]}</span>
         <span class="meta-dot">${answer.status === "needs_review"
@@ -142,7 +145,7 @@ export function renderStreamingAnswerEntry(
     <div class="answer-shell streaming-answer">
       <div class="answer-meta">
         <span class="answer-label">KNOWBASE 回答</span>
-        <span class="streaming-status"><i></i>正在生成 · 完成后校验引用</span>
+        <span class="streaming-status"><i></i>正在生成草稿 · 完成后核对来源</span>
       </div>
       ${rewritten}
       <div class="entry-a rich-text" data-stream-content aria-live="polite">${body}</div>
@@ -154,7 +157,7 @@ export function renderWorkflowEntry(
   result: WorkflowResponse,
   durationMs: number | null = null,
 ): string {
-  const steps = result.steps.map((step) => {
+  const steps = result.steps.map((step, position) => {
     const statusLabel = STEP_STATUS[step.status] ?? String(step.status);
     const body = step.status === "answered"
       ? `<div class="trace-body rich-text">${withCitations(step.conclusion || "", step.citations)}</div>`
@@ -170,13 +173,13 @@ export function renderWorkflowEntry(
       ? `<p class="trace-query">实际检索：${escapeHtml(step.search_query)}</p>` : "";
     const reason = step.refusal_reason
       ? `<p class="relevance-summary">${escapeHtml(refusalLabel(step.refusal_reason))}</p>` : "";
-    return `<li><details class="trace-card">
+    return `<li data-source-scope="step-${position}"><details class="trace-card">
       <summary class="trace-head"><span>${escapeHtml(step.goal)}</span>
         <span class="trace-state ${escapeHtml(step.status)}">${escapeHtml(statusLabel)}</span>
       </summary>
       <p class="trace-query">${queryLabel}：${escapeHtml(step.query)}</p>
       ${rewritten}${origin}${sourceLookup ? "" : relevanceSummary(step.evidence ?? null)}${reason}
-      ${recoveryWarning(step.unavailable_sources)}${body}${possibleSourceList(step.possible_sources)}
+      ${recoveryWarning(step.unavailable_sources)}${body}${possibleSourceList(step.possible_sources, `step-${position}-candidates`)}
     </details></li>`;
   }).join("");
   const answered = result.steps.filter((step) => step.status === "answered").length;
@@ -189,7 +192,7 @@ export function renderWorkflowEntry(
       </div>
       <ol class="trace-list">${steps}</ol>
     </div>
-    <div class="summary">
+    <div class="summary" data-source-scope="citations">
       <div class="summary-head"><h3>综合结论</h3><span>${result.citations.length} 条引用</span></div>
       ${recoveryWarning(result.unavailable_sources)}
       <div class="entry-a rich-text">${withCitations(result.answer, result.citations)}</div>

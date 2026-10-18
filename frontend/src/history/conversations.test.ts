@@ -69,6 +69,27 @@ describe("history recovery boundaries", () => {
     expect(result.steps[0]?.conclusion).toBe("新来源。[2] 缺失。[原引用 2 不可用]");
     expect(renderWorkflowEntry("出处", result)).not.toContain('class="cite" data-index="1"');
   });
+  it("quarantines conflicting candidates across steps without renumbering good sources", () => {
+    const candidate = { ...citation, vector_similarity: .5, rrf_score: .03, vector_rank: 1, keyword_rank: null };
+    const result = recoverWorkflow({ ...workflow, citations: [], steps: [
+      { ...step, status: "needs_review", citations: [], possible_sources: [candidate] },
+      { ...step, index: 2, status: "needs_review", citations: [], possible_sources: [
+        { ...candidate, doc_id: 99 }, { ...candidate, index: 3, chunk_id: 11 },
+      ] },
+    ] }).result;
+    expect(result.steps[0]?.possible_sources).toEqual([]);
+    expect(result.steps[1]?.possible_sources.map(c => [c.index, c.chunk_id])).toEqual([[3, 11]]);
+    expect(result.steps.map(s => s.unavailable_sources?.map(c => c.index))).toEqual([[1], [1]]);
+    expect(recoverWorkflow(JSON.parse(JSON.stringify(result))).result).toEqual(result);
+  });
+  it("quarantines a formal/candidate collision in saved answers", () => {
+    const candidate = { ...citation, doc_id: 99, vector_similarity: .5, rrf_score: .03, vector_rank: 1, keyword_rank: null };
+    const saved = recoverAsk({ ...answer, possible_sources: [candidate] }).answer;
+    expect(saved.citations).toEqual([]);
+    expect(saved.possible_sources).toEqual([]);
+    expect(saved.unavailable_sources).toHaveLength(2);
+    expect(saved.content).toBe(answer.content);
+  });
   it("restores evidenced legacy fields but does not repair an invalid enum into answered", () => {
     const { images: _images, ...textOnly } = citation;
     const legacy = recoverAsk({ question: "问题", content: "旧答案。[1]", citations: [textOnly], refused: false,

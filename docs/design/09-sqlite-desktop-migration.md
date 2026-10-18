@@ -3,8 +3,8 @@
 | 字段 | 内容 |
 |---|---|
 | 状态 | 已实现（核心双方言、数据迁移、默认运行时、Vault 可重建、外部编辑同步、可恢复入库任务、Windows 冻结包与本地诊断） |
-| 版本 | v1.0 |
-| 日期 | 2026-09-25 |
+| 版本 | v1.1 |
+| 日期 | 2026-10-18 |
 | 上游 | `02-modules.md`（模块边界）· `03-data-model.md`（数据模型）· `04-retrieval.md`（检索） |
 | 关联 | 桌面 App 化：核心双方言、模型指纹、质量门、迁移、默认运行时、文件真相、本地窗口与诊断生命周期 |
 
@@ -95,7 +95,9 @@ embedding 指纹。`app_metadata.schema_version` 由 SQLite 初始化器管理�
 | macOS | `~/Library/Application Support/KnowBase` |
 | Linux | `$XDG_DATA_HOME/knowbase` 或 `~/.local/share/knowbase` |
 
-`app.runtime` 在 API 启动前幂等准备当前 v2 schema、启用 WAL、创建 FTS5 索引与同步触发器，并核对 embedding 指纹、Vault 清单、外键和 `quick_check`；数据库存在时还会同步已登记普通原文的外部修改。v1 会事务化创建任务表并升级到 v2；版本高于当前程序或低于最早可升级版本时拒绝打开。后续每次 schema 变化必须提供按版本顺序执行、事务化且可重复验证的升级函数，不能用 `create_all()` 假装完成字段迁移。
+`app.runtime` 在 API 启动前幂等准备当前 v3 schema、启用 WAL、创建 FTS5 索引与同步触发器，并核对 embedding 指纹、Vault 清单、外键和 `quick_check`；数据库存在时还会同步已登记普通原文的外部修改。v1 创建任务表升级到 v2，v2 为知识库、文档和块的整数主键启用 AUTOINCREMENT 后升级到 v3。版本高于当前程序或低于最早可升级版本时拒绝打开，不能用 `create_all()` 假装完成字段迁移。
+
+v2→v3 使用显式 `BEGIN IMMEDIATE`，复制原行并重建三张表，保留 ID、向量、原文、任务关系、已有索引和触发器；外键检查通过后才提交 schema 版本，异常回滚全部 DDL 与数据。流程遵循 [SQLite 表重建步骤](https://www.sqlite.org/lang_altertable.html#making_other_kinds_of_table_schema_changes)。[AUTOINCREMENT](https://www.sqlite.org/autoinc.html) 防止升级后提交过的 ID 被后续自动插入复用，不修改 PostgreSQL Identity。旧库已经删除的 ID 没有可恢复的完整高水位，因此前端仍必须比较在线来源与历史快照；不能只看 ID 或 HTTP 200。
 
 旧 PostgreSQL 迁移产物先落在仓库 `data/knowbase.db`，普通首次启动再通过 SQLite backup API 与原文树双重摘要复制到用户目录。复制使用候选文件/目录，校验活动原文、图片包、chunk 锚点、外键、FTS 和逻辑摘要后才发布；失败清理候选，源文件与已有用户库保持不变。目标库一旦存在，后续启动只复用它，不会再次导入或覆盖。
 

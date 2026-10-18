@@ -48,6 +48,7 @@ class KnowledgeBase(Base):
     """表 knowledge_bases：DDL 见 03 §3"""
 
     __tablename__ = "knowledge_bases"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(PORTABLE_BIGINT, Identity(), primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
@@ -73,6 +74,7 @@ class Document(Base):
     __table_args__ = (
         UniqueConstraint("kb_id", "title"),
         CheckConstraint("status IN ('pending','processing','ready','failed')"),
+        {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(PORTABLE_BIGINT, Identity(), primary_key=True)
@@ -234,6 +236,7 @@ class Chunk(Base):
             postgresql_using="gin",
             postgresql_ops={"content": "gin_trgm_ops"},
         ).ddl_if(dialect="postgresql"),
+        {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(PORTABLE_BIGINT, Identity(), primary_key=True)
