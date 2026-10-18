@@ -1,12 +1,12 @@
-# 03-数据模型（v0.8）
+# 03-数据模型（v0.9）
 
 | 字段 | 内容 |
 |---|---|
 | 状态 | 已实现 |
-| 版本 | v0.8 |
-| 日期 | 2026-09-25 |
+| 版本 | v0.9 |
+| 日期 | 2026-10-18 |
 | 上游 | `01-requirements.md`（PRD v0.5，决策 D1–D7）· `02-modules.md`（v0.5，模块边界） |
-| 变更 | v0.8：增加当前版本入库任务表、阶段状态与重启恢复语义；v0.7：定义外部编辑时 Vault 领先、SQLite 可续接的提交语义；v0.6：增加文件系统 Vault 清单与 SQLite 可重建边界 |
+| 变更 | v0.9：SQLite schema v3 防止已删除来源 ID 自动复用；v0.8：增加当前版本入库任务表、阶段状态与重启恢复语义；v0.7：定义外部编辑时 Vault 领先、SQLite 可续接的提交语义 |
 | 关联 | M1/M2 子 Issue（建仓后建立） |
 
 > 本文回答：需求落成哪几张表、字段与约束怎么定、存储与索引选型、如何映射到 SQLAlchemy。
@@ -183,12 +183,12 @@ CREATE TABLE app_metadata (
 ```
 
 `app_metadata` 不存用户内容。PostgreSQL 由 Alembic 建表；SQLite 还用其中的
-`schema_version` 驱动桌面数据库升级。当前版本为 **2**；v1 数据库会在同一事务中
-创建 `ingest_tasks` 并写入 v2，原有业务行保持不变，重复初始化幂等。
+`schema_version` 驱动桌面数据库升级。当前版本为 **3**；v1 先创建 `ingest_tasks` 升至 v2，
+v2 再事务化重建库、文档与块的自增主键，保留业务行和索引。升级与回滚规则见 [09](09-sqlite-desktop-migration.md)，重复初始化幂等。
 `embedding_profile_v1` 保存规范化的服务地址、
 模型和维度，并对 JSON 取 SHA-256 作为诊断指纹。有现有块时不允许直接改写该值。
 
-SQLite 方言把 bigint 主键映射为 `INTEGER PRIMARY KEY`，把 `vector(1024)` 映射为 JSON
+SQLite 方言把库、文档和块的 bigint 主键映射为 `INTEGER PRIMARY KEY AUTOINCREMENT`，把 `vector(1024)` 映射为 JSON
 数组；FTS5 虚拟表与触发器由 schema 初始化器维护，不进入 ORM 实体。PostgreSQL 仍保留
 BIGINT、pgvector、HNSW 与 GIN，双方言差异不进入业务表模型。
 
@@ -342,5 +342,5 @@ class Chunk(Base):
 
 ## 8. 下一步衔接
 
-- SQLite schema v2 与 PostgreSQL Alembic 迁移都已包含任务表；后续 schema 变化继续提供逐版本升级与空库迁移检查。
+- SQLite schema v3 与 PostgreSQL Alembic 迁移都已包含任务表；SQLite 覆盖旧版本逐级升级与失败回滚，PostgreSQL 保留空库迁移检查。
 - 可分发桌面包必须验证旧 v1 用户库原地升级、任务恢复、安装包降级拒绝和数据目录备份恢复。

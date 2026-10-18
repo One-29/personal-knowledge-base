@@ -11,7 +11,7 @@ from sqlalchemy.engine import Engine
 
 from .engine import dialect_name
 
-SQLITE_SCHEMA_VERSION = 2
+SQLITE_SCHEMA_VERSION = 3
 OLDEST_UPGRADABLE_SCHEMA_VERSION = 1
 
 
@@ -127,6 +127,12 @@ def _upgrade_schema(engine: Engine, version: int) -> None:
                     {"version": "2"},
                 )
             current = 2
+            continue
+        if current == 2:
+            from .identity_migration import upgrade_identity_tables
+
+            upgrade_identity_tables(engine)
+            current = 3
             continue
         raise UnsupportedSchemaVersion(
             f"没有从 SQLite schema {current} 升级到 {current + 1} 的迁移"
