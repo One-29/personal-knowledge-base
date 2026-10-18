@@ -11,6 +11,8 @@ LIST_ITEM = re.compile(r"^\s*(?:[-+*]|\d+[.)])[ \t]+")
 DEPENDENT_START = re.compile(
     r"^(?:它[们]?|他[们]?|她[们]?|其(?:中|余)?|该|此|这(?:一|个|些|种|时|样)?|那(?:一|个|些|种)?"
     r"|上述|前述|前者|后者|因此|所以|但是|然而|不过|否则|那么|同时|从而|故|则"
+    r"|在(?:这|那|此|上述|前述)(?:种|些|个)?(?:情况|条件|前提|设置|场景)下"
+    r"|(?:in|under)\s+(?:this|that|these|those|such|the\s+above)\b"
     r"|(?:it|its|they|their|this|these|that|those|however|therefore|otherwise)\b)", re.I,
 )
 

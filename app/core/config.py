@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     chunk_max_unit_chars: int = Field(default=1600, ge=1)
     answer_context_max_chars: int = Field(default=12000, ge=1)
     answer_context_neighbor_chars: int = Field(default=1600, ge=1)
+    answer_context_neighbor_units: int = Field(default=1, ge=0, le=3)
 
     # 检索召回量（04 §4.2 DR3：向量 top-20 + 关键词 top-10 → RRF 合并）
     vector_top_k: int = Field(default=20, ge=1)
@@ -77,6 +78,8 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.siliconflow.cn/v1"
     llm_model: str = "deepseek-ai/DeepSeek-V4-Flash"
     llm_timeout_seconds: float = Field(default=60.0, gt=0)
+    answer_support_check_enabled: bool = True
+    answer_support_max_chars: int = Field(default=32000, ge=1)
 
     # 双阈值证据门（04 §6 DR6）：低于 0.45 明确拒答，0.45–0.55 进入
     # 人工核对灰区，达到 0.55 才允许调用回答模型。边界来自 06 的 v2

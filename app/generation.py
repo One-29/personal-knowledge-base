@@ -218,11 +218,18 @@ def build_user_prompt(
     question: str,
     chunks: list[RetrievedChunk],
     citations: list["CitationData"] | None = None,
+    *,
+    resolved_question: str | None = None,
 ) -> str:
     """知识回答的原文与输出要求；出处核对使用独立指令。"""
     context = _source_context(chunks, citations)
+    followup = (
+        f"根据对话解析的完整问题：{resolved_question}\n"
+        "完整问题只用于理解指代，不是事实证据；原始问题的格式、范围和输出要求仍须保留。\n\n"
+        if resolved_question and resolved_question != question else ""
+    )
     return (
-        f"资料片段：\n\n{context}\n\n问题：{question}\n\n"
+        f"资料片段：\n\n{context}\n\n问题：{question}\n\n{followup}"
         "请先给结论，再用资料里的内容解释原因或做法；资料写到几个要点就展开几点，每个独立论点在句末标点后标注来源，避免重复堆叠编号。"
         "要求出处时使用所给文档名称与引用；未记载的作者、书名或原始论文出处不可补写。比较多个对象时，只比较原文实际支持的内容，并说明未覆盖的部分。"
     )
@@ -324,11 +331,12 @@ def generate_answer(
     provider: LLMProvider | None = None,
     *,
     citations: list["CitationData"] | None = None,
+    resolved_question: str | None = None,
 ) -> str:
     """调用 LLM 生成回答（不做校验——校验由调用方按 04 §5 执行）。"""
     llm = provider or get_llm_provider()
     system = build_system_prompt(len(chunks))
-    return llm.complete(system, build_user_prompt(question, chunks, citations)).strip()
+    return llm.complete(system, build_user_prompt(question, chunks, citations, resolved_question=resolved_question)).strip()
 
 
 def stream_answer(
@@ -337,11 +345,12 @@ def stream_answer(
     provider: LLMProvider | None = None,
     *,
     citations: list["CitationData"] | None = None,
+    resolved_question: str | None = None,
 ) -> Iterator[str]:
     """逐段生成回答；旧式 provider 自动退回单段输出，保持可替换性。"""
     llm = provider or get_llm_provider()
     system = build_system_prompt(len(chunks))
-    user = build_user_prompt(question, chunks, citations)
+    user = build_user_prompt(question, chunks, citations, resolved_question=resolved_question)
     stream = getattr(llm, "stream", None)
     if callable(stream):
         yield from stream(system, user)

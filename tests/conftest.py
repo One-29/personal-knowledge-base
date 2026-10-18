@@ -12,6 +12,7 @@
 """
 
 import hashlib
+import json
 import os
 import random
 import shutil
@@ -141,3 +142,23 @@ def _fake_embedding(monkeypatch) -> None:
         "get_embedding_provider",
         lambda _config=None: _FakeProvider(),
     )
+
+
+@pytest.fixture(autouse=True)
+def _fake_support_model(monkeypatch):
+    """既有编排测试使用确定性核对模型；仍执行真实覆盖/摘录/发布校验。
+
+    语义判断的支持、矛盾、缺证据、损坏响应与网络故障由
+    test_answer_support 使用专门 provider 验证，不在此伪造真实模型准确率。
+    """
+    from app.evidence import support
+
+    class Provider:
+        def complete(self, system, user):
+            payload = json.loads(user)
+            sources = {source["index"]: source["text"] for source in payload["sources"]}
+            return json.dumps({"judgments": [{"unit_id": unit["id"], "verdict": "supported",
+                "evidence": [{"source_index": index, "quote": sources[index]}
+                             for index in unit["allowed_sources"]]}
+                for unit in payload["units"]]})
+    monkeypatch.setattr(support, "get_support_provider", lambda: Provider())
